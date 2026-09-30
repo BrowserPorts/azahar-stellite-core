@@ -12,6 +12,8 @@ endif()
 
 add_library(azahar_arm_jit STATIC
     jit.cpp
+    spin_lock.cpp
+    "${DYNARMIC_ROOT}/src/dynarmic/backend/arm64/exclusive_monitor.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPToFixed.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/process_exception.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/process_nan.cpp"

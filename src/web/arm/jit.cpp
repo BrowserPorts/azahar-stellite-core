@@ -22,6 +22,7 @@
 #include "dynarmic/frontend/A32/translate/a32_translate.h"
 #include "dynarmic/interface/A32/a32.h"
 #include "dynarmic/interface/A32/coprocessor.h"
+#include "dynarmic/interface/exclusive_monitor.h"
 #include "dynarmic/ir/basic_block.h"
 #include "dynarmic/ir/microinstruction.h"
 #include "dynarmic/ir/opcodes.h"
@@ -34,6 +35,8 @@ struct alignas(8) ArmState {
     uint32_t fpscr{};
     uint32_t check_bit{};
     bool exclusive{};
+    uint32_t exclusive_address{};
+    uint64_t exclusive_value{};
     Dynarmic::A32::UserConfig* config{};
 };
 
@@ -207,6 +210,31 @@ WRITE_MEMORY(16, uint32_t)
 WRITE_MEMORY(32, uint32_t)
 WRITE_MEMORY(64, uint64_t)
 #undef WRITE_MEMORY
+#define EXCLUSIVE_MEMORY(bits, type, result_type) \
+    EMSCRIPTEN_KEEPALIVE result_type A32ExclusiveReadMemory##bits(ArmState* state, uint64_t, uint32_t address, uint32_t) { \
+        auto& config = *state->config; \
+        const auto read = [&]() { return config.callbacks->MemoryRead##bits(address); }; \
+        const type value = config.global_monitor \
+            ? config.global_monitor->ReadAndMark<type>(config.processor_id, address, read) : read(); \
+        state->exclusive = true; \
+        state->exclusive_address = address; \
+        state->exclusive_value = value; \
+        return value; \
+    } \
+    EMSCRIPTEN_KEEPALIVE uint32_t A32ExclusiveWriteMemory##bits(ArmState* state, uint64_t, uint32_t address, result_type value, uint32_t) { \
+        if (!std::exchange(state->exclusive, false)) return 1; \
+        auto& config = *state->config; \
+        const auto write = [&](type expected) { return config.callbacks->MemoryWriteExclusive##bits(address, value, expected); }; \
+        const bool success = config.global_monitor \
+            ? config.global_monitor->DoExclusiveOperation<type>(config.processor_id, address, write) \
+            : address == state->exclusive_address && write(static_cast<type>(state->exclusive_value)); \
+        return success ? 0 : 1; \
+    }
+EXCLUSIVE_MEMORY(8, uint8_t, uint32_t)
+EXCLUSIVE_MEMORY(16, uint16_t, uint32_t)
+EXCLUSIVE_MEMORY(32, uint32_t, uint32_t)
+EXCLUSIVE_MEMORY(64, uint64_t, uint64_t)
+#undef EXCLUSIVE_MEMORY
 EMSCRIPTEN_KEEPALIVE void A32CallSupervisor(ArmState* state, uint32_t immediate) {
     state->config->callbacks->CallSVC(immediate);
 }
@@ -222,7 +250,10 @@ EMSCRIPTEN_KEEPALIVE void A32DataMemoryBarrier(ArmState*) {
 EMSCRIPTEN_KEEPALIVE void A32DataSynchronizationBarrier(ArmState*) {
     std::atomic_thread_fence(std::memory_order_seq_cst);
 }
-EMSCRIPTEN_KEEPALIVE void A32ClearExclusive(ArmState* state) { state->exclusive = false; }
+EMSCRIPTEN_KEEPALIVE void A32ClearExclusive(ArmState* state) {
+    state->exclusive = false;
+    if (state->config->global_monitor) state->config->global_monitor->ClearProcessor(state->config->processor_id);
+}
 EMSCRIPTEN_KEEPALIVE uint64_t WasmCallCoprocessor(ArmState*, uint32_t function, uintptr_t user_argument,
                                                uint32_t argument0, uint32_t argument1) {
     const auto callback = reinterpret_cast<decltype(Dynarmic::A32::Coprocessor::Callback::function)>(function);
@@ -293,6 +324,9 @@ struct Jit::Impl {
     explicit Impl(UserConfig config_) : config(std::move(config_)) {
         if (!config.callbacks || !config.enable_cycle_counting) {
             throw std::invalid_argument("ARM Wasm JIT requires callbacks and cycle counting");
+        }
+        if (config.global_monitor && config.processor_id >= config.global_monitor->GetProcessorCount()) {
+            throw std::invalid_argument("ARM processor is outside the exclusive monitor");
         }
         state.config = &config;
     }
@@ -418,7 +452,7 @@ uint32_t Jit::Cpsr() const { return impl->state.cpsr; }
 void Jit::SetCpsr(uint32_t value) { impl->state.cpsr = value; }
 uint32_t Jit::Fpscr() const { return impl->state.fpscr; }
 void Jit::SetFpscr(uint32_t value) { impl->state.fpscr = value; }
-void Jit::ClearExclusiveState() { impl->state.exclusive = false; }
+void Jit::ClearExclusiveState() { A32ClearExclusive(&impl->state); }
 void Jit::DumpDisassembly() const { throw std::runtime_error("Wasm disassembly is unavailable"); }
 std::vector<std::string> Jit::Disassemble() const { throw std::runtime_error("Wasm disassembly is unavailable"); }
 } // namespace Dynarmic::A32
