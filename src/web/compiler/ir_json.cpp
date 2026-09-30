@@ -112,6 +112,8 @@ std::string SerializeArmBlock(const Dynarmic::IR::Block& block,
             case Dynarmic::IR::Type::A32ExtReg: immediate = static_cast<uint64_t>(value.GetA32ExtRegRef()); break;
             case Dynarmic::IR::Type::Cond: immediate = static_cast<uint64_t>(value.GetCond()); break;
             case Dynarmic::IR::Type::AccType: immediate = static_cast<uint64_t>(value.GetAccType()); break;
+            // The register-elimination pass uses an empty NZCV immediate for a carry-only write.
+            case Dynarmic::IR::Type::NZCVFlags: immediate = 0; break;
             case Dynarmic::IR::Type::U1: case Dynarmic::IR::Type::U8: case Dynarmic::IR::Type::U16:
             case Dynarmic::IR::Type::U32: case Dynarmic::IR::Type::U64:
                 immediate = value.GetImmediateAsU64(); break;

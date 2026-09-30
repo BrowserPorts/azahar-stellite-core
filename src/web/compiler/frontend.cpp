@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include "ir_json.h"
+#include "optimize.h"
 #include "dynarmic/frontend/A32/a32_ir_emitter.h"
 #include "dynarmic/frontend/A32/translate/a32_translate.h"
 #include "dynarmic/frontend/A32/translate/translate_callbacks.h"
@@ -61,7 +62,8 @@ extern "C" const char* azahar_translate(const uint8_t* bytes, uint32_t size, uin
         CodeReader reader(bytes, size, pc & ~3u, limit);
         const Dynarmic::A32::LocationDescriptor location(pc, Dynarmic::A32::PSR(cpsr), Dynarmic::A32::FPSCR(fpscr));
         const Dynarmic::A32::TranslationOptions options{Dynarmic::A32::ArchVersion::v6K, true, true};
-        const auto block = Dynarmic::A32::Translate(location, &reader, options);
+        auto block = Dynarmic::A32::Translate(location, &reader, options);
+        Azahar::Wasm::OptimizeArmBlock(block);
         result = Azahar::Wasm::SerializeArmBlock(block);
     } catch (const std::exception& error) {
         result = "{\"error\":" + Azahar::Wasm::EncodeJsonString(error.what()) + "}";

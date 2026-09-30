@@ -413,9 +413,15 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       case "A32SetCpsrNZCV": case "A32SetCpsrNZCVRaw": mergeFlags(0xf0000000, () => arg(0)); break;
       case "A32SetCpsrNZCVQ": mergeFlags(0xf8000000, () => arg(0)); break;
       case "A32SetCpsrNZ": mergeFlags(0xc0000000, () => arg(0)); break;
-      case "A32SetCpsrNZC": mergeFlags(0xe0000000, () => {
-        arg(0); constant(0xc0000000).byte(0x71); arg(1); constant(29).byte(0x74).byte(0x72);
-      }); break;
+      case "A32SetCpsrNZC": {
+        const carryOnly = "imm" in node.args[0]!;
+        mergeFlags(carryOnly ? 0x20000000 : 0xe0000000, () => {
+          if (!carryOnly) { arg(0); constant(0xc0000000).byte(0x71); }
+          arg(1); constant(29).byte(0x74);
+          if (!carryOnly) body.byte(0x72);
+        });
+        break;
+      }
       case "A32OrQFlag": mergeFlags(0x08000000, () => {
         load(options.layout.cpsr); arg(0); constant(27).byte(0x74).byte(0x72);
       }); break;

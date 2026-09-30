@@ -12,6 +12,7 @@
 #include <emscripten.h>
 #include <wasm_simd128.h>
 #include "../compiler/ir_json.h"
+#include "../compiler/optimize.h"
 #include "dynarmic/common/fp/fpcr.h"
 #include "dynarmic/common/fp/fpsr.h"
 #include "dynarmic/common/fp/info.h"
@@ -462,8 +463,11 @@ struct Jit::Impl {
         CodeReader reader{*config.callbacks, limit};
         const TranslationOptions options{config.arch_version, config.define_unpredictable_behaviour,
                                          config.hook_hint_instructions};
-        const auto block = Translate(location, &reader, options);
+        auto block = Translate(location, &reader, options);
         if (block.CycleCount() == 0) throw std::runtime_error("ARM JIT produced a zero-cycle block");
+        Azahar::Wasm::OptimizeArmBlock(block,
+            config.HasOptimization(OptimizationFlag::GetSetElimination) && !config.check_halt_on_memory_access,
+            config.HasOptimization(OptimizationFlag::ConstProp), config.callbacks);
         const auto json = Azahar::Wasm::SerializeArmBlock(block, [this](const auto& instruction) {
             return CoprocessorBinding(instruction, config);
         });

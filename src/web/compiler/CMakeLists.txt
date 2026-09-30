@@ -38,8 +38,16 @@ if(EMSCRIPTEN)
 endif()
 add_library(azahar_arm_frontend STATIC
     ir_json.cpp
+    optimize.cpp
     ${A32_TRANSLATION}
     ${IR_SOURCES}
+    "${DYNARMIC_ROOT}/src/dynarmic/ir/opt/a32_constant_memory_reads_pass.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/ir/opt/a32_get_set_elimination_pass.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/ir/opt/constant_propagation_pass.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/ir/opt/dead_code_elimination_pass.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/ir/opt/identity_removal_pass.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/ir/opt/polyfill_pass.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/ir/opt/verification_pass.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/frontend/A32/a32_types.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/frontend/A32/a32_ir_emitter.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/frontend/A32/a32_location_descriptor.cpp"
