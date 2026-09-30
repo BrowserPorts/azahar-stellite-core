@@ -80,7 +80,8 @@ std::string EncodeJsonString(const std::string& text) {
     return quoted + '"';
 }
 
-std::string SerializeArmBlock(const Dynarmic::IR::Block& block) {
+std::string SerializeArmBlock(const Dynarmic::IR::Block& block,
+    const std::function<std::string(const Dynarmic::IR::Inst&)>& binding) {
     std::unordered_map<const Dynarmic::IR::Inst*, unsigned> names;
     unsigned index = 0;
     for (const auto& instruction : block) names.emplace(&instruction, index++);
@@ -106,6 +107,7 @@ std::string SerializeArmBlock(const Dynarmic::IR::Block& block) {
             }
             uint64_t immediate = 0;
             switch (value.GetType()) {
+            case Dynarmic::IR::Type::Void: immediate = 0; break;
             case Dynarmic::IR::Type::A32Reg: immediate = static_cast<uint64_t>(value.GetA32RegRef()); break;
             case Dynarmic::IR::Type::A32ExtReg: immediate = static_cast<uint64_t>(value.GetA32ExtRegRef()); break;
             case Dynarmic::IR::Type::Cond: immediate = static_cast<uint64_t>(value.GetCond()); break;
@@ -122,7 +124,12 @@ std::string SerializeArmBlock(const Dynarmic::IR::Block& block) {
             }
             stream << "{\"imm\":\"" << immediate << "\",\"type\":" << EncodeJsonString(Dynarmic::IR::GetNameOf(value.GetType())) << '}';
         }
-        stream << "]}";
+        stream << ']';
+        if (binding) {
+            const auto value = binding(instruction);
+            if (!value.empty()) stream << ",\"binding\":" << value;
+        }
+        stream << '}';
     }
     stream << "]}";
     return stream.str();

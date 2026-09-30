@@ -14,7 +14,10 @@
 #include "dynarmic/frontend/A32/a32_location_descriptor.h"
 #include "dynarmic/frontend/A32/translate/a32_translate.h"
 #include "dynarmic/interface/A32/a32.h"
+#include "dynarmic/interface/A32/coprocessor.h"
 #include "dynarmic/ir/basic_block.h"
+#include "dynarmic/ir/microinstruction.h"
+#include "dynarmic/ir/opcodes.h"
 
 namespace {
 struct alignas(8) ArmState {
@@ -87,6 +90,63 @@ bool Overlaps(uint32_t a, uint64_t a_length, uint32_t b, uint64_t b_length) {
     return a_length >= (uint64_t{1} << 32) || b_length >= (uint64_t{1} << 32) ||
         uint32_t(a - b) < b_length || uint32_t(b - a) < a_length;
 }
+
+std::string CallbackBinding(const Dynarmic::A32::Coprocessor::Callback& callback) {
+    return "{\"kind\":\"callback\",\"function\":" +
+        std::to_string(reinterpret_cast<uintptr_t>(callback.function)) +
+        ",\"userArgument\":" + std::to_string(reinterpret_cast<uintptr_t>(callback.user_arg.value_or(nullptr))) + "}";
+}
+
+std::string AccessBinding(uint32_t* address) {
+    if (!address) throw std::runtime_error("Null coprocessor register binding");
+    return "{\"kind\":\"access\",\"addresses\":[" + std::to_string(reinterpret_cast<uintptr_t>(address)) + "]}";
+}
+std::string AccessBinding(const std::array<uint32_t*, 2>& addresses) {
+    if (!addresses[0] || !addresses[1]) throw std::runtime_error("Null coprocessor register binding");
+    return "{\"kind\":\"access\",\"addresses\":[" + std::to_string(reinterpret_cast<uintptr_t>(addresses[0])) +
+        ',' + std::to_string(reinterpret_cast<uintptr_t>(addresses[1])) + "]}";
+}
+template <class T> std::string Binding(const T& value) {
+    if (const auto* callback = std::get_if<Dynarmic::A32::Coprocessor::Callback>(&value)) return CallbackBinding(*callback);
+    if constexpr (std::is_same_v<T, Dynarmic::A32::Coprocessor::CallbackOrAccessOneWord>) {
+        if (const auto* access = std::get_if<uint32_t*>(&value)) return AccessBinding(*access);
+    } else {
+        if (const auto* access = std::get_if<std::array<uint32_t*, 2>>(&value)) return AccessBinding(*access);
+    }
+    throw std::runtime_error("Coprocessor did not provide a JIT binding");
+}
+
+std::string CoprocessorBinding(const Dynarmic::IR::Inst& instruction, Dynarmic::A32::UserConfig& config) {
+    using Dynarmic::IR::Opcode;
+    using Dynarmic::A32::CoprocReg;
+    const auto opcode = instruction.GetOpcode();
+    if (opcode != Opcode::A32CoprocGetOneWord && opcode != Opcode::A32CoprocSendOneWord &&
+        opcode != Opcode::A32CoprocGetTwoWords && opcode != Opcode::A32CoprocSendTwoWords &&
+        opcode != Opcode::A32CoprocInternalOperation && opcode != Opcode::A32CoprocLoadWords &&
+        opcode != Opcode::A32CoprocStoreWords) return {};
+    const auto info = instruction.GetArg(0).GetCoprocInfo();
+    const auto& coprocessor = config.coprocessors.at(info[0]);
+    if (!coprocessor) throw std::runtime_error("Guest coprocessor is unavailable");
+    switch (opcode) {
+    case Opcode::A32CoprocGetOneWord:
+        return Binding(coprocessor->CompileGetOneWord(info[1], info[2], CoprocReg(info[3]), CoprocReg(info[4]), info[5]));
+    case Opcode::A32CoprocSendOneWord:
+        return Binding(coprocessor->CompileSendOneWord(info[1], info[2], CoprocReg(info[3]), CoprocReg(info[4]), info[5]));
+    case Opcode::A32CoprocGetTwoWords:
+        return Binding(coprocessor->CompileGetTwoWords(info[1], info[2], CoprocReg(info[3])));
+    case Opcode::A32CoprocSendTwoWords:
+        return Binding(coprocessor->CompileSendTwoWords(info[1], info[2], CoprocReg(info[3])));
+    default: {
+        const auto callback = opcode == Opcode::A32CoprocInternalOperation
+            ? coprocessor->CompileInternalOperation(info[1], info[2], CoprocReg(info[3]), CoprocReg(info[4]), CoprocReg(info[5]), info[6])
+            : opcode == Opcode::A32CoprocLoadWords
+                ? coprocessor->CompileLoadWords(info[1], info[2], CoprocReg(info[3]), info[4] ? std::optional<uint8_t>{info[5]} : std::nullopt)
+                : coprocessor->CompileStoreWords(info[1], info[2], CoprocReg(info[3]), info[4] ? std::optional<uint8_t>{info[5]} : std::nullopt);
+        if (!callback) throw std::runtime_error("Coprocessor did not provide a JIT callback");
+        return CallbackBinding(*callback);
+    }
+    }
+}
 } // namespace
 
 // Generated code imports these raw Wasm functions, avoiding JavaScript on memory access.
@@ -125,6 +185,11 @@ EMSCRIPTEN_KEEPALIVE void A32DataSynchronizationBarrier(ArmState*) {
     std::atomic_thread_fence(std::memory_order_seq_cst);
 }
 EMSCRIPTEN_KEEPALIVE void A32ClearExclusive(ArmState* state) { state->exclusive = false; }
+EMSCRIPTEN_KEEPALIVE uint64_t WasmCallCoprocessor(ArmState*, uint32_t function, uintptr_t user_argument,
+                                               uint32_t argument0, uint32_t argument1) {
+    const auto callback = reinterpret_cast<decltype(Dynarmic::A32::Coprocessor::Callback::function)>(function);
+    return callback(reinterpret_cast<void*>(user_argument), argument0, argument1);
+}
 }
 
 namespace Dynarmic::A32 {
@@ -178,7 +243,9 @@ struct Jit::Impl {
                                          config.hook_hint_instructions};
         const auto block = Translate(location, &reader, options);
         if (block.CycleCount() == 0) throw std::runtime_error("ARM JIT produced a zero-cycle block");
-        const auto json = Azahar::Wasm::SerializeArmBlock(block);
+        const auto json = Azahar::Wasm::SerializeArmBlock(block, [this](const auto& instruction) {
+            return CoprocessorBinding(instruction, config);
+        });
         const uint32_t layout[] = {offsetof(ArmState, registers), offsetof(ArmState, cpsr),
             offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit)};
         uint32_t bytes = 0;

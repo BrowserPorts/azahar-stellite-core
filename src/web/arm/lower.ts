@@ -62,6 +62,16 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   };
   const argType = (value: Argument): ValueType => "ref" in value
     ? wasmType(block.nodes[value.ref]!.type) : wasmType(value.type);
+  const helper = (name: string, params: ValueType[], results: ValueType[], emit: () => unknown): undefined => {
+    if (!options.helperNames?.has(name)) throw new JitError("compile", `ARM Wasm lowering is missing ${name}`);
+    let importIndex = imports.findIndex((item) => item.name === name);
+    if (importIndex < 0) {
+      importIndex = imports.length;
+      imports.push({ module: "core", name, type: { params: ["i32", ...params], results } });
+    }
+    get(0); emit(); body.byte(0x10).u32(importIndex);
+    return undefined;
+  };
   const bit = (mask: number): Bytes => load(options.layout.cpsr).byte(0x41)
     .signed(BigInt(mask), 32).byte(0x71).byte(0x45).byte(0x45);
   const condition = (code: number): undefined => {
@@ -196,6 +206,35 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       case "A32SetExtendedRegister64": store(options.layout.extendedRegisters + (immediate(node.args[0]!) - 32) * 8, () => arg(1), true); break;
       case "A32GetCpsr": load(options.layout.cpsr); break;
       case "A32SetCpsr": store(options.layout.cpsr, () => arg(0)); break;
+      case "A32CoprocGetOneWord": case "A32CoprocGetTwoWords":
+      case "A32CoprocSendOneWord": case "A32CoprocSendTwoWords":
+      case "A32CoprocInternalOperation": case "A32CoprocLoadWords": case "A32CoprocStoreWords": {
+        const binding = node.binding;
+        if (!binding) throw new JitError("compile", "Coprocessor is missing its compiled binding");
+        if (binding.kind === "callback") {
+          helper("WasmCallCoprocessor", ["i32", "i32", "i32", "i32"], ["i64"], () => {
+            constant(binding.function); constant(binding.userArgument);
+            if (node.args[1]) arg(1); else constant(0);
+            if (node.args[2]) arg(2); else constant(0);
+          });
+          if (!result) body.byte(0x1a);
+          else if (node.type !== "U64") body.byte(0xa7);
+        } else {
+          const count = node.op.endsWith("TwoWords") ? 2 : 1;
+          if (binding.addresses.length !== count) throw new JitError("compile", "Invalid coprocessor register binding");
+          for (let word = 0; word < count; ++word) {
+            constant(binding.addresses[word]!);
+            if (result) {
+              body.byte(0x28).u32(2).u32(0);
+              if (count === 2) {
+                body.byte(0xad);
+                if (word === 1) body.byte(0x42).signed(32n, 64).byte(0x86).byte(0x84);
+              }
+            } else { arg(word + 1); body.byte(0x36).u32(2).u32(0); }
+          }
+        }
+        break;
+      }
       case "A32BXWritePC":
         store(options.layout.registers + 60, () => {
           arg(0); constant(-2); constant(-4); arg(0); constant(1).byte(0x71).byte(0x1b).byte(0x71);
@@ -284,17 +323,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       case "ConditionalSelect32": case "ConditionalSelect64": case "ConditionalSelectNZCV":
         arg(1); arg(2); condition(immediate(node.args[0]!)); body.byte(0x1b); break;
       default: {
-        if (!options.helperNames?.has(node.op)) {
-          throw new JitError("compile", `ARM Wasm lowering is missing ${node.op}`);
-        }
-        let importIndex = imports.findIndex((item) => item.name === node.op);
-        if (importIndex < 0) {
-          importIndex = imports.length;
-          imports.push({ module: "core", name: node.op, type: {
-            params: ["i32", ...node.args.map(argType)], results: result ? [wasmType(node.type)] : [],
-          } });
-        }
-        get(0); node.args.forEach(argument); body.byte(0x10).u32(importIndex);
+        helper(node.op, node.args.map(argType), result ? [wasmType(node.type)] : [], () => node.args.forEach(argument));
       }
     }
     if (result) set(index + 2);

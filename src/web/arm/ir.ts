@@ -5,6 +5,8 @@ export interface Node {
   op: string;
   type: string;
   args: Argument[];
+  binding?: { kind: "access"; addresses: number[] } |
+    { kind: "callback"; function: number; userArgument: number };
 }
 export type Terminal =
   | { kind: "dispatch" }

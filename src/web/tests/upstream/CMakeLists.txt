@@ -90,6 +90,7 @@ if(EMSCRIPTEN)
     add_subdirectory("${AZAHAR_ROOT}/src/web/compiler" "${CMAKE_CURRENT_BINARY_DIR}/arm-frontend" EXCLUDE_FROM_ALL)
     add_executable(dynarmic_arm_jit_fixtures
         "${AZAHAR_ROOT}/src/web/arm/jit.cpp"
+        "${DYNARMIC_ROOT}/tests/A32/test_coprocessor.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_thumb_instructions.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_svc.cpp")
     target_link_libraries(dynarmic_arm_jit_fixtures PRIVATE azahar_arm_frontend Catch2::Catch2WithMain)
@@ -121,6 +122,7 @@ else()
     set(CMAKE_POLICY_DEFAULT_CMP0167 OLD)
     add_subdirectory("${DYNARMIC_ROOT}" "${CMAKE_CURRENT_BINARY_DIR}/dynarmic" EXCLUDE_FROM_ALL)
     add_executable(dynarmic_arm_jit_fixtures
+        "${DYNARMIC_ROOT}/tests/A32/test_coprocessor.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_thumb_instructions.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_svc.cpp")
     target_link_libraries(dynarmic_arm_jit_fixtures PRIVATE dynarmic Catch2::Catch2WithMain merry::mcl fmt::fmt)
