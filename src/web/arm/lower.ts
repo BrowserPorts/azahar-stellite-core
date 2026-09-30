@@ -44,6 +44,12 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   const constant = (value: number): Bytes => body.byte(0x41).signed(BigInt(value), 32);
   const get = (index: number): Bytes => body.byte(0x20).u32(index);
   const set = (index: number): Bytes => body.byte(0x21).u32(index);
+  const simd = (opcode: number): Bytes => body.byte(0xfd).u32(opcode);
+  const zeroVector = (): Bytes => simd(0x0c).append(new Uint8Array(16));
+  const vector64 = (emit: () => unknown): undefined => {
+    zeroVector(); emit(); simd(0x1e).byte(0);
+    return undefined;
+  };
   const load = (offset: number, wide = false): Bytes =>
     get(0).byte(wide ? 0x29 : 0x28).u32(wide ? 3 : 2).u32(offset);
   const store = (offset: number, value: () => unknown, wide = false): undefined => {
@@ -110,7 +116,37 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     const shift = carryLocals.get(reference);
     if (wide !== undefined) get(wide).byte(0x42).signed(32n, 64).byte(0x88).byte(0xa7);
     else if (shift !== undefined) get(shift);
-    else throw new JitError("compile", `Missing carry lowering for ${block.nodes[reference]?.op}`);
+    else if (block.nodes[reference]?.op === "MostSignificantWord") {
+      argument(block.nodes[reference]!.args[0]!);
+      body.byte(0x42).signed(31n, 64).byte(0x88).byte(0xa7); constant(1).byte(0x71);
+    } else throw new JitError("compile", `Missing carry lowering for ${block.nodes[reference]?.op}`);
+    return undefined;
+  };
+  const packed16 = (node: ArmBlock["nodes"][number], flags = false): undefined => {
+    const match = /^Packed(Halving)?(AddSub|SubAdd|Add|Sub)(S|U)16$/.exec(node.op);
+    if (!match) throw new JitError("compile", `Missing packed flags lowering for ${node.op}`);
+    const halving = Boolean(match[1]);
+    const signed = match[3] === "S";
+    const cross = match[2] === "AddSub" || match[2] === "SubAdd";
+    const lane = (position: number, half: number): undefined => {
+      argument(node.args[position]!); constant(half * 16).byte(0x76);
+      if (signed) body.byte(0xc1); else constant(65535).byte(0x71);
+      return undefined;
+    };
+    for (let half = 0; half < 2; ++half) {
+      const subtract = match[2] === "Sub" || match[2] === (half === 0 ? "AddSub" : "SubAdd");
+      lane(0, half); lane(1, cross ? 1 - half : half); body.byte(subtract ? 0x6b : 0x6a);
+      if (flags) {
+        if (halving) throw new JitError("compile", "Halving packed operations do not produce GE flags");
+        constant(signed || subtract ? 0 : 65536).byte(signed || subtract ? 0x4e : 0x4f);
+        constant(-1).byte(0x6c);
+      } else if (halving) {
+        if (!signed) constant(0x1ffff).byte(0x71);
+        constant(1).byte(signed ? 0x75 : 0x76);
+      }
+      constant(65535).byte(0x71); constant(half * 16).byte(0x74);
+      if (half) body.byte(0x72);
+    }
     return undefined;
   };
   const overflow = (reference: number): undefined => {
@@ -193,7 +229,8 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   block.nodes.forEach((node, index) => {
     const arg = (position: number): undefined => argument(node.args[position]!);
     let result = node.type !== "Void";
-    if (binary[node.op] !== undefined) {
+    if (/^Packed(Halving)?(AddSub|SubAdd|Add|Sub)(S|U)16$/.test(node.op)) packed16(node);
+    else if (binary[node.op] !== undefined) {
       arg(0); arg(1); body.byte(binary[node.op]!);
     } else switch (node.op) {
       case "Void": case "PushRSB": case "A32UpdateUpperLocationDescriptor": result = false; break;
@@ -204,6 +241,44 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       case "A32SetExtendedRegister32": store(options.layout.extendedRegisters + immediate(node.args[0]!) * 4, () => arg(1)); break;
       case "A32GetExtendedRegister64": load(options.layout.extendedRegisters + (immediate(node.args[0]!) - 32) * 8, true); break;
       case "A32SetExtendedRegister64": store(options.layout.extendedRegisters + (immediate(node.args[0]!) - 32) * 8, () => arg(1), true); break;
+      case "ZeroVector": zeroVector(); break;
+      case "A32GetVector": {
+        const register = immediate(node.args[0]!);
+        if (register < 64) vector64(() => load(options.layout.extendedRegisters + (register - 32) * 8, true));
+        else { get(0); simd(0).u32(4).u32(options.layout.extendedRegisters + (register - 64) * 16); }
+        break;
+      }
+      case "A32SetVector": {
+        const register = immediate(node.args[0]!);
+        if (register < 64) store(options.layout.extendedRegisters + (register - 32) * 8, () => {
+          arg(1); simd(0x1d).byte(0);
+        }, true);
+        else { get(0); arg(1); simd(0x0b).u32(4).u32(options.layout.extendedRegisters + (register - 64) * 16); }
+        break;
+      }
+      case "VectorTable": result = false; break;
+      case "VectorTableLookup64": {
+        const tableArgument = node.args[1]!;
+        const table = "ref" in tableArgument ? block.nodes[tableArgument.ref] : undefined;
+        if (table?.op !== "VectorTable") throw new JitError("compile", "Invalid ARM vector table");
+        const entries = table.args.filter((entry) => !("imm" in entry && entry.type === "Void"));
+        if (entries.length < 1 || entries.length > 4 || entries.some((entry) => argType(entry) !== "i64")) {
+          throw new JitError("compile", "Invalid ARM vector table width");
+        }
+        const pair = (start: number): undefined => {
+          vector64(() => argument(entries[start]!));
+          if (entries[start + 1]) { argument(entries[start + 1]!); simd(0x1e).byte(1); }
+          return undefined;
+        };
+        vector64(() => arg(0));
+        pair(0); vector64(() => arg(2)); simd(0x0e);
+        if (entries.length > 2) {
+          pair(2); vector64(() => arg(2)); constant(16); simd(0x0f); simd(0x71); simd(0x0e); simd(0x50);
+        }
+        vector64(() => arg(2)); constant(entries.length * 8); simd(0x0f); simd(0x2c);
+        simd(0x52); simd(0x1d).byte(0);
+        break;
+      }
       case "A32GetCpsr": load(options.layout.cpsr); break;
       case "A32SetCpsr": store(options.layout.cpsr, () => arg(0)); break;
       case "A32CoprocGetOneWord": case "A32CoprocGetTwoWords":
@@ -249,6 +324,20 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         arg(0); constant(0xf0000000).byte(0x71).byte(0x72);
       }); break;
       case "A32GetCFlag": bit(0x20000000); break;
+      case "A32SetGEFlagsCompressed": mergeFlags(0x000f0000, () => { arg(0); constant(16).byte(0x74); }); break;
+      case "A32SetGEFlags": mergeFlags(0x000f0000, () => {
+        for (let flag = 0; flag < 4; ++flag) {
+          arg(0); constant(flag * 8).byte(0x76); constant(1).byte(0x71); constant(flag + 16).byte(0x74);
+          if (flag) body.byte(0x72);
+        }
+      }); break;
+      case "A32GetGEFlags":
+        for (let flag = 0; flag < 4; ++flag) {
+          load(options.layout.cpsr); constant(flag + 16).byte(0x76); constant(1).byte(0x71);
+          constant(255).byte(0x6c); constant(flag * 8).byte(0x74);
+          if (flag) body.byte(0x72);
+        }
+        break;
       case "A32SetCheckBit": store(options.layout.checkBit, () => arg(0)); break;
       case "A32SetCpsrNZCV": case "A32SetCpsrNZCVRaw": mergeFlags(0xf0000000, () => arg(0)); break;
       case "A32SetCpsrNZCVQ": mergeFlags(0xf8000000, () => arg(0)); break;
@@ -263,6 +352,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       case "GetCFlagFromNZCV": arg(0); constant(29).byte(0x76); constant(1).byte(0x71); break;
       case "GetCarryFromOp": carry((node.args[0] as { ref: number }).ref); break;
       case "GetOverflowFromOp": overflow((node.args[0] as { ref: number }).ref); break;
+      case "GetGEFromOp": packed16(block.nodes[(node.args[0] as { ref: number }).ref]!, true); break;
       case "GetNZFromOp": case "GetNZCVFromOp": {
         const reference = (node.args[0] as { ref: number }).ref;
         arg(0);
@@ -281,6 +371,31 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         if (node.op === "Sub32") constant(-1).byte(0x73);
         body.byte(0xad).byte(0x7c); arg(2); body.byte(0xad).byte(0x7c);
         body.byte(0x22).u32(wideLocals.get(index)!).byte(0xa7);
+        break;
+      case "Add64": case "Sub64":
+        arg(0); arg(1);
+        if (node.op === "Sub64") body.byte(0x42).signed(-1n, 64).byte(0x85);
+        body.byte(0x7c); arg(2); body.byte(0xad).byte(0x7c); break;
+      case "SignedDiv32": case "UnsignedDiv32":
+        arg(1); body.byte(0x45).byte(0x04).byte(0x7f); constant(0); body.byte(0x05);
+        if (node.op === "SignedDiv32") {
+          arg(0); constant(-2147483648).byte(0x46); arg(1); constant(-1).byte(0x46).byte(0x71);
+          body.byte(0x04).byte(0x7f); constant(-2147483648); body.byte(0x05);
+        }
+        arg(0); arg(1); body.byte(node.op === "SignedDiv32" ? 0x6d : 0x6e);
+        if (node.op === "SignedDiv32") body.byte(0x0b);
+        body.byte(0x0b); break;
+      case "PackedAbsDiffSumU8":
+        for (let byte = 0; byte < 4; ++byte) {
+          const lane = (position: number): undefined => {
+            arg(position); constant(byte * 8).byte(0x76); constant(255).byte(0x71);
+            return undefined;
+          };
+          lane(0); lane(1); body.byte(0x6b);
+          lane(1); lane(0); body.byte(0x6b);
+          lane(0); lane(1); body.byte(0x4f).byte(0x1b);
+          if (byte) body.byte(0x6a);
+        }
         break;
       case "LogicalShiftLeft32": case "LogicalShiftRight32": case "ArithmeticShiftRight32":
       case "RotateRight32": case "RotateRightExtended": shift32(node.op, index, arg); break;

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <cstdlib>
 #include <limits>
 #include <map>
@@ -9,7 +10,13 @@
 #include <utility>
 #include <vector>
 #include <emscripten.h>
+#include <wasm_simd128.h>
 #include "../compiler/ir_json.h"
+#include "dynarmic/common/fp/fpcr.h"
+#include "dynarmic/common/fp/fpsr.h"
+#include "dynarmic/common/fp/op/FPToFixed.h"
+#include "dynarmic/common/fp/process_exception.h"
+#include "dynarmic/common/fp/unpacked.h"
 #include "dynarmic/frontend/A32/a32_ir_emitter.h"
 #include "dynarmic/frontend/A32/a32_location_descriptor.h"
 #include "dynarmic/frontend/A32/translate/a32_translate.h"
@@ -147,6 +154,37 @@ std::string CoprocessorBinding(const Dynarmic::IR::Inst& instruction, Dynarmic::
     }
     }
 }
+
+template <class Bits> uint32_t CompareFP(Bits lhs, Bits rhs, bool signal_quiet_nan,
+                                       Dynarmic::FP::FPCR fpcr, Dynarmic::FP::FPSR& fpsr) {
+    using namespace Dynarmic::FP;
+    const auto left = FPUnpack(lhs, fpcr, fpsr);
+    const auto right = FPUnpack(rhs, fpcr, fpsr);
+    const auto left_type = std::get<FPType>(left);
+    const auto right_type = std::get<FPType>(right);
+    if (left_type == FPType::QNaN || left_type == FPType::SNaN ||
+        right_type == FPType::QNaN || right_type == FPType::SNaN) {
+        if (signal_quiet_nan || left_type == FPType::SNaN || right_type == FPType::SNaN) {
+            FPProcessException(FPExc::InvalidOp, fpcr, fpsr);
+        }
+        return 0x30000000;
+    }
+    using Float = std::conditional_t<sizeof(Bits) == 4, float, double>;
+    const Float left_value = left_type == FPType::Zero ? Float{0} : std::bit_cast<Float>(lhs);
+    const Float right_value = right_type == FPType::Zero ? Float{0} : std::bit_cast<Float>(rhs);
+    return left_value == right_value ? 0x60000000 : left_value < right_value ? 0x80000000 : 0x20000000;
+}
+void SetFPStatus(ArmState* state, const Dynarmic::FP::FPSR& fpsr) {
+    state->fpscr = (state->fpscr & ~0x9fu) | (fpsr.Value() & 0x9f);
+}
+template <class Bits> uint64_t ToFixed(ArmState* state, Bits value, uint32_t integer_bits,
+                                     uint32_t fractional_bits, uint32_t rounding, bool unsigned_value) {
+    Dynarmic::FP::FPSR fpsr{state->fpscr};
+    const auto result = Dynarmic::FP::FPToFixed(integer_bits, value, fractional_bits, unsigned_value,
+        Dynarmic::FP::FPCR{state->fpscr}, static_cast<Dynarmic::FP::RoundingMode>(rounding), fpsr);
+    SetFPStatus(state, fpsr);
+    return result;
+}
 } // namespace
 
 // Generated code imports these raw Wasm functions, avoiding JavaScript on memory access.
@@ -190,6 +228,47 @@ EMSCRIPTEN_KEEPALIVE uint64_t WasmCallCoprocessor(ArmState*, uint32_t function, 
     const auto callback = reinterpret_cast<decltype(Dynarmic::A32::Coprocessor::Callback::function)>(function);
     return callback(reinterpret_cast<void*>(user_argument), argument0, argument1);
 }
+EMSCRIPTEN_KEEPALIVE uint32_t FPCompare32(ArmState* state, uint32_t lhs, uint32_t rhs, uint32_t signal_quiet_nan) {
+    Dynarmic::FP::FPSR fpsr{state->fpscr};
+    const auto flags = CompareFP(lhs, rhs, signal_quiet_nan, Dynarmic::FP::FPCR{state->fpscr}, fpsr);
+    SetFPStatus(state, fpsr);
+    return flags;
+}
+EMSCRIPTEN_KEEPALIVE uint32_t FPCompare64(ArmState* state, uint64_t lhs, uint64_t rhs, uint32_t signal_quiet_nan) {
+    Dynarmic::FP::FPSR fpsr{state->fpscr};
+    const auto flags = CompareFP(lhs, rhs, signal_quiet_nan, Dynarmic::FP::FPCR{state->fpscr}, fpsr);
+    SetFPStatus(state, fpsr);
+    return flags;
+}
+EMSCRIPTEN_KEEPALIVE v128_t FPVectorGreater32(ArmState* state, v128_t lhs, v128_t rhs, uint32_t fpscr_controlled) {
+    const auto left = std::bit_cast<std::array<uint32_t, 4>>(lhs);
+    const auto right = std::bit_cast<std::array<uint32_t, 4>>(rhs);
+    std::array<uint32_t, 4> result;
+    Dynarmic::FP::FPSR fpsr{state->fpscr};
+    const Dynarmic::FP::FPCR fpcr{fpscr_controlled ? state->fpscr : 0x03000000u};
+    for (size_t lane = 0; lane < result.size(); ++lane) {
+        result[lane] = CompareFP(left[lane], right[lane], false, fpcr, fpsr) == 0x20000000 ? 0xffffffff : 0;
+    }
+    SetFPStatus(state, fpsr);
+    return std::bit_cast<v128_t>(result);
+}
+#define FIXED_CONVERSION(name, input_type, result_type, bits, unsigned_value) \
+    EMSCRIPTEN_KEEPALIVE result_type name(ArmState* state, input_type value, uint32_t fractional_bits, uint32_t rounding) { \
+        return static_cast<result_type>(ToFixed(state, value, bits, fractional_bits, rounding, unsigned_value)); \
+    }
+FIXED_CONVERSION(FPSingleToFixedS16, uint32_t, uint32_t, 16, false)
+FIXED_CONVERSION(FPSingleToFixedU16, uint32_t, uint32_t, 16, true)
+FIXED_CONVERSION(FPSingleToFixedS32, uint32_t, uint32_t, 32, false)
+FIXED_CONVERSION(FPSingleToFixedU32, uint32_t, uint32_t, 32, true)
+FIXED_CONVERSION(FPSingleToFixedS64, uint32_t, uint64_t, 64, false)
+FIXED_CONVERSION(FPSingleToFixedU64, uint32_t, uint64_t, 64, true)
+FIXED_CONVERSION(FPDoubleToFixedS16, uint64_t, uint32_t, 16, false)
+FIXED_CONVERSION(FPDoubleToFixedU16, uint64_t, uint32_t, 16, true)
+FIXED_CONVERSION(FPDoubleToFixedS32, uint64_t, uint32_t, 32, false)
+FIXED_CONVERSION(FPDoubleToFixedU32, uint64_t, uint32_t, 32, true)
+FIXED_CONVERSION(FPDoubleToFixedS64, uint64_t, uint64_t, 64, false)
+FIXED_CONVERSION(FPDoubleToFixedU64, uint64_t, uint64_t, 64, true)
+#undef FIXED_CONVERSION
 }
 
 namespace Dynarmic::A32 {

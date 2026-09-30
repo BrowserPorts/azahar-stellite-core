@@ -90,10 +90,16 @@ if(EMSCRIPTEN)
     add_subdirectory("${AZAHAR_ROOT}/src/web/compiler" "${CMAKE_CURRENT_BINARY_DIR}/arm-frontend" EXCLUDE_FROM_ALL)
     add_executable(dynarmic_arm_jit_fixtures
         "${AZAHAR_ROOT}/src/web/arm/jit.cpp"
+        "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPToFixed.cpp"
+        "${DYNARMIC_ROOT}/src/dynarmic/common/fp/process_exception.cpp"
+        "${DYNARMIC_ROOT}/src/dynarmic/common/fp/process_nan.cpp"
+        "${DYNARMIC_ROOT}/src/dynarmic/common/fp/unpacked.cpp"
+        "${DYNARMIC_ROOT}/tests/A32/test_arm_instructions.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_coprocessor.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_thumb_instructions.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_svc.cpp")
     target_link_libraries(dynarmic_arm_jit_fixtures PRIVATE azahar_arm_frontend Catch2::Catch2WithMain)
+    target_compile_options(dynarmic_arm_jit_fixtures PRIVATE -msimd128)
     target_link_options(dynarmic_arm_jit_fixtures PRIVATE
         -sMODULARIZE=1 -sEXPORT_ES6=1 -sALLOW_TABLE_GROWTH=1 -sENVIRONMENT=web,node
         -Wl,--export-table "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=['$stringToNewUTF8','$UTF8ToString']"
@@ -122,6 +128,7 @@ else()
     set(CMAKE_POLICY_DEFAULT_CMP0167 OLD)
     add_subdirectory("${DYNARMIC_ROOT}" "${CMAKE_CURRENT_BINARY_DIR}/dynarmic" EXCLUDE_FROM_ALL)
     add_executable(dynarmic_arm_jit_fixtures
+        "${DYNARMIC_ROOT}/tests/A32/test_arm_instructions.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_coprocessor.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_thumb_instructions.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_svc.cpp")
