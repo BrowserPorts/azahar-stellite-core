@@ -7,6 +7,8 @@ export class PicaJitHost {
   readonly #free: number[] = [];
   readonly #live = new Set<number>();
 
+  constructor(readonly dispatch = false) {}
+
   compile(program: Uint32Array, swizzles: Uint32Array, entry: number, layout: Uint32Array,
     memory: WebAssembly.Memory, table: WebAssembly.Table,
     helpers: WebAssembly.ModuleImports): { slot: number; bytes: number } {
@@ -20,6 +22,7 @@ export class PicaJitHost {
       layout: { floatUniforms, boolUniforms, intUniforms, input, temporary, output,
         outputBank, addressRegisters, conditionalCode },
       shared: memory.buffer instanceof SharedArrayBuffer, maximumPages: 65536,
+      dispatch: this.dispatch,
     });
     const module = new WebAssembly.Module(bytes);
     const instance = new WebAssembly.Instance(module, { env: { memory }, core: helpers });

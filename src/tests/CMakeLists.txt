@@ -76,6 +76,9 @@ if(EMSCRIPTEN)
         -sSTACK_SIZE=4194304 -sPTHREAD_POOL_SIZE=4 -sEXIT_RUNTIME=1 -sDYNAMIC_EXECUTION=0)
     add_test(NAME tests COMMAND "${BUN_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/src/web/tests/upstream/run-jit.ts" "$<TARGET_FILE:tests>")
+    add_test(NAME pica_control_flow COMMAND "${BUN_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/src/web/tests/upstream/run-jit.ts" "$<TARGET_FILE:tests>"
+        "[shader]" --pica-dispatch)
     set(TEST_WEB_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
     file(GENERATE OUTPUT "${TEST_WEB_DIRECTORY}/browser-jit.html"
         INPUT "${PROJECT_SOURCE_DIR}/src/web/tests/upstream/browser-jit.html")
@@ -86,6 +89,7 @@ if(EMSCRIPTEN)
             "${PROJECT_SOURCE_DIR}/src/web/arm/jit-host.ts" "${PROJECT_SOURCE_DIR}/src/web/arm/lower.ts"
             "${PROJECT_SOURCE_DIR}/src/web/arm/ir.ts" "${PROJECT_SOURCE_DIR}/src/web/wasm/binary.ts"
             "${PROJECT_SOURCE_DIR}/src/web/pica/jit-host.ts" "${PROJECT_SOURCE_DIR}/src/web/pica/lower.ts"
+            "${PROJECT_SOURCE_DIR}/src/web/pica/control-flow.ts" "${PROJECT_SOURCE_DIR}/src/web/pica/instruction.ts"
             "${PROJECT_SOURCE_DIR}/src/web/protocol.ts")
     add_custom_target(browser_core_fixtures DEPENDS tests "${TEST_WEB_DIRECTORY}/browser-jit.js")
 else()

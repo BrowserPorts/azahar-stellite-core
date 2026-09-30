@@ -2,6 +2,8 @@
 
 import { Bytes, regionModule } from "../wasm/binary";
 import type { FunctionImport, ValueType } from "../wasm/binary";
+import { Op, opcode as decodeOpcode } from "./instruction";
+import { controlFlow, emitControlFlow } from "./control-flow";
 
 export interface PicaLayout {
   floatUniforms: number;
@@ -19,19 +21,10 @@ export interface PicaOptions {
   layout: PicaLayout;
   shared: boolean;
   maximumPages: number;
+  dispatch?: boolean;
 }
 
-// Opcode and operand fields follow nihstro's pinned shader_bytecode.h.
-const Op = {
-  ADD: 0, DP3: 1, DP4: 2, DPH: 3, EX2: 5, LG2: 6, MUL: 8,
-  SGE: 9, SLT: 10, FLR: 11, MAX: 12, MIN: 13, RCP: 14, RSQ: 15,
-  MOVA: 18, MOV: 19, DPHI: 24, SGEI: 26, SLTI: 27,
-  BREAK: 32, NOP: 33, END: 34, BREAKC: 35, CALL: 36, CALLC: 37, CALLU: 38,
-  IFU: 39, IFC: 40, LOOP: 41, EMIT: 42, SETEMIT: 43, JMPC: 44, JMPU: 45,
-  CMP: 46, MADI: 48, MAD: 56,
-} as const;
-
-class PicaEmitter {
+export class PicaEmitter {
   readonly body = new Bytes();
   readonly imports: FunctionImport[] = [];
   readonly locals: ValueType[] = ["v128", "v128", "v128", "v128", "i32", "i32"];
@@ -266,13 +259,12 @@ class PicaEmitter {
   }
 
   range(start: number, end: number): boolean {
-    if (start < 0 || start >= 4096 || end < start || end > 4096) {
+    if (start < 0 || start > 4096 || end < start || end > 4096) {
       throw new Error("Invalid PICA control-flow range");
     }
     for (let pc = start; pc < end; ++pc) {
       const word = this.program[pc]!;
-      const rawOpcode = word >>> 26;
-      const opcode = rawOpcode >= 48 ? rawOpcode & ~7 : rawOpcode >= 46 ? Op.CMP : rawOpcode;
+      const opcode = decodeOpcode(word, pc);
       if (opcode === Op.END || pc === 4095) { this.body.byte(0x0f); return true; }
       if (opcode === Op.NOP) continue;
       if (opcode === Op.EMIT || opcode === Op.SETEMIT) {
@@ -351,8 +343,39 @@ class PicaEmitter {
     return false;
   }
 
+  structured(start: number, end: number, calls: number[] = [], loops = 0, depth = 0): boolean {
+    if (start < 0 || end < start || end > 4096 || depth > 12) return false;
+    for (let pc = start; pc < end; ++pc) {
+      const word = this.program[pc]!;
+      const op = decodeOpcode(word, pc);
+      if (op === Op.END) return true;
+      const destination = (word >>> 10) & 4095;
+      const count = word & 255;
+      if (op === Op.JMPC || op === Op.JMPU) return false;
+      if (op === Op.CALL || op === Op.CALLC || op === Op.CALLU) {
+        if (calls.length >= 4 || calls.includes(destination) ||
+          !this.structured(destination, destination + count, [...calls, destination], loops, depth + 1)) {
+          return false;
+        }
+      } else if (op === Op.IFC || op === Op.IFU) {
+        if (destination < pc + 1 || destination + count > end ||
+          !this.structured(pc + 1, destination, calls, loops, depth + 1) ||
+          !this.structured(destination, destination + count, calls, loops, depth + 1)) return false;
+        pc = destination + count - 1;
+      } else if (op === Op.LOOP) {
+        if (loops >= 4 || destination < pc || destination + 1 > end ||
+          !this.structured(pc + 1, destination + 1, calls, loops + 1, depth + 1)) return false;
+        pc = destination;
+      } else if ((op === Op.BREAK || op === Op.BREAKC) && !loops) return false;
+    }
+    return true;
+  }
+
   compile(entry: number): Uint8Array<ArrayBuffer> {
-    this.range(entry, this.program.length);
+    const graph = controlFlow(this.program, entry);
+    if (this.options.dispatch || graph.hasJumps || !this.structured(entry, this.program.length)) {
+      emitControlFlow(this, graph, entry);
+    } else this.range(entry, this.program.length);
     return regionModule({ ...this.options, imports: this.imports,
       signature: { params: ["i32", "i32"], results: [] }, locals: this.locals, body: this.body });
   }

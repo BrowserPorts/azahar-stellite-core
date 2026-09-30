@@ -107,6 +107,7 @@ if(EMSCRIPTEN)
         DEPENDS browser-jit.ts "${AZAHAR_ROOT}/src/web/arm/jit-host.ts"
             "${AZAHAR_ROOT}/src/web/arm/lower.ts" "${AZAHAR_ROOT}/src/web/arm/ir.ts"
             "${AZAHAR_ROOT}/src/web/pica/jit-host.ts" "${AZAHAR_ROOT}/src/web/pica/lower.ts"
+            "${AZAHAR_ROOT}/src/web/pica/control-flow.ts" "${AZAHAR_ROOT}/src/web/pica/instruction.ts"
             "${AZAHAR_ROOT}/src/web/wasm/binary.ts" "${AZAHAR_ROOT}/src/web/protocol.ts")
     add_custom_target(browser_jit_fixtures DEPENDS
         dynarmic_arm_jit_fixtures "${CMAKE_CURRENT_BINARY_DIR}/browser-jit.js")
