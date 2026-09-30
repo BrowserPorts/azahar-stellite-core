@@ -66,7 +66,8 @@ if (ENABLE_LIBRETRO)
 endif()
 
 if(EMSCRIPTEN)
-    target_sources(tests PRIVATE "${PROJECT_SOURCE_DIR}/src/web/pica/jit.cpp")
+    # The native interpreter is an oracle for the original shader cases, never a core backend.
+    target_sources(tests PRIVATE "${PROJECT_SOURCE_DIR}/src/video_core/shader/shader_interpreter.cpp")
     find_program(BUN_EXECUTABLE NAMES bun REQUIRED)
     set_target_properties(tests PROPERTIES SUFFIX ".mjs")
     target_compile_definitions(tests PRIVATE CATCH_CONFIG_NO_POSIX_SIGNALS)

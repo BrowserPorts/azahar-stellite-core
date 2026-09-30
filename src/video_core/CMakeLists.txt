@@ -83,7 +83,6 @@ add_library(video_core STATIC EXCLUDE_FROM_ALL
     shader/generator/shader_uniforms.h
     shader/shader.cpp
     shader/shader.h
-    shader/shader_interpreter.cpp
     shader/shader_interpreter.h
     shader/shader_jit.cpp
     shader/shader_jit.h
@@ -99,6 +98,12 @@ add_library(video_core STATIC EXCLUDE_FROM_ALL
     video_core.cpp
     video_core.h
 )
+
+if(EMSCRIPTEN)
+    target_sources(video_core PRIVATE ../web/pica/jit.cpp ../web/pica/jit.h)
+else()
+    target_sources(video_core PRIVATE shader/shader_interpreter.cpp)
+endif()
 
 if (ENABLE_SOFTWARE_RENDERER)
     target_sources(video_core PRIVATE

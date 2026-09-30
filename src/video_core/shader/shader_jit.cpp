@@ -3,13 +3,16 @@
 // Refer to the license.txt file included.
 
 #include "common/arch.h"
-#if CITRA_ARCH(x86_64) || CITRA_ARCH(arm64)
+#if CITRA_ARCH(x86_64) || CITRA_ARCH(arm64) || CITRA_ARCH(wasm)
 
 #include "common/assert.h"
 #include "common/hash.h"
 #include "common/microprofile.h"
 #include "video_core/shader/shader.h"
 #include "video_core/shader/shader_jit.h"
+#if CITRA_ARCH(wasm)
+#include "web/pica/jit.h"
+#endif
 #if CITRA_ARCH(arm64)
 #include "video_core/shader/shader_jit_a64_compiler.h"
 #endif
@@ -40,6 +43,9 @@ void JitEngine::SetupBatch(ShaderSetup& setup, u32 entry_point) {
         setup.cached_shader = shader.get();
         cache.emplace_hint(iter, cache_key, std::move(shader));
     }
+#if CITRA_ARCH(wasm)
+    static_cast<const JitShader*>(setup.cached_shader)->Prepare(entry_point);
+#endif
 }
 
 MICROPROFILE_DECLARE(GPU_Shader);
@@ -55,4 +61,4 @@ void JitEngine::Run(const ShaderSetup& setup, ShaderUnit& state) const {
 
 } // namespace Pica::Shader
 
-#endif // CITRA_ARCH(x86_64) || CITRA_ARCH(arm64)
+#endif // CITRA_ARCH(x86_64) || CITRA_ARCH(arm64) || CITRA_ARCH(wasm)
