@@ -13,6 +13,12 @@ const binary: Record<string, number> = {
   LogicalShiftLeftMasked64: 0x86, LogicalShiftRightMasked64: 0x88,
   ArithmeticShiftRightMasked64: 0x87, RotateRightMasked64: 0x8a,
 };
+const vectorBinary: Record<string, number> = {
+  VectorAnd: 0x4e, VectorAndNot: 0x4f, VectorOr: 0x50, VectorEor: 0x51,
+};
+const laneExtract: Record<number, number> = { 8: 0x16, 16: 0x19, 32: 0x1b, 64: 0x1d };
+const laneReplace: Record<number, number> = { 8: 0x17, 16: 0x1a, 32: 0x1c, 64: 0x1e };
+const laneSplat: Record<number, number> = { 8: 0x0f, 16: 0x10, 32: 0x11, 64: 0x12 };
 
 function wasmType(type: string): ValueType {
   return type === "U64" || type === "CoprocInfo" ? "i64" : type === "U128" ? "v128" : "i32";
@@ -317,9 +323,33 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   block.nodes.forEach((node, index) => {
     const arg = (position: number): undefined => argument(node.args[position]!);
     let result = node.type !== "Void";
+    const rearrangement = /^Vector(Interleave(Lower|Upper)|Deinterleave(Even|Odd)(Lower)?)(8|16|32|64)$/.exec(node.op);
     if (/^Packed(Halving|Saturated)?(AddSub|SubAdd|Add|Sub)(S|U)(8|16)$/.test(node.op)) packed(node);
-    else if (binary[node.op] !== undefined) {
+    else if (rearrangement) {
+      const elementBytes = Number(rearrangement[5]) / 8;
+      const interleave = rearrangement[2] !== undefined;
+      const lower = rearrangement[4] !== undefined;
+      const width = lower ? 8 : 16;
+      if (lower && elementBytes === 8) throw new JitError("compile", "Invalid ARM deinterleave width");
+      arg(0); arg(1); simd(0x0d);
+      for (let byte = 0; byte < 16; ++byte) {
+        const element = Math.floor(byte / elementBytes);
+        const within = byte % elementBytes;
+        if (interleave) {
+          body.byte((element % 2) * 16 + Math.floor(element / 2) * elementBytes + within +
+            (rearrangement[2] === "Upper" ? 8 : 0));
+        } else {
+          const half = width / elementBytes / 2;
+          const source = (element >= half ? 16 : 0) +
+            ((element % half) * 2 + (rearrangement[3] === "Odd" ? 1 : 0)) * elementBytes + within;
+          body.byte(lower && byte >= 8 ? 0 : source);
+        }
+      }
+      if (lower) { body.byte(0x42).signed(0n, 64); simd(0x1e).byte(1); }
+    } else if (binary[node.op] !== undefined) {
       arg(0); arg(1); body.byte(binary[node.op]!);
+    } else if (vectorBinary[node.op] !== undefined) {
+      arg(0); arg(1); simd(vectorBinary[node.op]!);
     } else switch (node.op) {
       case "Void": case "PushRSB": case "A32UpdateUpperLocationDescriptor": result = false; break;
       case "Identity": arg(0); break;
@@ -332,6 +362,15 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       case "FPAbs64": case "FPNeg64":
         arg(0); body.byte(0x42).signed(node.op === "FPAbs64" ? 0x7fffffffffffffffn : 0x8000000000000000n, 64);
         body.byte(node.op === "FPAbs64" ? 0x83 : 0x85); break;
+      case "LogicalShiftLeft64": case "LogicalShiftRight64":
+        arg(0); arg(1); body.byte(0xad).byte(node.op === "LogicalShiftLeft64" ? 0x86 : 0x88);
+        body.byte(0x42).signed(0n, 64);
+        arg(1); constant(64).byte(0x49).byte(0x1b);
+        break;
+      case "ArithmeticShiftRight64":
+        arg(0); arg(1); constant(63); arg(1); constant(63).byte(0x49).byte(0x1b);
+        body.byte(0xad).byte(0x87); break;
+      case "RotateRight64": arg(0); arg(1); body.byte(0xad).byte(0x8a); break;
       case "A32GetRegister": load(options.layout.registers + immediate(node.args[0]!) * 4); break;
       case "A32SetRegister": store(options.layout.registers + immediate(node.args[0]!) * 4, () => arg(1)); break;
       case "A32GetExtendedRegister32": load(options.layout.extendedRegisters + immediate(node.args[0]!) * 4); break;
@@ -339,6 +378,54 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       case "A32GetExtendedRegister64": load(options.layout.extendedRegisters + (immediate(node.args[0]!) - 32) * 8, true); break;
       case "A32SetExtendedRegister64": store(options.layout.extendedRegisters + (immediate(node.args[0]!) - 32) * 8, () => arg(1), true); break;
       case "ZeroVector": zeroVector(); break;
+      case "ZeroExtendLongToQuad": vector64(() => arg(0)); break;
+      case "VectorNot": arg(0); simd(0x4d); break;
+      case "VectorZeroUpper":
+        arg(0); body.byte(0x42).signed(0n, 64); simd(0x1e).byte(1); break;
+      case "VectorGetElement8": case "VectorGetElement16":
+      case "VectorGetElement32": case "VectorGetElement64":
+      case "VectorSetElement8": case "VectorSetElement16":
+      case "VectorSetElement32": case "VectorSetElement64": {
+        const bits = Number(node.op.match(/\d+$/)![0]);
+        const lane = immediate(node.args[1]!);
+        if (lane < 0 || lane >= 128 / bits) throw new JitError("compile", "Invalid ARM vector lane");
+        arg(0);
+        if (node.op.startsWith("VectorSet")) {
+          arg(2); simd(laneReplace[bits]!).byte(lane);
+        } else simd(laneExtract[bits]!).byte(lane);
+        break;
+      }
+      case "VectorBroadcast8": case "VectorBroadcast16": case "VectorBroadcast32": case "VectorBroadcast64":
+      case "VectorBroadcastLower8": case "VectorBroadcastLower16": case "VectorBroadcastLower32":
+      case "VectorBroadcastElement8": case "VectorBroadcastElement16":
+      case "VectorBroadcastElement32": case "VectorBroadcastElement64":
+      case "VectorBroadcastElementLower8": case "VectorBroadcastElementLower16": case "VectorBroadcastElementLower32": {
+        const bits = Number(node.op.match(/\d+$/)![0]);
+        arg(0);
+        if (node.op.includes("Element")) {
+          const lane = immediate(node.args[1]!);
+          if (lane < 0 || lane >= 128 / bits) throw new JitError("compile", "Invalid ARM broadcast lane");
+          simd(laneExtract[bits]!).byte(lane);
+        }
+        simd(laneSplat[bits]!);
+        if (node.op.includes("Lower")) { body.byte(0x42).signed(0n, 64); simd(0x1e).byte(1); }
+        break;
+      }
+      case "VectorExtract": case "VectorExtractLower": {
+        const lower = node.op === "VectorExtractLower";
+        const width = lower ? 8 : 16;
+        const position = immediate(node.args[2]!);
+        if (position % 8 !== 0 || position < 0 || position > width * 8) {
+          throw new JitError("compile", "Invalid ARM vector extraction position");
+        }
+        arg(0); arg(1); simd(0x0d);
+        for (let lane = 0; lane < 16; ++lane) {
+          const source = lane + position / 8;
+          body.byte(lower && lane >= 8 ? 0 : source < width ? source : 16 + source - width);
+        }
+        if (lower) { body.byte(0x42).signed(0n, 64); simd(0x1e).byte(1); }
+        break;
+      }
       case "A32GetVector": {
         const register = immediate(node.args[0]!);
         if (register < 64) vector64(() => load(options.layout.extendedRegisters + (register - 32) * 8, true));
