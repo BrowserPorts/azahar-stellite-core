@@ -24,6 +24,10 @@ set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
 set(MCL_INSTALL OFF CACHE BOOL "" FORCE)
 set(MCL_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(MCL_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
+if(NOT EMSCRIPTEN)
+    set(FMT_INSTALL ON CACHE BOOL "" FORCE)
+    set(MCL_INSTALL ON CACHE BOOL "" FORCE)
+endif()
 add_subdirectory("${AZAHAR_ROOT}/externals/catch2" "${CMAKE_CURRENT_BINARY_DIR}/catch2" EXCLUDE_FROM_ALL)
 add_subdirectory("${AZAHAR_ROOT}/externals/fmt" "${CMAKE_CURRENT_BINARY_DIR}/fmt" EXCLUDE_FROM_ALL)
 add_subdirectory("${DYNARMIC_ROOT}/externals/mcl" "${CMAKE_CURRENT_BINARY_DIR}/mcl" EXCLUDE_FROM_ALL)
@@ -80,3 +84,37 @@ target_link_libraries(teakra_reference_fixtures PRIVATE teakra)
 target_compile_definitions(teakra_reference_fixtures PRIVATE CATCH_CONFIG_NO_POSIX_SIGNALS)
 register_fixture(teakra_reference_fixtures)
 add_custom_target(upstream_fixtures DEPENDS azahar_portable_fixtures dynarmic_fp_fixtures teakra_reference_fixtures)
+
+if(EMSCRIPTEN)
+    find_program(BUN_EXECUTABLE NAMES bun REQUIRED)
+    add_subdirectory("${AZAHAR_ROOT}/src/web/compiler" "${CMAKE_CURRENT_BINARY_DIR}/arm-frontend" EXCLUDE_FROM_ALL)
+    add_executable(dynarmic_arm_jit_fixtures
+        "${AZAHAR_ROOT}/src/web/arm/jit.cpp"
+        "${DYNARMIC_ROOT}/tests/A32/test_thumb_instructions.cpp"
+        "${DYNARMIC_ROOT}/tests/A32/test_svc.cpp")
+    target_link_libraries(dynarmic_arm_jit_fixtures PRIVATE azahar_arm_frontend Catch2::Catch2WithMain)
+    target_link_options(dynarmic_arm_jit_fixtures PRIVATE
+        -sMODULARIZE=1 -sEXPORT_ES6=1 -sALLOW_TABLE_GROWTH=1
+        -Wl,--export-table "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=['$stringToNewUTF8','$UTF8ToString']"
+        -sINITIAL_MEMORY=33554432 -sMAXIMUM_MEMORY=536870912)
+    set_target_properties(dynarmic_arm_jit_fixtures PROPERTIES SUFFIX ".mjs")
+    add_test(NAME dynarmic_arm_jit_fixtures COMMAND "${BUN_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/run-jit.ts" "$<TARGET_FILE:dynarmic_arm_jit_fixtures>")
+    add_dependencies(upstream_fixtures dynarmic_arm_jit_fixtures)
+else()
+    set(DYNARMIC_TESTS OFF CACHE BOOL "" FORCE)
+    set(DYNARMIC_FRONTENDS A32 CACHE STRING "" FORCE)
+    set(DYNARMIC_USE_BUNDLED_EXTERNALS ON CACHE BOOL "" FORCE)
+    set(DYNARMIC_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
+    set(DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT ON CACHE BOOL "" FORCE)
+    set(Boost_NO_BOOST_CMAKE ON CACHE BOOL "" FORCE)
+    set(Boost_INCLUDE_DIR "${AZAHAR_ROOT}/externals/boost" CACHE PATH "" FORCE)
+    set(CMAKE_POLICY_DEFAULT_CMP0167 OLD)
+    add_subdirectory("${DYNARMIC_ROOT}" "${CMAKE_CURRENT_BINARY_DIR}/dynarmic" EXCLUDE_FROM_ALL)
+    add_executable(dynarmic_arm_jit_fixtures
+        "${DYNARMIC_ROOT}/tests/A32/test_thumb_instructions.cpp"
+        "${DYNARMIC_ROOT}/tests/A32/test_svc.cpp")
+    target_link_libraries(dynarmic_arm_jit_fixtures PRIVATE dynarmic Catch2::Catch2WithMain merry::mcl fmt::fmt)
+    register_fixture(dynarmic_arm_jit_fixtures)
+    add_dependencies(upstream_fixtures dynarmic_arm_jit_fixtures)
+endif()

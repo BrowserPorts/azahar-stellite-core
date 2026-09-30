@@ -15,7 +15,7 @@ const binary: Record<string, number> = {
 };
 
 function wasmType(type: string): ValueType {
-  return type === "U64" ? "i64" : type === "U128" ? "v128" : "i32";
+  return type === "U64" || type === "CoprocInfo" ? "i64" : type === "U128" ? "v128" : "i32";
 }
 
 export interface LowerOptions {
@@ -55,7 +55,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       if (!block.nodes[value.ref]) throw new JitError("compile", "Invalid ARM IR reference");
       get(value.ref + 2);
     } else {
-      const wide = value.type === "U64";
+      const wide = wasmType(value.type) === "i64";
       body.byte(wide ? 0x42 : 0x41).signed(BigInt(value.imm), wide ? 64 : 32);
     }
     return undefined;
@@ -196,8 +196,19 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       case "A32SetExtendedRegister64": store(options.layout.extendedRegisters + (immediate(node.args[0]!) - 32) * 8, () => arg(1), true); break;
       case "A32GetCpsr": load(options.layout.cpsr); break;
       case "A32SetCpsr": store(options.layout.cpsr, () => arg(0)); break;
+      case "A32BXWritePC":
+        store(options.layout.registers + 60, () => {
+          arg(0); constant(-2); constant(-4); arg(0); constant(1).byte(0x71).byte(0x1b).byte(0x71);
+        });
+        mergeFlags(0x20, () => { arg(0); constant(1).byte(0x71); constant(5).byte(0x74); });
+        break;
       case "A32GetFpscr": load(options.layout.fpscr); break;
       case "A32SetFpscr": store(options.layout.fpscr, () => arg(0)); break;
+      case "A32GetFpscrNZCV": load(options.layout.fpscr); constant(0xf0000000).byte(0x71); break;
+      case "A32SetFpscrNZCV": store(options.layout.fpscr, () => {
+        load(options.layout.fpscr); constant(0x0fffffff).byte(0x71);
+        arg(0); constant(0xf0000000).byte(0x71).byte(0x72);
+      }); break;
       case "A32GetCFlag": bit(0x20000000); break;
       case "A32SetCheckBit": store(options.layout.checkBit, () => arg(0)); break;
       case "A32SetCpsrNZCV": case "A32SetCpsrNZCVRaw": mergeFlags(0xf0000000, () => arg(0)); break;
@@ -250,6 +261,16 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       case "IsZero32": arg(0); body.byte(0x45); break;
       case "IsZero64": arg(0); body.byte(0x50); break;
       case "CountLeadingZeros32": arg(0); body.byte(0x67); break;
+      case "ByteReverseHalf":
+        arg(0); constant(255).byte(0x71); constant(8).byte(0x74);
+        arg(0); constant(8).byte(0x76); constant(255).byte(0x71).byte(0x72); break;
+      case "ByteReverseWord":
+        for (let byte = 0; byte < 4; ++byte) {
+          arg(0); constant(byte * 8).byte(0x76); constant(255).byte(0x71);
+          constant((3 - byte) * 8).byte(0x74);
+          if (byte > 0) body.byte(0x72);
+        }
+        break;
       case "ZeroExtendWordToLong": case "ZeroExtendByteToLong": case "ZeroExtendHalfToLong": arg(0); body.byte(0xad); break;
       case "SignExtendWordToLong": arg(0); body.byte(0xac); break;
       case "SignExtendByteToLong": arg(0); body.byte(0xc0).byte(0xac); break;
