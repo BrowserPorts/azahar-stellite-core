@@ -8,8 +8,12 @@ set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
 set(MCL_INSTALL OFF CACHE BOOL "" FORCE)
 set(MCL_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(MCL_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
-add_subdirectory("${AZAHAR_ROOT}/externals/fmt" "${CMAKE_CURRENT_BINARY_DIR}/fmt" EXCLUDE_FROM_ALL)
-add_subdirectory("${DYNARMIC_ROOT}/externals/mcl" "${CMAKE_CURRENT_BINARY_DIR}/mcl" EXCLUDE_FROM_ALL)
+if(NOT TARGET fmt::fmt)
+    add_subdirectory("${AZAHAR_ROOT}/externals/fmt" "${CMAKE_CURRENT_BINARY_DIR}/fmt" EXCLUDE_FROM_ALL)
+endif()
+if(NOT TARGET merry::mcl)
+    add_subdirectory("${DYNARMIC_ROOT}/externals/mcl" "${CMAKE_CURRENT_BINARY_DIR}/mcl" EXCLUDE_FROM_ALL)
+endif()
 
 # The compiler includes portable A32 translation and IR, without native backends.
 file(GLOB_RECURSE A32_TRANSLATION CONFIGURE_DEPENDS
@@ -32,8 +36,8 @@ if(EMSCRIPTEN)
     list(REMOVE_ITEM IR_SOURCES "${IR_EMITTER}")
     list(APPEND IR_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/wasm_ir_emitter.cpp")
 endif()
-add_executable(azahar_wasm_frontend
-    frontend.cpp
+add_library(azahar_arm_frontend STATIC
+    ir_json.cpp
     ${A32_TRANSLATION}
     ${IR_SOURCES}
     "${DYNARMIC_ROOT}/src/dynarmic/frontend/A32/a32_types.cpp"
@@ -42,13 +46,16 @@ add_executable(azahar_wasm_frontend
     "${DYNARMIC_ROOT}/src/dynarmic/frontend/A64/a64_types.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/frontend/imm.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/memory_pool.cpp"
-    "${DYNARMIC_ROOT}/src/dynarmic/common/u128.cpp"
-    "${AZAHAR_ROOT}/src/core/arm/dynarmic/arm_tick_counts.cpp")
-target_include_directories(azahar_wasm_frontend PRIVATE
+    "${DYNARMIC_ROOT}/src/dynarmic/common/u128.cpp")
+target_include_directories(azahar_arm_frontend PUBLIC
     "${DYNARMIC_ROOT}/src" "${AZAHAR_ROOT}/externals/boost" "${AZAHAR_ROOT}/src")
-target_link_libraries(azahar_wasm_frontend PRIVATE fmt::fmt merry::mcl)
-target_compile_options(azahar_wasm_frontend PRIVATE -Wall -Wextra)
+target_link_libraries(azahar_arm_frontend PUBLIC fmt::fmt merry::mcl)
+target_compile_options(azahar_arm_frontend PRIVATE -Wall -Wextra)
+add_executable(azahar_wasm_frontend frontend.cpp
+    "${AZAHAR_ROOT}/src/core/arm/dynarmic/arm_tick_counts.cpp")
+target_link_libraries(azahar_wasm_frontend PRIVATE azahar_arm_frontend)
 if(EMSCRIPTEN)
+    target_compile_options(azahar_arm_frontend PRIVATE -O3 -fwasm-exceptions)
     target_compile_options(azahar_wasm_frontend PRIVATE -O3 -fwasm-exceptions)
     target_link_options(azahar_wasm_frontend PRIVATE
         -O3 -fwasm-exceptions --no-entry
