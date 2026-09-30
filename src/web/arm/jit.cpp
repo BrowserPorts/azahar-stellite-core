@@ -14,6 +14,10 @@
 #include "../compiler/ir_json.h"
 #include "dynarmic/common/fp/fpcr.h"
 #include "dynarmic/common/fp/fpsr.h"
+#include "dynarmic/common/fp/info.h"
+#include "dynarmic/common/fp/op/FPConvert.h"
+#include "dynarmic/common/fp/op/FPMulAdd.h"
+#include "dynarmic/common/fp/op/FPRoundInt.h"
 #include "dynarmic/common/fp/op/FPToFixed.h"
 #include "dynarmic/common/fp/process_exception.h"
 #include "dynarmic/common/fp/unpacked.h"
@@ -178,7 +182,17 @@ template <class Bits> uint32_t CompareFP(Bits lhs, Bits rhs, bool signal_quiet_n
     return left_value == right_value ? 0x60000000 : left_value < right_value ? 0x80000000 : 0x20000000;
 }
 void SetFPStatus(ArmState* state, const Dynarmic::FP::FPSR& fpsr) {
-    state->fpscr = (state->fpscr & ~0x9fu) | (fpsr.Value() & 0x9f);
+    state->fpscr |= fpsr.Value() & 0x9f;
+}
+template <class Bits> Bits VfpInput(ArmState* state, Bits value,
+                                   Dynarmic::FP::FPCR fpcr, Dynarmic::FP::FPSR& fpsr) {
+    using Info = Dynarmic::FP::FPInfo<Bits>;
+    if (state->config->arch_version <= Dynarmic::A32::ArchVersion::v6K && fpcr.FZ() &&
+        !(value & Info::exponent_mask) && (value & Info::mantissa_mask)) {
+        Dynarmic::FP::FPProcessException(Dynarmic::FP::FPExc::InputDenorm, fpcr, fpsr);
+        return 0;
+    }
+    return value;
 }
 template <class Bits> uint64_t ToFixed(ArmState* state, Bits value, uint32_t integer_bits,
                                      uint32_t fractional_bits, uint32_t rounding, bool unsigned_value) {
@@ -187,6 +201,29 @@ template <class Bits> uint64_t ToFixed(ArmState* state, Bits value, uint32_t int
         Dynarmic::FP::FPCR{state->fpscr}, static_cast<Dynarmic::FP::RoundingMode>(rounding), fpsr);
     SetFPStatus(state, fpsr);
     return result;
+}
+template <class Operation> auto FloatingPoint(ArmState* state, Operation operation) {
+    Dynarmic::FP::FPSR fpsr{};
+    const Dynarmic::FP::FPCR fpcr{state->fpscr};
+    auto result = operation(fpcr, fpsr);
+    // VFP11 flushes underflow results to positive zero (ARM DDI 0274H, 5.9.2).
+    if (state->config->arch_version <= Dynarmic::A32::ArchVersion::v6K && fpcr.FZ() && fpsr.UFC()) result = 0;
+    SetFPStatus(state, fpsr);
+    return result;
+}
+template <class Result, class Integer> Result FromFixed(ArmState* state, Integer value,
+                                                       uint32_t fractional_bits, uint32_t rounding) {
+    return FloatingPoint(state, [&](auto fpcr, auto& fpsr) {
+        const bool sign = std::is_signed_v<Integer> && value < 0;
+        const uint64_t magnitude = sign ? uint64_t{0} - static_cast<uint64_t>(value) : static_cast<uint64_t>(value);
+        if (!magnitude) return Result{0};
+        auto unpacked = magnitude >> 63
+            ? Dynarmic::FP::FPUnpacked{sign, 63, (magnitude >> 1) | (magnitude & 1)}
+            : Dynarmic::FP::ToNormalized(sign, 0, magnitude);
+        unpacked.exponent -= fractional_bits;
+        return Dynarmic::FP::FPRound<Result>(unpacked, fpcr,
+            static_cast<Dynarmic::FP::RoundingMode>(rounding), fpsr);
+    });
 }
 } // namespace
 
@@ -300,6 +337,69 @@ FIXED_CONVERSION(FPDoubleToFixedU32, uint64_t, uint32_t, 32, true)
 FIXED_CONVERSION(FPDoubleToFixedS64, uint64_t, uint64_t, 64, false)
 FIXED_CONVERSION(FPDoubleToFixedU64, uint64_t, uint64_t, 64, true)
 #undef FIXED_CONVERSION
+#define FP_ARITHMETIC(bits, type) \
+    EMSCRIPTEN_KEEPALIVE type FPAdd##bits(ArmState* state, type lhs, type rhs) { \
+        return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
+            lhs = VfpInput(state, lhs, fpcr, fpsr); \
+            rhs = VfpInput(state, rhs, fpcr, fpsr); \
+            return Dynarmic::FP::FPMulAdd(lhs, rhs, Dynarmic::FP::FPValue<type, false, 0, 1>(), fpcr, fpsr); \
+        }); \
+    } \
+    EMSCRIPTEN_KEEPALIVE type FPSub##bits(ArmState* state, type lhs, type rhs) { \
+        return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
+            lhs = VfpInput(state, lhs, fpcr, fpsr); \
+            rhs = VfpInput(state, rhs, fpcr, fpsr); \
+            return Dynarmic::FP::FPMulAdd(lhs, rhs, Dynarmic::FP::FPValue<type, true, 0, 1>(), fpcr, fpsr); \
+        }); \
+    } \
+    EMSCRIPTEN_KEEPALIVE type FPMul##bits(ArmState* state, type lhs, type rhs) { \
+        return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
+            lhs = VfpInput(state, lhs, fpcr, fpsr); \
+            rhs = VfpInput(state, rhs, fpcr, fpsr); \
+            const auto zero = Dynarmic::FP::FPInfo<type>::Zero(((lhs ^ rhs) & Dynarmic::FP::FPInfo<type>::sign_mask) != 0); \
+            return Dynarmic::FP::FPMulAdd(zero, lhs, rhs, fpcr, fpsr); \
+        }); \
+    } \
+    EMSCRIPTEN_KEEPALIVE type FPMulAdd##bits(ArmState* state, type addend, type lhs, type rhs) { \
+        return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { return Dynarmic::FP::FPMulAdd(VfpInput(state, addend, fpcr, fpsr), VfpInput(state, lhs, fpcr, fpsr), VfpInput(state, rhs, fpcr, fpsr), fpcr, fpsr); }); \
+    } \
+    EMSCRIPTEN_KEEPALIVE type FPMulSub##bits(ArmState* state, type minuend, type lhs, type rhs) { \
+        return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { return Dynarmic::FP::FPMulSub(VfpInput(state, minuend, fpcr, fpsr), VfpInput(state, lhs, fpcr, fpsr), VfpInput(state, rhs, fpcr, fpsr), fpcr, fpsr); }); \
+    } \
+    EMSCRIPTEN_KEEPALIVE type FPRoundInt##bits(ArmState* state, type value, uint32_t rounding, uint32_t exact) { \
+        return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
+            return static_cast<type>(Dynarmic::FP::FPRoundInt(VfpInput(state, value, fpcr, fpsr), fpcr, static_cast<Dynarmic::FP::RoundingMode>(rounding), exact, fpsr)); \
+        }); \
+    }
+FP_ARITHMETIC(32, uint32_t)
+FP_ARITHMETIC(64, uint64_t)
+#undef FP_ARITHMETIC
+#define FP_CONVERT(name, result_type, input_type) \
+    EMSCRIPTEN_KEEPALIVE result_type name(ArmState* state, input_type value, uint32_t rounding) { \
+        return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
+            return Dynarmic::FP::FPConvert<result_type>(VfpInput(state, value, fpcr, fpsr), fpcr, static_cast<Dynarmic::FP::RoundingMode>(rounding), fpsr); \
+        }); \
+    }
+FP_CONVERT(FPSingleToDouble, uint64_t, uint32_t)
+FP_CONVERT(FPDoubleToSingle, uint32_t, uint64_t)
+#undef FP_CONVERT
+#define FP_FROM_FIXED(name, result_type, input_type, integer_type) \
+    EMSCRIPTEN_KEEPALIVE result_type name(ArmState* state, input_type value, uint32_t fractional_bits, uint32_t rounding) { \
+        return FromFixed<result_type>(state, static_cast<integer_type>(value), fractional_bits, rounding); \
+    }
+FP_FROM_FIXED(FPFixedS16ToSingle, uint32_t, uint32_t, int16_t)
+FP_FROM_FIXED(FPFixedU16ToSingle, uint32_t, uint32_t, uint16_t)
+FP_FROM_FIXED(FPFixedS32ToSingle, uint32_t, uint32_t, int32_t)
+FP_FROM_FIXED(FPFixedU32ToSingle, uint32_t, uint32_t, uint32_t)
+FP_FROM_FIXED(FPFixedS64ToSingle, uint32_t, uint64_t, int64_t)
+FP_FROM_FIXED(FPFixedU64ToSingle, uint32_t, uint64_t, uint64_t)
+FP_FROM_FIXED(FPFixedS16ToDouble, uint64_t, uint32_t, int16_t)
+FP_FROM_FIXED(FPFixedU16ToDouble, uint64_t, uint32_t, uint16_t)
+FP_FROM_FIXED(FPFixedS32ToDouble, uint64_t, uint32_t, int32_t)
+FP_FROM_FIXED(FPFixedU32ToDouble, uint64_t, uint32_t, uint32_t)
+FP_FROM_FIXED(FPFixedS64ToDouble, uint64_t, uint64_t, int64_t)
+FP_FROM_FIXED(FPFixedU64ToDouble, uint64_t, uint64_t, uint64_t)
+#undef FP_FROM_FIXED
 }
 
 namespace Dynarmic::A32 {

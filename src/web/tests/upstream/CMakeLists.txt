@@ -129,3 +129,20 @@ else()
     register_fixture(dynarmic_arm_jit_fixtures)
     add_dependencies(upstream_fixtures dynarmic_arm_jit_fixtures)
 endif()
+
+add_executable(dynarmic_vfp_recordings run-vfp.cpp)
+target_include_directories(dynarmic_vfp_recordings PRIVATE "${DYNARMIC_ROOT}/tests")
+if(EMSCRIPTEN)
+    target_link_libraries(dynarmic_vfp_recordings PRIVATE azahar_arm_jit)
+    add_dependencies(browser_jit_fixtures dynarmic_vfp_recordings)
+    target_link_options(dynarmic_vfp_recordings PRIVATE
+        -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,node
+        -sINITIAL_MEMORY=33554432 -sMAXIMUM_MEMORY=536870912)
+    set_target_properties(dynarmic_vfp_recordings PROPERTIES SUFFIX ".mjs")
+    add_test(NAME dynarmic_vfp_recordings COMMAND "${BUN_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/run-jit.ts" "$<TARGET_FILE:dynarmic_vfp_recordings>")
+else()
+    target_link_libraries(dynarmic_vfp_recordings PRIVATE dynarmic merry::mcl fmt::fmt)
+    register_fixture(dynarmic_vfp_recordings)
+endif()
+add_dependencies(upstream_fixtures dynarmic_vfp_recordings)

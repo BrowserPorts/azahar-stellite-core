@@ -14,6 +14,10 @@ add_library(azahar_arm_jit STATIC
     jit.cpp
     spin_lock.cpp
     "${DYNARMIC_ROOT}/src/dynarmic/backend/arm64/exclusive_monitor.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/common/fp/fused.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPMulAdd.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPConvert.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPRoundInt.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPToFixed.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/process_exception.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/process_nan.cpp"

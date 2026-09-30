@@ -8,12 +8,14 @@ const append = (line: string): undefined => {
   output.textContent += `${line}\n`;
   return undefined;
 };
-const fixtureUrl = new URL("./dynarmic_arm_jit_fixtures.mjs", import.meta.url);
+const recordings = new URL(location.href).searchParams.has("recordings");
+const fixtureUrl = new URL(recordings ? "./dynarmic_vfp_recordings.mjs" :
+  "./dynarmic_arm_jit_fixtures.mjs", import.meta.url);
 try {
   const { default: createModule } = await import(fixtureUrl.href);
   await createModule({
     azaharJitHost: new ArmJitHost(),
-    arguments: ["--reporter", "compact"],
+    arguments: recordings ? [] : ["--reporter", "compact"],
     print: append,
     printErr: append,
     onExit: (status: number): undefined => {

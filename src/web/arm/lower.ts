@@ -235,6 +235,12 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     } else switch (node.op) {
       case "Void": case "PushRSB": case "A32UpdateUpperLocationDescriptor": result = false; break;
       case "Identity": arg(0); break;
+      case "FPAbs32": case "FPNeg32":
+        arg(0); constant(node.op === "FPAbs32" ? 0x7fffffff : 0x80000000);
+        body.byte(node.op === "FPAbs32" ? 0x71 : 0x73); break;
+      case "FPAbs64": case "FPNeg64":
+        arg(0); body.byte(0x42).signed(node.op === "FPAbs64" ? 0x7fffffffffffffffn : 0x8000000000000000n, 64);
+        body.byte(node.op === "FPAbs64" ? 0x83 : 0x85); break;
       case "A32GetRegister": load(options.layout.registers + immediate(node.args[0]!) * 4); break;
       case "A32SetRegister": store(options.layout.registers + immediate(node.args[0]!) * 4, () => arg(1)); break;
       case "A32GetExtendedRegister32": load(options.layout.extendedRegisters + immediate(node.args[0]!) * 4); break;
