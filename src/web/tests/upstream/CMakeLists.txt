@@ -89,10 +89,13 @@ if(EMSCRIPTEN)
     find_program(BUN_EXECUTABLE NAMES bun REQUIRED)
     add_subdirectory("${AZAHAR_ROOT}/src/web/arm" "${CMAKE_CURRENT_BINARY_DIR}/arm-jit" EXCLUDE_FROM_ALL)
     add_executable(dynarmic_arm_jit_fixtures
+        "${DYNARMIC_ROOT}/tests/A32/test_arm_disassembler.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_arm_instructions.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_coprocessor.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_thumb_instructions.cpp"
-        "${DYNARMIC_ROOT}/tests/A32/test_svc.cpp")
+        "${DYNARMIC_ROOT}/tests/A32/test_svc.cpp"
+        "${DYNARMIC_ROOT}/tests/decoder_tests.cpp"
+        "${DYNARMIC_ROOT}/src/dynarmic/frontend/A32/disassembler/disassembler_arm.cpp")
     target_link_libraries(dynarmic_arm_jit_fixtures PRIVATE azahar_arm_jit Catch2::Catch2WithMain)
     target_link_options(dynarmic_arm_jit_fixtures PRIVATE
         -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,node
@@ -121,13 +124,17 @@ else()
     set(Boost_NO_BOOST_CMAKE ON CACHE BOOL "" FORCE)
     set(Boost_INCLUDE_DIR "${AZAHAR_ROOT}/externals/boost" CACHE PATH "" FORCE)
     set(CMAKE_POLICY_DEFAULT_CMP0167 OLD)
+    find_package(Boost 1.57 REQUIRED)
     add_subdirectory("${DYNARMIC_ROOT}" "${CMAKE_CURRENT_BINARY_DIR}/dynarmic" EXCLUDE_FROM_ALL)
     add_executable(dynarmic_arm_jit_fixtures
+        "${DYNARMIC_ROOT}/tests/A32/test_arm_disassembler.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_arm_instructions.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_coprocessor.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_thumb_instructions.cpp"
-        "${DYNARMIC_ROOT}/tests/A32/test_svc.cpp")
-    target_link_libraries(dynarmic_arm_jit_fixtures PRIVATE dynarmic Catch2::Catch2WithMain merry::mcl fmt::fmt)
+        "${DYNARMIC_ROOT}/tests/A32/test_svc.cpp"
+        "${DYNARMIC_ROOT}/tests/decoder_tests.cpp")
+    target_link_libraries(dynarmic_arm_jit_fixtures PRIVATE
+        dynarmic Boost::boost Catch2::Catch2WithMain merry::mcl fmt::fmt)
     register_fixture(dynarmic_arm_jit_fixtures)
     add_dependencies(upstream_fixtures dynarmic_arm_jit_fixtures)
 endif()
