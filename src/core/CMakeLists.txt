@@ -3,31 +3,9 @@ add_library(citra_core STATIC EXCLUDE_FROM_ALL
     arm/arm_interface.h
     arm/exception_handler.cpp
     arm/exception_handler.h
-    arm/dyncom/arm_dyncom.cpp
-    arm/dyncom/arm_dyncom.h
-    arm/dyncom/arm_dyncom_dec.cpp
-    arm/dyncom/arm_dyncom_dec.h
-    arm/dyncom/arm_dyncom_interpreter.cpp
-    arm/dyncom/arm_dyncom_interpreter.h
-    arm/dyncom/arm_dyncom_run.h
-    arm/dyncom/arm_dyncom_thumb.cpp
-    arm/dyncom/arm_dyncom_thumb.h
-    arm/dyncom/arm_dyncom_trans.cpp
-    arm/dyncom/arm_dyncom_trans.h
     arm/exclusive_monitor.cpp
     arm/exclusive_monitor.h
     arm/skyeye_common/arm_regformat.h
-    arm/skyeye_common/armstate.cpp
-    arm/skyeye_common/armstate.h
-    arm/skyeye_common/armsupp.cpp
-    arm/skyeye_common/armsupp.h
-    arm/skyeye_common/vfp/asm_vfp.h
-    arm/skyeye_common/vfp/vfp.cpp
-    arm/skyeye_common/vfp/vfp.h
-    arm/skyeye_common/vfp/vfp_helper.h
-    arm/skyeye_common/vfp/vfpdouble.cpp
-    arm/skyeye_common/vfp/vfpinstr.cpp
-    arm/skyeye_common/vfp/vfpsingle.cpp
     cheats/cheat_base.cpp
     cheats/cheat_base.h
     cheats/cheats.cpp
@@ -536,7 +514,34 @@ if (ENABLE_GDBSTUB)
     )
 endif()
 
-if ("x86_64" IN_LIST ARCHITECTURE OR "arm64" IN_LIST ARCHITECTURE)
+if(NOT EMSCRIPTEN)
+    target_sources(citra_core PRIVATE
+        arm/dyncom/arm_dyncom.cpp
+        arm/dyncom/arm_dyncom.h
+        arm/dyncom/arm_dyncom_dec.cpp
+        arm/dyncom/arm_dyncom_dec.h
+        arm/dyncom/arm_dyncom_interpreter.cpp
+        arm/dyncom/arm_dyncom_interpreter.h
+        arm/dyncom/arm_dyncom_run.h
+        arm/dyncom/arm_dyncom_thumb.cpp
+        arm/dyncom/arm_dyncom_thumb.h
+        arm/dyncom/arm_dyncom_trans.cpp
+        arm/dyncom/arm_dyncom_trans.h
+        arm/skyeye_common/armstate.cpp
+        arm/skyeye_common/armstate.h
+        arm/skyeye_common/armsupp.cpp
+        arm/skyeye_common/armsupp.h
+        arm/skyeye_common/vfp/asm_vfp.h
+        arm/skyeye_common/vfp/vfp.cpp
+        arm/skyeye_common/vfp/vfp.h
+        arm/skyeye_common/vfp/vfp_helper.h
+        arm/skyeye_common/vfp/vfpdouble.cpp
+        arm/skyeye_common/vfp/vfpinstr.cpp
+        arm/skyeye_common/vfp/vfpsingle.cpp
+    )
+endif()
+
+if (EMSCRIPTEN OR "x86_64" IN_LIST ARCHITECTURE OR "arm64" IN_LIST ARCHITECTURE)
     target_sources(citra_core PRIVATE
         arm/dynarmic/arm_dynarmic.cpp
         arm/dynarmic/arm_dynarmic.h
@@ -552,7 +557,7 @@ endif()
 
 # FastInterp's dispatch loop requires GCC/Clang computed goto; MSVC builds
 # fall back to DynCom when the JIT is off.
-if (NOT MSVC)
+if (NOT MSVC AND NOT EMSCRIPTEN)
     target_compile_definitions(citra_core PUBLIC HAVE_FASTINTERP)
     target_sources(citra_core PRIVATE
         arm/fastinterp/fastinterp.cpp

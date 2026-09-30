@@ -6,6 +6,7 @@
 #include <cstring>
 #include <dynarmic/interface/A32/a32.h>
 #include <dynarmic/interface/optimization_flags.h>
+#include "common/arch.h"
 #include "common/assert.h"
 #include "common/microprofile.h"
 #include "core/arm/dynarmic/arm_dynarmic.h"
@@ -360,6 +361,9 @@ void ARM_Dynarmic::ServeBreak([[maybe_unused]] int signal) {
 std::unique_ptr<Dynarmic::A32::Jit> ARM_Dynarmic::MakeJit() {
     Dynarmic::A32::UserConfig config;
     config.callbacks = cb.get();
+#if CITRA_ARCH(wasm)
+    config.arch_version = Dynarmic::A32::ArchVersion::v6K;
+#endif
     if (current_page_table) {
         config.page_table = &current_page_table->GetPointerArray();
     }

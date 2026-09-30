@@ -17,10 +17,12 @@
 #include "core/hle/service/cam/cam.h"
 #include "core/hle/service/hid/hid.h"
 #include "core/hle/service/ir/ir_user.h"
-#if CITRA_ARCH(x86_64) || CITRA_ARCH(arm64)
+#if CITRA_ARCH(x86_64) || CITRA_ARCH(arm64) || CITRA_ARCH(wasm)
 #include "core/arm/dynarmic/arm_dynarmic.h"
 #endif
+#if !CITRA_ARCH(wasm)
 #include "core/arm/dyncom/arm_dyncom.h"
+#endif
 #ifdef HAVE_FASTINTERP
 #include "core/arm/fastinterp/fastinterp.h"
 #endif
@@ -547,6 +549,12 @@ System::ResultStatus System::Init(Frontend::EmuWindow& emu_window,
 
     exclusive_monitor = MakeExclusiveMonitor(*memory, num_cores);
     cpu_cores.reserve(num_cores);
+#if CITRA_ARCH(wasm)
+    for (u32 i = 0; i < num_cores; ++i) {
+        cpu_cores.push_back(std::make_shared<ARM_Dynarmic>(
+            *this, *memory, i, timing->GetTimer(i), *exclusive_monitor));
+    }
+#else
     if (Settings::values.use_cpu_jit) {
 #if CITRA_ARCH(x86_64) || CITRA_ARCH(arm64)
         for (u32 i = 0; i < num_cores; ++i) {
@@ -573,6 +581,7 @@ System::ResultStatus System::Init(Frontend::EmuWindow& emu_window,
                 std::make_shared<ARM_DynCom>(*this, *memory, USER32MODE, i, timing->GetTimer(i)));
         }
     }
+#endif
     running_core = cpu_cores[0].get();
 
     kernel->SetCPUs(cpu_cores);
