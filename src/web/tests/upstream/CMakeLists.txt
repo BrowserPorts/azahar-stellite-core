@@ -155,3 +155,8 @@ else()
     register_fixture(dynarmic_vfp_recordings)
 endif()
 add_dependencies(upstream_fixtures dynarmic_vfp_recordings)
+
+option(AZAHAR_BUILD_UPSTREAM_FUZZ "Build Dynarmic's native Unicorn comparison fixtures" OFF)
+if(AZAHAR_BUILD_UPSTREAM_FUZZ)
+    include(fuzz.cmake)
+endif()
