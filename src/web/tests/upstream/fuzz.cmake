@@ -4,15 +4,16 @@ include(ExternalProject)
 set(UNICORN_ORACLE_BINARY "${CMAKE_CURRENT_BINARY_DIR}/unicorn-oracle")
 set(UNICORN_ORACLE_TOOLCHAIN)
 set(UNICORN_ORACLE_DOWNLOAD)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/prepare-unicorn.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/adapt-unicorn.py"
+    "${DYNARMIC_ROOT}/tests/A32/fuzz_arm.cpp"
+    "${DYNARMIC_ROOT}/tests/A32/fuzz_thumb.cpp"
+    "${DYNARMIC_ROOT}/tests/unicorn_emu/a32_unicorn.h"
+    "${DYNARMIC_ROOT}/tests/unicorn_emu/a32_unicorn.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/common/llvm_disassemble.cpp")
 if(EMSCRIPTEN)
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/prepare-unicorn.py"
-        "${CMAKE_CURRENT_SOURCE_DIR}/adapt-unicorn.py"
-        "${DYNARMIC_ROOT}/tests/A32/fuzz_arm.cpp"
-        "${DYNARMIC_ROOT}/tests/A32/fuzz_thumb.cpp"
-        "${DYNARMIC_ROOT}/tests/unicorn_emu/a32_unicorn.h"
-        "${DYNARMIC_ROOT}/tests/unicorn_emu/a32_unicorn.cpp"
-        "${DYNARMIC_ROOT}/src/dynarmic/common/llvm_disassemble.cpp")
     include(FetchContent)
     FetchContent_Declare(unicorn_js
         GIT_REPOSITORY https://github.com/AlexAltea/unicorn.js.git
@@ -21,7 +22,6 @@ if(EMSCRIPTEN)
         GIT_SUBMODULES_RECURSE FALSE)
     FetchContent_MakeAvailable(unicorn_js)
     set(UNICORN_ORACLE_SOURCE "${unicorn_js_SOURCE_DIR}/unicorn")
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
     execute_process(COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/prepare-unicorn.py" "${unicorn_js_SOURCE_DIR}"
         COMMAND_ERROR_IS_FATAL ANY)
@@ -62,14 +62,14 @@ target_include_directories(dynarmic_arm_fuzz_fixtures PRIVATE
     "${UNICORN_ORACLE_SOURCE}/include")
 target_link_libraries(dynarmic_arm_fuzz_fixtures PRIVATE
     azahar_unicorn_test_oracle Catch2::Catch2WithMain)
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/adapt-unicorn.py"
+    "${DYNARMIC_ROOT}/tests" "${CMAKE_CURRENT_BINARY_DIR}/unicorn-harness"
+    COMMAND_ERROR_IS_FATAL ANY)
+target_sources(dynarmic_arm_fuzz_fixtures PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/unicorn-harness/fuzz_arm.cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/unicorn-harness/fuzz_thumb.cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/unicorn-harness/a32_unicorn.cpp")
 if(EMSCRIPTEN)
-    execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/adapt-unicorn.py"
-        "${DYNARMIC_ROOT}/tests" "${CMAKE_CURRENT_BINARY_DIR}/unicorn-harness"
-        COMMAND_ERROR_IS_FATAL ANY)
-    target_sources(dynarmic_arm_fuzz_fixtures PRIVATE
-        "${CMAKE_CURRENT_BINARY_DIR}/unicorn-harness/fuzz_arm.cpp"
-        "${CMAKE_CURRENT_BINARY_DIR}/unicorn-harness/fuzz_thumb.cpp"
-        "${CMAKE_CURRENT_BINARY_DIR}/unicorn-harness/a32_unicorn.cpp")
     # Adapt pointer formatting in the diagnostic helper, retaining the native tests.
     file(READ "${DYNARMIC_ROOT}/src/dynarmic/common/llvm_disassemble.cpp" DISASSEMBLE_TEXT)
     foreach(POINTER IN ITEMS begin end)
@@ -92,10 +92,6 @@ if(EMSCRIPTEN)
         "${CMAKE_CURRENT_SOURCE_DIR}/run-jit.ts" "$<TARGET_FILE:dynarmic_arm_fuzz_fixtures>")
     add_dependencies(browser_jit_fixtures dynarmic_arm_fuzz_fixtures)
 else()
-    target_sources(dynarmic_arm_fuzz_fixtures PRIVATE
-        "${DYNARMIC_ROOT}/tests/A32/fuzz_arm.cpp"
-        "${DYNARMIC_ROOT}/tests/A32/fuzz_thumb.cpp"
-        "${DYNARMIC_ROOT}/tests/unicorn_emu/a32_unicorn.cpp")
     target_link_libraries(dynarmic_arm_fuzz_fixtures PRIVATE
         dynarmic Boost::boost merry::mcl fmt::fmt)
     register_fixture(dynarmic_arm_fuzz_fixtures)

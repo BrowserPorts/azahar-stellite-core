@@ -56,8 +56,20 @@ wrapper = replace_once(
     "    CHECKED(uc_open(UC_ARCH_ARM, open_mode, &uc));",
     "    static_assert(std::is_same_v<decltype(&UnmappedMemoryHook), uc_cb_eventmem_t>);\n"
     "    static_assert(std::is_same_v<decltype(&MemoryWriteHook), uc_cb_hookmem_t>);\n\n"
-    "    CHECKED(uc_open(UC_ARCH_ARM, open_mode, &uc));",
+    "    CHECKED(uc_open(UC_ARCH_ARM, open_mode, &uc));\n"
+    "    // Match the ARMv8 instruction set used by the native fuzz configuration.\n"
+    "    CHECKED(uc_ctl_set_cpu_model(uc, UC_CPU_ARM_MAX));\n"
+    "    // The fixtures populate user/system registers before setting CPSR.\n"
+    "    const u32 initial_cpsr = 0x10;\n"
+    "    CHECKED(uc_reg_write(uc, UC_ARM_REG_CPSR, &initial_cpsr));",
 )
+# Unicorn 2 checks page permissions after delivering the memory-write hook.
+# Writable backing pages let the existing hook record the guest writes.
+wrapper = replace_once(
+    wrapper, "return UC_PROT_READ | UC_PROT_EXEC;",
+    "return UC_PROT_READ | UC_PROT_WRITE | UC_PROT_EXEC;",
+)
+wrapper = replace_once(wrapper, "return UC_PROT_READ;", "return UC_PROT_READ | UC_PROT_WRITE;")
 write("a32_unicorn.cpp", wrapper)
 
 # Only the harness include changes; every test input and assertion stays intact.
