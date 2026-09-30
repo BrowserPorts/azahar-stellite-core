@@ -1,0 +1,13 @@
+{
+  "name": "azahar-web-runtime",
+  "private": true,
+  "license": "GPL-2.0-or-later",
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.10",
+    "typescript": "5.9.3"
+  }
+}
