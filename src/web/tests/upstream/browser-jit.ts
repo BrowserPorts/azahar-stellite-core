@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { ArmJitHost } from "../../arm/jit-host";
+import { PicaJitHost } from "../../pica/jit-host";
 
 const output = document.querySelector("pre");
 if (!output) throw new Error("Fixture output element is missing");
@@ -16,6 +17,7 @@ try {
   const { default: createModule } = await import(fixtureUrl.href);
   await createModule({
     azaharJitHost: new ArmJitHost(),
+    azaharPicaJitHost: new PicaJitHost(),
     arguments: recordings ? [] : ["--reporter", "compact"],
     print: append,
     printErr: append,
