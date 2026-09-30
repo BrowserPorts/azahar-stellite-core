@@ -1619,7 +1619,7 @@ void NWM_UDS::EjectSpectators(Kernel::HLERequestContext& ctx) {
 }
 
 // Sends a 802.11 beacon frame with information about the current network.
-void NWM_UDS::BeaconBroadcastCallback(std::uintptr_t user_data, s64 cycles_late) {
+void NWM_UDS::BeaconBroadcastCallback(u64 user_data, s64 cycles_late) {
     // Don't do anything if we're not actually hosting a network
     if (connection_status.status != NetworkStatus::ConnectedAsHost)
         return;
@@ -1719,13 +1719,13 @@ NWM_UDS::NWM_UDS(Core::System& system) : ServiceFramework("nwm::UDS"), system(sy
     RegisterHandlers(functions);
 
     beacon_broadcast_event = system.CoreTiming().RegisterEvent(
-        "UDS::BeaconBroadcastCallback", [this](std::uintptr_t user_data, s64 cycles_late) {
+        "UDS::BeaconBroadcastCallback", [this](u64 user_data, s64 cycles_late) {
             BeaconBroadcastCallback(user_data, cycles_late);
         });
 
     handle_async_event_signals_event = system.CoreTiming().RegisterEvent(
         "UDS::handle_async_event_signals_event",
-        [this]([[maybe_unused]] std::uintptr_t user_data, [[maybe_unused]] s64 cycles_late) {
+        [this]([[maybe_unused]] u64 user_data, [[maybe_unused]] s64 cycles_late) {
             DispatchQueuedAsyncEventSignals();
         });
 

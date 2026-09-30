@@ -101,7 +101,7 @@ protected:
     void FinalizeCltBase();
     void GenerateChannelHandle();
     u32 GetCltState();
-    void BeaconScanCallback(std::uintptr_t user_data, s64 cycles_late);
+    void BeaconScanCallback(u64 user_data, s64 cycles_late);
     void CacheBeaconTitleInfo(Network::WifiPacket& beacon);
     int GetCachedTitleInfoIdx(Network::MacAddress mac_addr);
     bool TitleInfoIsCached(Network::MacAddress mac_addr);

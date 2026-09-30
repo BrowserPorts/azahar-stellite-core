@@ -169,7 +169,7 @@ private:
                               std::shared_ptr<Kernel::SharedMemory> shared_mem,
                               std::shared_ptr<Kernel::Event> event);
     bool CacheContentFileInMemory(u32 process_id);
-    void TitleBroadcastCallback(std::uintptr_t user_data, s64 cycles_late);
+    void TitleBroadcastCallback(u64 user_data, s64 cycles_late);
     void EnsureEndBroadcaster();
 
     void IsChild(Kernel::HLERequestContext& ctx);

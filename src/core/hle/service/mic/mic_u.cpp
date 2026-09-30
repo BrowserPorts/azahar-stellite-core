@@ -140,7 +140,7 @@ struct MIC_U::Impl {
         buffer_full_event =
             system.Kernel().CreateEvent(Kernel::ResetType::OneShot, "MIC_U::buffer_full_event");
         buffer_write_event = timing.RegisterEvent(
-            "MIC_U::UpdateBuffer", [this](std::uintptr_t user_data, s64 cycles_late) {
+            "MIC_U::UpdateBuffer", [this](u64 user_data, s64 cycles_late) {
                 UpdateSharedMemBuffer(user_data, cycles_late);
             });
     }
@@ -171,7 +171,7 @@ struct MIC_U::Impl {
         LOG_TRACE(Service_MIC, "called");
     }
 
-    void UpdateSharedMemBuffer(std::uintptr_t user_data, s64 cycles_late) {
+    void UpdateSharedMemBuffer(u64 user_data, s64 cycles_late) {
         // If the event was scheduled before the application requested the mic to stop sampling
         if (!mic || !mic->IsSampling()) {
             return;

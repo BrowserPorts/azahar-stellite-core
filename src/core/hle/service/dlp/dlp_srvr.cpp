@@ -532,7 +532,7 @@ void DLP_SRVR::DisconnectClient(Kernel::HLERequestContext& ctx) {
     rb.Push(ResultSuccess);
 }
 
-void DLP_SRVR::TitleBroadcastCallback(std::uintptr_t user_data, s64 cycles_late) {
+void DLP_SRVR::TitleBroadcastCallback(u64 user_data, s64 cycles_late) {
     std::scoped_lock lock(broadcast_mutex);
 
     if (!is_broadcasting) {
@@ -979,7 +979,7 @@ DLP_SRVR::DLP_SRVR() : ServiceFramework("dlp:SRVR", 1), DLP_Base(Core::System::G
     RegisterHandlers(functions);
 
     title_broadcast_event = system.CoreTiming().RegisterEvent(
-        "dlp:SRVR::TitleBroadcastCallback", [this](std::uintptr_t user_data, s64 cycles_late) {
+        "dlp:SRVR::TitleBroadcastCallback", [this](u64 user_data, s64 cycles_late) {
             TitleBroadcastCallback(user_data, cycles_late);
         });
 }

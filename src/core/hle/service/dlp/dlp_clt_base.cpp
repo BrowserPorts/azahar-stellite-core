@@ -16,7 +16,7 @@ namespace Service::DLP {
 DLP_Clt_Base::DLP_Clt_Base(Core::System& s, std::string unique_string_id) : DLP_Base(s) {
     std::string unique_scan_event_id = fmt::format("DLP::{}::BeaconScanCallback", unique_string_id);
     beacon_scan_event = system.CoreTiming().RegisterEvent(
-        unique_scan_event_id, [this](std::uintptr_t user_data, s64 cycles_late) {
+        unique_scan_event_id, [this](u64 user_data, s64 cycles_late) {
             BeaconScanCallback(user_data, cycles_late);
         });
 }
@@ -445,7 +445,7 @@ void DLP_Clt_Base::GetWirelessRebootPassphrase(Kernel::HLERequestContext& ctx) {
     rb.PushRaw(wireless_reboot_passphrase);
 }
 
-void DLP_Clt_Base::BeaconScanCallback(std::uintptr_t user_data, s64 cycles_late) {
+void DLP_Clt_Base::BeaconScanCallback(u64 user_data, s64 cycles_late) {
     std::scoped_lock lock{beacon_mutex, title_info_mutex};
 
     if (!is_scanning) {

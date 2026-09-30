@@ -717,7 +717,7 @@ Y2R_U::Y2R_U(Core::System& system) : ServiceFramework("y2r:u", 1), system(system
 
     completion_event = system.Kernel().CreateEvent(Kernel::ResetType::OneShot, "Y2R:Completed");
     completion_signal_event =
-        system.CoreTiming().RegisterEvent("Y2R Completion Signal Event", [this](uintptr_t, s64) {
+        system.CoreTiming().RegisterEvent("Y2R Completion Signal Event", [this](u64, s64) {
             completion_event->Signal();
             is_busy_conversion = false;
         });

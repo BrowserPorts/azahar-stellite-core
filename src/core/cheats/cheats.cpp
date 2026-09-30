@@ -103,7 +103,7 @@ void CheatEngine::LoadCheatFile(u64 title_id) {
     }
 }
 
-void CheatEngine::RunCallback([[maybe_unused]] std::uintptr_t user_data, s64 cycles_late) {
+void CheatEngine::RunCallback([[maybe_unused]] u64 user_data, s64 cycles_late) {
     {
         std::shared_lock lock{cheats_list_mutex};
         for (const auto& cheat : cheats_list) {

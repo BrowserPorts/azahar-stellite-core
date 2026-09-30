@@ -56,7 +56,7 @@ public:
 
 private:
     /// The cheat execution callback.
-    void RunCallback(std::uintptr_t user_data, s64 cycles_late);
+    void RunCallback(u64 user_data, s64 cycles_late);
 
 private:
     Core::System& system;

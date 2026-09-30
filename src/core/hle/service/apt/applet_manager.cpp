@@ -1711,7 +1711,7 @@ void AppletManager::LoadInputDevices() {
 }
 
 /// Handles updating the current Applet every time it's called.
-void AppletManager::HLEAppletUpdateEvent(std::uintptr_t user_data, s64 cycles_late) {
+void AppletManager::HLEAppletUpdateEvent(u64 user_data, s64 cycles_late) {
     const auto id = static_cast<AppletId>(user_data);
     const auto applet = hle_applets[id];
     if (applet == nullptr) {
@@ -1734,7 +1734,7 @@ void AppletManager::HLEAppletUpdateEvent(std::uintptr_t user_data, s64 cycles_la
     }
 }
 
-void AppletManager::ButtonUpdateEvent(std::uintptr_t user_data, s64 cycles_late) {
+void AppletManager::ButtonUpdateEvent(u64 user_data, s64 cycles_late) {
     if (is_device_reload_pending.exchange(false)) {
         LoadInputDevices();
     }
@@ -1779,11 +1779,11 @@ AppletManager::AppletManager(Core::System& system) : system(system) {
             system.Kernel().CreateEvent(Kernel::ResetType::OneShot, "APT:Parameter");
     }
     hle_applet_update_event = system.CoreTiming().RegisterEvent(
-        "HLE Applet Update Event", [this](std::uintptr_t user_data, s64 cycles_late) {
+        "HLE Applet Update Event", [this](u64 user_data, s64 cycles_late) {
             HLEAppletUpdateEvent(user_data, cycles_late);
         });
     button_update_event = system.CoreTiming().RegisterEvent(
-        "APT Button Update Event", [this](std::uintptr_t user_data, s64 cycles_late) {
+        "APT Button Update Event", [this](u64 user_data, s64 cycles_late) {
             ButtonUpdateEvent(user_data, cycles_late);
         });
     system.CoreTiming().ScheduleEvent(usToCycles(button_update_interval_us), button_update_event);

@@ -92,7 +92,7 @@ GPU::GPU(Core::System& system, Frontend::EmuWindow& emu_window,
       impl{std::make_unique<Impl>(system, emu_window, secondary_window)} {
     impl->vblank_event = impl->timing.RegisterEvent(
         "GPU::VBlankCallback",
-        [this](uintptr_t user_data, s64 cycles_late) { VBlankCallback(user_data, cycles_late); });
+        [this](u64 user_data, s64 cycles_late) { VBlankCallback(user_data, cycles_late); });
     impl->timing.ScheduleEvent(FRAME_TICKS, impl->vblank_event);
 
     // Bind the rasterizer to the PICA GPU
@@ -485,7 +485,7 @@ void GPU::MemoryTransfer() {
     impl->signal_interrupt(Service::GSP::InterruptId::PPF, delay);
 }
 
-void GPU::VBlankCallback(std::uintptr_t user_data, s64 cycles_late) {
+void GPU::VBlankCallback(u64 user_data, s64 cycles_late) {
     // Signal to GSP that GPU interrupt has occurred
     impl->signal_interrupt(Service::GSP::InterruptId::PDC0, 0);
     impl->signal_interrupt(Service::GSP::InterruptId::PDC1, 0);

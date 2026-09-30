@@ -518,7 +518,7 @@ private:
 
     Network::MacAddress GetMacAddress();
 
-    void BeaconBroadcastCallback(std::uintptr_t user_data, s64 cycles_late);
+    void BeaconBroadcastCallback(u64 user_data, s64 cycles_late);
 
     /**
      * Returns a list of received 802.11 beacon frames from the specified sender since the last

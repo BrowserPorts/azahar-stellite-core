@@ -1112,7 +1112,7 @@ GSP_GPU::GSP_GPU(Core::System& system) : ServiceFramework("gsp::Gpu", 4), system
                         .Unwrap();
 
     SignalInterruptEventType = system.Kernel().timing.RegisterEvent(
-        "GSPPendingInterrupt", [this](uintptr_t arg, s64 cycle_late) {
+        "GSPPendingInterrupt", [this](u64 arg, s64 cycle_late) {
             ProcessPendingInterrupt(static_cast<size_t>(arg));
         });
 

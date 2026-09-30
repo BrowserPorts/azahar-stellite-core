@@ -345,9 +345,9 @@ public:
 
 private:
     void LoadInputDevices();
-    void UpdatePadCallback(std::uintptr_t user_data, s64 cycles_late);
-    void UpdateAccelerometerCallback(std::uintptr_t user_data, s64 cycles_late);
-    void UpdateGyroscopeCallback(std::uintptr_t user_data, s64 cycles_late);
+    void UpdatePadCallback(u64 user_data, s64 cycles_late);
+    void UpdateAccelerometerCallback(u64 user_data, s64 cycles_late);
+    void UpdateGyroscopeCallback(u64 user_data, s64 cycles_late);
 
     Core::System& system;
 

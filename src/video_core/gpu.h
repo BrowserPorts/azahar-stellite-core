@@ -107,7 +107,7 @@ private:
 
     void MemoryTransfer();
 
-    void VBlankCallback(uintptr_t user_data, s64 cycles_late);
+    void VBlankCallback(u64 user_data, s64 cycles_late);
 
     friend class boost::serialization::access;
     template <class Archive>

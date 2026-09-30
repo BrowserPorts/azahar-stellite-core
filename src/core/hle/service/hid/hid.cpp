@@ -141,7 +141,7 @@ void Module::LoadInputDevices() {
     }
 }
 
-void Module::UpdatePadCallback(std::uintptr_t user_data, s64 cycles_late) {
+void Module::UpdatePadCallback(u64 user_data, s64 cycles_late) {
     SharedMem* mem = reinterpret_cast<SharedMem*>(shared_mem->GetPointer());
 
     if (is_device_reload_pending.exchange(false))
@@ -320,7 +320,7 @@ void Module::UpdatePadCallback(std::uintptr_t user_data, s64 cycles_late) {
     system.CoreTiming().ScheduleEvent(pad_update_ticks - cycles_late, pad_update_event);
 }
 
-void Module::UpdateAccelerometerCallback(std::uintptr_t user_data, s64 cycles_late) {
+void Module::UpdateAccelerometerCallback(u64 user_data, s64 cycles_late) {
     SharedMem* mem = reinterpret_cast<SharedMem*>(shared_mem->GetPointer());
 
     mem->accelerometer.index = next_accelerometer_index;
@@ -373,7 +373,7 @@ void Module::UpdateAccelerometerCallback(std::uintptr_t user_data, s64 cycles_la
                                       accelerometer_update_event);
 }
 
-void Module::UpdateGyroscopeCallback(std::uintptr_t user_data, s64 cycles_late) {
+void Module::UpdateGyroscopeCallback(u64 user_data, s64 cycles_late) {
     SharedMem* mem = reinterpret_cast<SharedMem*>(shared_mem->GetPointer());
 
     mem->gyroscope.index = next_gyroscope_index;
@@ -671,15 +671,15 @@ Module::Module(Core::System& system) : system(system) {
     // Register update callbacks
     Core::Timing& timing = system.CoreTiming();
     pad_update_event = timing.RegisterEvent("HID::UpdatePadCallback",
-                                            [this](std::uintptr_t user_data, s64 cycles_late) {
+                                            [this](u64 user_data, s64 cycles_late) {
                                                 UpdatePadCallback(user_data, cycles_late);
                                             });
     accelerometer_update_event = timing.RegisterEvent(
-        "HID::UpdateAccelerometerCallback", [this](std::uintptr_t user_data, s64 cycles_late) {
+        "HID::UpdateAccelerometerCallback", [this](u64 user_data, s64 cycles_late) {
             UpdateAccelerometerCallback(user_data, cycles_late);
         });
     gyroscope_update_event = timing.RegisterEvent(
-        "HID::UpdateGyroscopeCallback", [this](std::uintptr_t user_data, s64 cycles_late) {
+        "HID::UpdateGyroscopeCallback", [this](u64 user_data, s64 cycles_late) {
             UpdateGyroscopeCallback(user_data, cycles_late);
         });
 

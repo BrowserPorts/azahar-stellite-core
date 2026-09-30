@@ -132,7 +132,7 @@ constexpr u64 cyclesToMs(s64 cycles) {
 
 namespace Core {
 
-using TimedCallback = std::function<void(std::uintptr_t user_data, int cycles_late)>;
+using TimedCallback = std::function<void(u64 user_data, int cycles_late)>;
 
 struct TimingEventType {
     TimedCallback callback;
@@ -145,7 +145,7 @@ public:
     struct Event {
         s64 time;
         u64 fifo_order;
-        std::uintptr_t user_data;
+        u64 user_data;
         const TimingEventType* type;
 
         bool operator>(const Event& right) const;
@@ -261,11 +261,11 @@ public:
     // Make sure to use thread_safe_mode = true if called from a different thread than the
     // emulator thread, such as coroutines.
     void ScheduleEvent(s64 cycles_into_future, const TimingEventType* event_type,
-                       std::uintptr_t user_data = 0,
+                       u64 user_data = 0,
                        std::size_t core_id = std::numeric_limits<std::size_t>::max(),
                        bool thread_safe_mode = false);
 
-    void UnscheduleEvent(const TimingEventType* event_type, std::uintptr_t user_data);
+    void UnscheduleEvent(const TimingEventType* event_type, u64 user_data);
 
     /// We only permit one event of each type in the queue at a time.
     void RemoveEvent(const TimingEventType* event_type);

@@ -128,7 +128,7 @@ public:
     u64 GetSystemTimeSince1900() const;
 
 private:
-    void UpdateTimeCallback(std::uintptr_t user_data, int cycles_late);
+    void UpdateTimeCallback(u64 user_data, int cycles_late);
     Core::Timing& timing;
     Core::TimingEventType* update_time_event;
     std::chrono::seconds init_time;

@@ -82,7 +82,7 @@ private:
 
     void LoadInputDevices();
     void UnloadInputDevices();
-    void UpdateCallback(std::uintptr_t user_data, s64 cycles_late);
+    void UpdateCallback(u64 user_data, s64 cycles_late);
 
     Core::System& system;
     std::shared_ptr<Kernel::Event> update_event;

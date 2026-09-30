@@ -125,7 +125,7 @@ u64 Handler::GetSystemTimeSince1900() const {
     return 3155673600000ULL + GetSystemTimeSince2000();
 }
 
-void Handler::UpdateTimeCallback(std::uintptr_t user_data, int cycles_late) {
+void Handler::UpdateTimeCallback(u64 user_data, int cycles_late) {
     DateTime& date_time =
         shared_page.date_time_counter % 2 ? shared_page.date_time_0 : shared_page.date_time_1;
 

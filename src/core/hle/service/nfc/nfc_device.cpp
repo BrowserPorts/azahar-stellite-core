@@ -47,7 +47,7 @@ NfcDevice::NfcDevice(Core::System& system_) : system{system_} {
 
     remove_amiibo_event = system.CoreTiming().RegisterEvent(
         "remove amiibo event",
-        [this](std::uintptr_t user_data, s64 cycles_late) { UnloadAmiibo(); });
+        [this](u64 user_data, s64 cycles_late) { UnloadAmiibo(); });
 }
 
 NfcDevice::~NfcDevice() = default;

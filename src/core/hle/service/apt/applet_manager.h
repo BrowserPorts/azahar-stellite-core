@@ -562,10 +562,10 @@ private:
     void TransferCapturedFramebuffers();
 
     Result CreateHLEApplet(AppletId id, AppletId parent, bool preload);
-    void HLEAppletUpdateEvent(std::uintptr_t user_data, s64 cycles_late);
+    void HLEAppletUpdateEvent(u64 user_data, s64 cycles_late);
 
     void LoadInputDevices();
-    void ButtonUpdateEvent(std::uintptr_t user_data, s64 cycles_late);
+    void ButtonUpdateEvent(u64 user_data, s64 cycles_late);
 
     template <class Archive>
     void serialize(Archive& ar, const unsigned int file_version) {

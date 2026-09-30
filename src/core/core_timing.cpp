@@ -62,7 +62,7 @@ TimingEventType* Timing::RegisterEvent(const std::string& name, TimedCallback ca
 }
 
 void Timing::ScheduleEvent(s64 cycles_into_future, const TimingEventType* event_type,
-                           std::uintptr_t user_data, std::size_t core_id, bool thread_safe_mode) {
+                           u64 user_data, std::size_t core_id, bool thread_safe_mode) {
     if (event_queue_locked) {
         return;
     }
@@ -102,7 +102,7 @@ void Timing::ScheduleEvent(s64 cycles_into_future, const TimingEventType* event_
     }
 }
 
-void Timing::UnscheduleEvent(const TimingEventType* event_type, std::uintptr_t user_data) {
+void Timing::UnscheduleEvent(const TimingEventType* event_type, u64 user_data) {
     if (event_queue_locked) {
         return;
     }
