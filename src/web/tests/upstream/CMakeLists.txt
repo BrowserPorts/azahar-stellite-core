@@ -87,22 +87,15 @@ add_custom_target(upstream_fixtures DEPENDS azahar_portable_fixtures dynarmic_fp
 
 if(EMSCRIPTEN)
     find_program(BUN_EXECUTABLE NAMES bun REQUIRED)
-    add_subdirectory("${AZAHAR_ROOT}/src/web/compiler" "${CMAKE_CURRENT_BINARY_DIR}/arm-frontend" EXCLUDE_FROM_ALL)
+    add_subdirectory("${AZAHAR_ROOT}/src/web/arm" "${CMAKE_CURRENT_BINARY_DIR}/arm-jit" EXCLUDE_FROM_ALL)
     add_executable(dynarmic_arm_jit_fixtures
-        "${AZAHAR_ROOT}/src/web/arm/jit.cpp"
-        "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPToFixed.cpp"
-        "${DYNARMIC_ROOT}/src/dynarmic/common/fp/process_exception.cpp"
-        "${DYNARMIC_ROOT}/src/dynarmic/common/fp/process_nan.cpp"
-        "${DYNARMIC_ROOT}/src/dynarmic/common/fp/unpacked.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_arm_instructions.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_coprocessor.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_thumb_instructions.cpp"
         "${DYNARMIC_ROOT}/tests/A32/test_svc.cpp")
-    target_link_libraries(dynarmic_arm_jit_fixtures PRIVATE azahar_arm_frontend Catch2::Catch2WithMain)
-    target_compile_options(dynarmic_arm_jit_fixtures PRIVATE -msimd128)
+    target_link_libraries(dynarmic_arm_jit_fixtures PRIVATE azahar_arm_jit Catch2::Catch2WithMain)
     target_link_options(dynarmic_arm_jit_fixtures PRIVATE
-        -sMODULARIZE=1 -sEXPORT_ES6=1 -sALLOW_TABLE_GROWTH=1 -sENVIRONMENT=web,node
-        -Wl,--export-table "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=['$stringToNewUTF8','$UTF8ToString']"
+        -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,node
         -sINITIAL_MEMORY=33554432 -sMAXIMUM_MEMORY=536870912)
     set_target_properties(dynarmic_arm_jit_fixtures PROPERTIES SUFFIX ".mjs")
     add_test(NAME dynarmic_arm_jit_fixtures COMMAND "${BUN_EXECUTABLE}"

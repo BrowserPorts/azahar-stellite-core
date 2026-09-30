@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+cmake_minimum_required(VERSION 3.25)
+if(NOT EMSCRIPTEN)
+    message(FATAL_ERROR "The ARM Wasm JIT requires the Emscripten toolchain")
+endif()
+get_filename_component(AZAHAR_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+set(DYNARMIC_ROOT "${AZAHAR_ROOT}/externals/dynarmic")
+if(NOT TARGET azahar_arm_frontend)
+    add_subdirectory("${AZAHAR_ROOT}/src/web/compiler" "${CMAKE_CURRENT_BINARY_DIR}/frontend" EXCLUDE_FROM_ALL)
+endif()
+
+add_library(azahar_arm_jit STATIC
+    jit.cpp
+    "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPToFixed.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/common/fp/process_exception.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/common/fp/process_nan.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/common/fp/unpacked.cpp")
+target_link_libraries(azahar_arm_jit PUBLIC azahar_arm_frontend)
+target_compile_features(azahar_arm_jit PUBLIC cxx_std_20)
+target_compile_options(azahar_arm_jit PRIVATE -O3 PUBLIC -msimd128 -fwasm-exceptions)
+target_link_options(azahar_arm_jit INTERFACE
+    -fwasm-exceptions -sALLOW_TABLE_GROWTH=1 -Wl,--export-table
+    "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=['$stringToNewUTF8','$UTF8ToString']")
