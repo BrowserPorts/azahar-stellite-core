@@ -9,7 +9,8 @@ const append = (line: string): undefined => {
   return undefined;
 };
 const recordings = new URL(location.href).searchParams.has("recordings");
-const fixtureUrl = new URL(recordings ? "./dynarmic_vfp_recordings.mjs" :
+const core = new URL(location.href).searchParams.has("core");
+const fixtureUrl = new URL(core ? "./tests.mjs" : recordings ? "./dynarmic_vfp_recordings.mjs" :
   "./dynarmic_arm_jit_fixtures.mjs", import.meta.url);
 try {
   const { default: createModule } = await import(fixtureUrl.href);
