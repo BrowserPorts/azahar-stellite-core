@@ -94,12 +94,21 @@ if(EMSCRIPTEN)
         "${DYNARMIC_ROOT}/tests/A32/test_svc.cpp")
     target_link_libraries(dynarmic_arm_jit_fixtures PRIVATE azahar_arm_frontend Catch2::Catch2WithMain)
     target_link_options(dynarmic_arm_jit_fixtures PRIVATE
-        -sMODULARIZE=1 -sEXPORT_ES6=1 -sALLOW_TABLE_GROWTH=1
+        -sMODULARIZE=1 -sEXPORT_ES6=1 -sALLOW_TABLE_GROWTH=1 -sENVIRONMENT=web,node
         -Wl,--export-table "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=['$stringToNewUTF8','$UTF8ToString']"
         -sINITIAL_MEMORY=33554432 -sMAXIMUM_MEMORY=536870912)
     set_target_properties(dynarmic_arm_jit_fixtures PROPERTIES SUFFIX ".mjs")
     add_test(NAME dynarmic_arm_jit_fixtures COMMAND "${BUN_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/run-jit.ts" "$<TARGET_FILE:dynarmic_arm_jit_fixtures>")
+    configure_file(browser-jit.html browser-jit.html COPYONLY)
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/browser-jit.js"
+        COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/browser-jit.ts"
+            --target browser --outfile "${CMAKE_CURRENT_BINARY_DIR}/browser-jit.js"
+        DEPENDS browser-jit.ts "${AZAHAR_ROOT}/src/web/arm/jit-host.ts"
+            "${AZAHAR_ROOT}/src/web/arm/lower.ts" "${AZAHAR_ROOT}/src/web/arm/ir.ts"
+            "${AZAHAR_ROOT}/src/web/wasm/binary.ts" "${AZAHAR_ROOT}/src/web/protocol.ts")
+    add_custom_target(browser_jit_fixtures DEPENDS
+        dynarmic_arm_jit_fixtures "${CMAKE_CURRENT_BINARY_DIR}/browser-jit.js")
     add_dependencies(upstream_fixtures dynarmic_arm_jit_fixtures)
 else()
     set(DYNARMIC_TESTS OFF CACHE BOOL "" FORCE)
