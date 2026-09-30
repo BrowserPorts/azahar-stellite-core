@@ -42,10 +42,14 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   const locals: ValueType[] = block.nodes.map((node) => wasmType(node.type));
   const carryLocals = new Map<number, number>();
   const wideLocals = new Map<number, number>();
+  const overflowLocals = new Map<number, number>();
   block.nodes.forEach((node, index) => {
     if (["Add32", "Sub32"].includes(node.op)) {
       wideLocals.set(index, locals.length + 2);
       locals.push("i64");
+    } else if (["SignedSaturatedAddWithFlag32", "SignedSaturatedSubWithFlag32"].includes(node.op)) {
+      overflowLocals.set(index, locals.length + 2);
+      locals.push("i32");
     } else if (["LogicalShiftLeft32", "LogicalShiftRight32", "ArithmeticShiftRight32", "RotateRight32", "RotateRightExtended"].includes(node.op)) {
       carryLocals.set(index, locals.length + 2);
       locals.push("i32");
@@ -184,35 +188,56 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     } else throw new JitError("compile", `Missing carry lowering for ${block.nodes[reference]?.op}`);
     return undefined;
   };
-  const packed16 = (node: ArmBlock["nodes"][number], flags = false): undefined => {
-    const match = /^Packed(Halving)?(AddSub|SubAdd|Add|Sub)(S|U)16$/.exec(node.op);
+  const packed = (node: ArmBlock["nodes"][number], flags = false): undefined => {
+    const match = /^Packed(Halving|Saturated)?(AddSub|SubAdd|Add|Sub)(S|U)(8|16)$/.exec(node.op);
     if (!match) throw new JitError("compile", `Missing packed flags lowering for ${node.op}`);
-    const halving = Boolean(match[1]);
+    const halving = match[1] === "Halving";
+    const saturated = match[1] === "Saturated";
     const signed = match[3] === "S";
+    const bits = Number(match[4]);
+    const mask = 2 ** bits - 1;
     const cross = match[2] === "AddSub" || match[2] === "SubAdd";
+    if (!flags && !halving && !cross) {
+      argument(node.args[0]!); simd(0x11);
+      argument(node.args[1]!); simd(0x11);
+      const subtract = match[2] === "Sub";
+      simd((bits === 8 ? 0x6e : 0x8e) + (subtract ? 3 : 0) +
+        (saturated ? signed ? 1 : 2 : 0));
+      simd(0x1b).byte(0);
+      return undefined;
+    }
     const lane = (position: number, half: number): undefined => {
-      argument(node.args[position]!); constant(half * 16).byte(0x76);
-      if (signed) body.byte(0xc1); else constant(65535).byte(0x71);
+      argument(node.args[position]!); constant(half * bits).byte(0x76);
+      if (signed) body.byte(bits === 8 ? 0xc0 : 0xc1); else constant(mask).byte(0x71);
       return undefined;
     };
-    for (let half = 0; half < 2; ++half) {
+    for (let half = 0; half < 32 / bits; ++half) {
       const subtract = match[2] === "Sub" || match[2] === (half === 0 ? "AddSub" : "SubAdd");
       lane(0, half); lane(1, cross ? 1 - half : half); body.byte(subtract ? 0x6b : 0x6a);
       if (flags) {
-        if (halving) throw new JitError("compile", "Halving packed operations do not produce GE flags");
-        constant(signed || subtract ? 0 : 65536).byte(signed || subtract ? 0x4e : 0x4f);
+        if (halving || saturated) throw new JitError("compile", "This packed operation does not produce GE flags");
+        constant(signed || subtract ? 0 : 2 ** bits).byte(signed || subtract ? 0x4e : 0x4f);
         constant(-1).byte(0x6c);
       } else if (halving) {
-        if (!signed) constant(0x1ffff).byte(0x71);
+        if (!signed) constant(2 ** (bits + 1) - 1).byte(0x71);
         constant(1).byte(signed ? 0x75 : 0x76);
       }
-      constant(65535).byte(0x71); constant(half * 16).byte(0x74);
+      constant(mask).byte(0x71); constant(half * bits).byte(0x74);
       if (half) body.byte(0x72);
     }
     return undefined;
   };
   const overflow = (reference: number): undefined => {
     const source = block.nodes[reference]!;
+    const saturatedOverflow = overflowLocals.get(reference);
+    if (saturatedOverflow !== undefined) {
+      get(saturatedOverflow);
+      return undefined;
+    }
+    if (source.op === "SignedSaturation" || source.op === "UnsignedSaturation") {
+      argument(source.args[0]!); get(reference + 2).byte(0x47);
+      return undefined;
+    }
     if (source.op !== "Add32" && source.op !== "Sub32") {
       throw new JitError("compile", `Missing overflow lowering for ${source.op}`);
     }
@@ -292,7 +317,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   block.nodes.forEach((node, index) => {
     const arg = (position: number): undefined => argument(node.args[position]!);
     let result = node.type !== "Void";
-    if (/^Packed(Halving)?(AddSub|SubAdd|Add|Sub)(S|U)16$/.test(node.op)) packed16(node);
+    if (/^Packed(Halving|Saturated)?(AddSub|SubAdd|Add|Sub)(S|U)(8|16)$/.test(node.op)) packed(node);
     else if (binary[node.op] !== undefined) {
       arg(0); arg(1); body.byte(binary[node.op]!);
     } else switch (node.op) {
@@ -430,7 +455,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       case "GetCFlagFromNZCV": arg(0); constant(29).byte(0x76); constant(1).byte(0x71); break;
       case "GetCarryFromOp": carry((node.args[0] as { ref: number }).ref); break;
       case "GetOverflowFromOp": overflow((node.args[0] as { ref: number }).ref); break;
-      case "GetGEFromOp": packed16(block.nodes[(node.args[0] as { ref: number }).ref]!, true); break;
+      case "GetGEFromOp": packed(block.nodes[(node.args[0] as { ref: number }).ref]!, true); break;
       case "GetNZFromOp": case "GetNZCVFromOp": {
         const reference = (node.args[0] as { ref: number }).ref;
         arg(0);
@@ -454,6 +479,34 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         arg(0); arg(1);
         if (node.op === "Sub64") body.byte(0x42).signed(-1n, 64).byte(0x85);
         body.byte(0x7c); arg(2); body.byte(0xad).byte(0x7c); break;
+      case "SignedSaturatedAddWithFlag32": case "SignedSaturatedSubWithFlag32": {
+        const subtract = node.op === "SignedSaturatedSubWithFlag32";
+        arg(0); arg(1); body.byte(subtract ? 0x6b : 0x6a); set(index + 2);
+        arg(0); arg(1); body.byte(0x73);
+        if (!subtract) constant(-1).byte(0x73);
+        arg(0); get(index + 2).byte(0x73).byte(0x71); constant(31).byte(0x76);
+        set(overflowLocals.get(index)!);
+        constant(0x7fffffff); arg(0); constant(31).byte(0x75).byte(0x73);
+        get(index + 2); get(overflowLocals.get(index)!).byte(0x1b);
+        break;
+      }
+      case "SignedSaturation": case "UnsignedSaturation": {
+        const signed = node.op === "SignedSaturation";
+        const bits = immediate(node.args[1]!);
+        if (bits < (signed ? 1 : 0) || bits > (signed ? 32 : 31)) {
+          throw new JitError("compile", "Invalid ARM saturation width");
+        }
+        const minimum = signed ? -(2 ** (bits - 1)) : 0;
+        const maximum = 2 ** (signed ? bits - 1 : bits) - 1;
+        constant(minimum); arg(0); arg(0); constant(minimum).byte(0x48).byte(0x1b);
+        set(index + 2);
+        constant(maximum); get(index + 2); get(index + 2);
+        constant(maximum).byte(0x4a).byte(0x1b);
+        break;
+      }
+      case "PackedSelect":
+        arg(1); arg(0); constant(-1).byte(0x73).byte(0x71);
+        arg(2); arg(0); body.byte(0x71).byte(0x72); break;
       case "SignedDiv32": case "UnsignedDiv32":
         arg(1); body.byte(0x45).byte(0x04).byte(0x7f); constant(0); body.byte(0x05);
         if (node.op === "SignedDiv32") {
