@@ -21,13 +21,19 @@ public:
 
     void Compile(const ProgramCode* program, const SwizzleData* swizzles);
     void Prepare(u32 entry) const;
-    void Run(const ShaderSetup& setup, ShaderUnit& state, u32 entry) const;
+    void Run(const ShaderSetup& setup, ShaderUnit& state, u32 entry) const {
+        if (prepared_entry != entry || !prepared_slot) Prepare(entry);
+        using ShaderEntry = void (*)(const Uniforms*, ShaderUnit*);
+        reinterpret_cast<ShaderEntry>(prepared_slot)(&setup.uniforms, &state);
+    }
 
 private:
     void Clear();
     ProgramCode program{};
     SwizzleData swizzles{};
     mutable std::unordered_map<u32, u32> entries;
+    mutable u32 prepared_entry = MAX_PROGRAM_CODE_LENGTH;
+    mutable u32 prepared_slot = 0;
 };
 
 } // namespace Shader

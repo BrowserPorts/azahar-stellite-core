@@ -52,6 +52,8 @@ EMSCRIPTEN_KEEPALIVE void WasmPicaSetEmit(Pica::ShaderUnit* unit, u32 value) {
 namespace Pica::Shader {
 JitShader::~JitShader() { Clear(); }
 void JitShader::Clear() {
+    prepared_entry = MAX_PROGRAM_CODE_LENGTH;
+    prepared_slot = 0;
     for (const auto& [entry, slot] : entries) ReleasePicaShader(slot);
     entries.clear();
 }
@@ -61,7 +63,12 @@ void JitShader::Compile(const ProgramCode* program_, const SwizzleData* swizzles
     swizzles = *swizzles_;
 }
 void JitShader::Prepare(u32 entry) const {
-    if (entries.contains(entry)) return;
+    if (prepared_entry == entry && prepared_slot) return;
+    if (const auto found = entries.find(entry); found != entries.end()) {
+        prepared_entry = entry;
+        prepared_slot = found->second;
+        return;
+    }
     const u32 layout[] = {
         offsetof(Uniforms, f), offsetof(Uniforms, b), offsetof(Uniforms, i),
         offsetof(ShaderUnit, input), offsetof(ShaderUnit, temporary), offsetof(ShaderUnit, output),
@@ -77,10 +84,7 @@ void JitShader::Prepare(u32 entry) const {
     }
     try { entries.emplace(entry, slot); }
     catch (...) { ReleasePicaShader(slot); throw; }
-}
-void JitShader::Run(const ShaderSetup& setup, ShaderUnit& state, u32 entry) const {
-    Prepare(entry);
-    using ShaderEntry = void (*)(const Uniforms*, ShaderUnit*);
-    reinterpret_cast<ShaderEntry>(entries.at(entry))(&setup.uniforms, &state);
+    prepared_entry = entry;
+    prepared_slot = slot;
 }
 } // namespace Pica::Shader
