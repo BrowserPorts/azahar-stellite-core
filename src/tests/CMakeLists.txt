@@ -84,15 +84,19 @@ if(EMSCRIPTEN)
     file(GENERATE OUTPUT "${TEST_WEB_DIRECTORY}/browser-jit.html"
         INPUT "${PROJECT_SOURCE_DIR}/src/web/tests/upstream/browser-jit.html")
     add_custom_command(OUTPUT "${TEST_WEB_DIRECTORY}/browser-jit.js"
+        "${TEST_WEB_DIRECTORY}/browser-worker.js"
         COMMAND "${BUN_EXECUTABLE}" build "${PROJECT_SOURCE_DIR}/src/web/tests/upstream/browser-jit.ts"
-            --target browser --outfile "${TEST_WEB_DIRECTORY}/browser-jit.js"
+            "${PROJECT_SOURCE_DIR}/src/web/tests/upstream/browser-worker.ts"
+            --target browser --outdir "${TEST_WEB_DIRECTORY}"
         DEPENDS "${PROJECT_SOURCE_DIR}/src/web/tests/upstream/browser-jit.ts"
+            "${PROJECT_SOURCE_DIR}/src/web/tests/upstream/browser-worker.ts"
             "${PROJECT_SOURCE_DIR}/src/web/arm/jit-host.ts" "${PROJECT_SOURCE_DIR}/src/web/arm/lower.ts"
             "${PROJECT_SOURCE_DIR}/src/web/arm/ir.ts" "${PROJECT_SOURCE_DIR}/src/web/wasm/binary.ts"
             "${PROJECT_SOURCE_DIR}/src/web/pica/jit-host.ts" "${PROJECT_SOURCE_DIR}/src/web/pica/lower.ts"
             "${PROJECT_SOURCE_DIR}/src/web/pica/control-flow.ts" "${PROJECT_SOURCE_DIR}/src/web/pica/instruction.ts"
             "${PROJECT_SOURCE_DIR}/src/web/protocol.ts")
-    add_custom_target(browser_core_fixtures DEPENDS tests "${TEST_WEB_DIRECTORY}/browser-jit.js")
+    add_custom_target(browser_core_fixtures DEPENDS tests "${TEST_WEB_DIRECTORY}/browser-jit.js"
+        "${TEST_WEB_DIRECTORY}/browser-worker.js")
 else()
     add_test(NAME tests COMMAND tests)
 endif()

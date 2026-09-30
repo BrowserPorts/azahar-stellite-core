@@ -98,22 +98,25 @@ if(EMSCRIPTEN)
         "${DYNARMIC_ROOT}/src/dynarmic/frontend/A32/disassembler/disassembler_arm.cpp")
     target_link_libraries(dynarmic_arm_jit_fixtures PRIVATE azahar_arm_jit Catch2::Catch2WithMain)
     target_link_options(dynarmic_arm_jit_fixtures PRIVATE
-        -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,node
+        -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker,node
         -sINITIAL_MEMORY=33554432 -sMAXIMUM_MEMORY=536870912)
     set_target_properties(dynarmic_arm_jit_fixtures PROPERTIES SUFFIX ".mjs")
     add_test(NAME dynarmic_arm_jit_fixtures COMMAND "${BUN_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/run-jit.ts" "$<TARGET_FILE:dynarmic_arm_jit_fixtures>")
     configure_file(browser-jit.html browser-jit.html COPYONLY)
     add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/browser-jit.js"
+        "${CMAKE_CURRENT_BINARY_DIR}/browser-worker.js"
         COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/browser-jit.ts"
-            --target browser --outfile "${CMAKE_CURRENT_BINARY_DIR}/browser-jit.js"
-        DEPENDS browser-jit.ts "${AZAHAR_ROOT}/src/web/arm/jit-host.ts"
+            "${CMAKE_CURRENT_SOURCE_DIR}/browser-worker.ts"
+            --target browser --outdir "${CMAKE_CURRENT_BINARY_DIR}"
+        DEPENDS browser-jit.ts browser-worker.ts "${AZAHAR_ROOT}/src/web/arm/jit-host.ts"
             "${AZAHAR_ROOT}/src/web/arm/lower.ts" "${AZAHAR_ROOT}/src/web/arm/ir.ts"
             "${AZAHAR_ROOT}/src/web/pica/jit-host.ts" "${AZAHAR_ROOT}/src/web/pica/lower.ts"
             "${AZAHAR_ROOT}/src/web/pica/control-flow.ts" "${AZAHAR_ROOT}/src/web/pica/instruction.ts"
             "${AZAHAR_ROOT}/src/web/wasm/binary.ts" "${AZAHAR_ROOT}/src/web/protocol.ts")
     add_custom_target(browser_jit_fixtures DEPENDS
-        dynarmic_arm_jit_fixtures "${CMAKE_CURRENT_BINARY_DIR}/browser-jit.js")
+        dynarmic_arm_jit_fixtures "${CMAKE_CURRENT_BINARY_DIR}/browser-jit.js"
+        "${CMAKE_CURRENT_BINARY_DIR}/browser-worker.js")
     add_dependencies(upstream_fixtures dynarmic_arm_jit_fixtures)
 else()
     set(DYNARMIC_TESTS OFF CACHE BOOL "" FORCE)
@@ -145,7 +148,7 @@ if(EMSCRIPTEN)
     target_link_libraries(dynarmic_vfp_recordings PRIVATE azahar_arm_jit)
     add_dependencies(browser_jit_fixtures dynarmic_vfp_recordings)
     target_link_options(dynarmic_vfp_recordings PRIVATE
-        -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,node
+        -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker,node
         -sINITIAL_MEMORY=33554432 -sMAXIMUM_MEMORY=536870912)
     set_target_properties(dynarmic_vfp_recordings PROPERTIES SUFFIX ".mjs")
     add_test(NAME dynarmic_vfp_recordings COMMAND "${BUN_EXECUTABLE}"

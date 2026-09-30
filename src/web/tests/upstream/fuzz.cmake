@@ -85,7 +85,7 @@ if(EMSCRIPTEN)
         "${DYNARMIC_ROOT}/src/dynarmic/ir/opt/naming_pass.cpp")
     target_link_libraries(dynarmic_arm_fuzz_fixtures PRIVATE azahar_arm_jit)
     target_link_options(dynarmic_arm_fuzz_fixtures PRIVATE
-        -g2 -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,node
+        -g2 -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker,node
         -sINITIAL_MEMORY=67108864 -sMAXIMUM_MEMORY=536870912)
     set_target_properties(dynarmic_arm_fuzz_fixtures PROPERTIES SUFFIX ".mjs")
     add_test(NAME dynarmic_arm_fuzz_fixtures COMMAND "${BUN_EXECUTABLE}"
