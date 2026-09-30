@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { lowerArm } from "./lower";
+import type { MemoryOptions } from "./lower";
 import type { ArmBlock } from "./ir";
 
 /** Synchronous baseline installation; execution stays within the shared Wasm table. */
@@ -9,7 +10,8 @@ export class ArmJitHost {
   readonly #live = new Set<number>();
 
   compile(json: string, layout: Uint32Array, memory: WebAssembly.Memory,
-    table: WebAssembly.Table, helpers: WebAssembly.ModuleImports): { slot: number; bytes: number } {
+    table: WebAssembly.Table, helpers: WebAssembly.ModuleImports,
+    memoryOptions?: MemoryOptions): { slot: number; bytes: number } {
     const [registers, cpsr, extendedRegisters, fpscr, checkBit] = layout;
     if (layout.length !== 5 || registers === undefined || cpsr === undefined ||
       extendedRegisters === undefined || fpscr === undefined || checkBit === undefined) {
@@ -18,8 +20,9 @@ export class ArmJitHost {
     const bytes = lowerArm(JSON.parse(json) as ArmBlock, {
       layout: { registers, cpsr, extendedRegisters, fpscr, checkBit },
       shared: memory.buffer instanceof SharedArrayBuffer,
-      maximumPages: 8192,
+      maximumPages: 65536,
       helperNames: new Set(Object.keys(helpers)),
+      ...(memoryOptions ? { memory: memoryOptions } : {}),
     });
     const module = new WebAssembly.Module(bytes);
     const instance = new WebAssembly.Instance(module, { env: { memory }, core: helpers });

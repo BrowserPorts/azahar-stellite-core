@@ -24,6 +24,16 @@ export interface LowerOptions {
   maximumPages: number;
   /** Explicit arithmetic/peripheral helpers exported as raw Wasm functions by the core. */
   helperNames?: ReadonlySet<string>;
+  memory?: MemoryOptions;
+}
+
+export interface MemoryOptions {
+  pageTable: number;
+  fastmem?: number;
+  pointerMaskBits: number;
+  absoluteOffset: boolean;
+  detectMisaligned: number;
+  boundaryOnly: boolean;
 }
 
 export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<ArrayBuffer> {
@@ -41,6 +51,8 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       locals.push("i32");
     }
   });
+  const memoryPointer = locals.length + 2;
+  if (options.memory) locals.push("i32");
   const constant = (value: number): Bytes => body.byte(0x41).signed(BigInt(value), 32);
   const get = (index: number): Bytes => body.byte(0x20).u32(index);
   const set = (index: number): Bytes => body.byte(0x21).u32(index);
@@ -110,6 +122,56 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   const immediate = (value: Argument): number => {
     if (!("imm" in value)) throw new JitError("compile", "Expected a constant ARM register index");
     return Number(BigInt(value.imm));
+  };
+  const memoryAccess = (node: ArmBlock["nodes"][number]): undefined => {
+    const config = options.memory;
+    const read = node.op.startsWith("A32Read");
+    const bits = Number(node.op.match(/\d+$/)![0]);
+    const width = bits / 8;
+    const fallback = (): undefined => helper(node.op, node.args.map(argType), read ? [wasmType(node.type)] : [],
+      () => node.args.forEach(argument));
+    // Ordered accesses stay in the core; NORMAL (0) is the ordinary RAM path.
+    if (!config || (!config.pageTable && config.fastmem === undefined) ||
+      immediate(node.args[read ? 2 : 3]!) !== 0) return fallback();
+    const address = (): undefined => argument(node.args[1]!);
+    const direct = (): undefined => {
+      get(memoryPointer);
+      if (!read) argument(node.args[2]!);
+      const opcode = read ? { 8: 0x2d, 16: 0x2f, 32: 0x28, 64: 0x29 }[bits] :
+        { 8: 0x3a, 16: 0x3b, 32: 0x36, 64: 0x37 }[bits];
+      body.byte(opcode!).u32(0).u32(0);
+      return undefined;
+    };
+    const branch = (): undefined => {
+      body.byte(0x04).byte(read ? bits === 64 ? 0x7e : 0x7f : 0x40);
+      direct(); body.byte(0x05); fallback(); body.byte(0x0b);
+      return undefined;
+    };
+    if (config.fastmem !== undefined) {
+      constant(config.fastmem); address(); body.byte(0x6a); set(memoryPointer);
+      // Check the full address before wrapping it to wasm32, including the access width.
+      body.byte(0x42).signed(BigInt(config.fastmem + width), 64);
+      address(); body.byte(0xad).byte(0x7c);
+      body.byte(0x3f).byte(0).byte(0xad).byte(0x42).signed(16n, 64).byte(0x86).byte(0x58);
+      branch();
+    } else {
+      constant(config.pageTable); address(); constant(12).byte(0x76); constant(2).byte(0x74).byte(0x6a);
+      body.byte(0x28).u32(2).u32(0);
+      if (config.pointerMaskBits) constant(-1 << config.pointerMaskBits).byte(0x71);
+      set(memoryPointer);
+      get(memoryPointer).byte(0x45).byte(0x45);
+      if (width > 1) {
+        address(); constant(4095).byte(0x71); constant(4096 - width).byte(0x4d).byte(0x71);
+        if ((config.detectMisaligned & bits) && !config.boundaryOnly) {
+          address(); constant(width - 1).byte(0x71).byte(0x45).byte(0x71);
+        }
+      }
+      get(memoryPointer); address();
+      if (!config.absoluteOffset) constant(4095).byte(0x71);
+      body.byte(0x6a); set(memoryPointer);
+      branch();
+    }
+    return undefined;
   };
   const carry = (reference: number): undefined => {
     const wide = wideLocals.get(reference);
@@ -235,6 +297,9 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     } else switch (node.op) {
       case "Void": case "PushRSB": case "A32UpdateUpperLocationDescriptor": result = false; break;
       case "Identity": arg(0); break;
+      case "A32ReadMemory8": case "A32ReadMemory16": case "A32ReadMemory32": case "A32ReadMemory64":
+      case "A32WriteMemory8": case "A32WriteMemory16": case "A32WriteMemory32": case "A32WriteMemory64":
+        memoryAccess(node); break;
       case "FPAbs32": case "FPNeg32":
         arg(0); constant(node.op === "FPAbs32" ? 0x7fffffff : 0x80000000);
         body.byte(node.op === "FPAbs32" ? 0x71 : 0x73); break;

@@ -44,7 +44,7 @@ struct alignas(8) ArmState {
     Dynarmic::A32::UserConfig* config{};
 };
 
-EM_JS(uint32_t, CompileArmRegion, (const char* json, const uint32_t* layout, uint32_t* bytes), {
+EM_JS(uint32_t, CompileArmRegion, (const char* json, const uint32_t* layout, const uint32_t* memory_config, uint32_t* bytes), {
     try {
         if (!Module["azaharJitHelpers"]) {
             const rawExports = new Set(Object.values(wasmExports));
@@ -52,9 +52,14 @@ EM_JS(uint32_t, CompileArmRegion, (const char* json, const uint32_t* layout, uin
                 .filter(([name, value]) => name.startsWith("_") && typeof value === "function" && rawExports.has(value))
                 .map(([name, value]) => [name.slice(1), value]));
         }
+        const memory = HEAPU32.slice(memory_config >> 2, (memory_config >> 2) + 7);
         const result = Module["azaharJitHost"].compile(UTF8ToString(json),
             HEAPU32.slice(layout >> 2, (layout >> 2) + 5), wasmMemory,
-            wasmExports["__indirect_function_table"], Module["azaharJitHelpers"]);
+            wasmExports["__indirect_function_table"], Module["azaharJitHelpers"], {
+                pageTable: memory[0], ...(memory[2] ? { fastmem: memory[1] } : {}),
+                pointerMaskBits: memory[3], absoluteOffset: Boolean(memory[4]),
+                detectMisaligned: memory[5], boundaryOnly: Boolean(memory[6])
+            });
         HEAPU32[bytes >> 2] = result.bytes;
         return result.slot;
     } catch (error) {
@@ -428,6 +433,9 @@ struct Jit::Impl {
         if (config.global_monitor && config.processor_id >= config.global_monitor->GetProcessorCount()) {
             throw std::invalid_argument("ARM processor is outside the exclusive monitor");
         }
+        if (config.page_table_pointer_mask_bits < 0 || config.page_table_pointer_mask_bits > 31) {
+            throw std::invalid_argument("Invalid ARM page table pointer mask");
+        }
         state.config = &config;
     }
     ~Impl() { Clear(); ReleaseRetired(); }
@@ -461,8 +469,12 @@ struct Jit::Impl {
         });
         const uint32_t layout[] = {offsetof(ArmState, registers), offsetof(ArmState, cpsr),
             offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit)};
+        const uint32_t memory_config[] = {static_cast<uint32_t>(reinterpret_cast<uintptr_t>(config.page_table)),
+            static_cast<uint32_t>(config.fastmem_pointer.value_or(0)), config.fastmem_pointer.has_value(),
+            static_cast<uint32_t>(config.page_table_pointer_mask_bits), config.absolute_offset_page_table,
+            config.detect_misaligned_access_via_page_table, config.only_detect_misalignment_via_page_table_on_page_boundary};
         uint32_t bytes = 0;
-        const auto slot = CompileArmRegion(json.c_str(), layout, &bytes);
+        const auto slot = CompileArmRegion(json.c_str(), layout, memory_config, &bytes);
         if (!slot) {
             char* error = ArmCompileError();
             std::string message(error);
