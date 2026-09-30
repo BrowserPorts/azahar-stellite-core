@@ -43,6 +43,7 @@ struct alignas(8) ArmState {
     uint32_t exclusive_address{};
     uint64_t exclusive_value{};
     Dynarmic::A32::UserConfig* config{};
+    std::atomic<uint32_t>* halt{};
 };
 
 EM_JS(uint32_t, CompileArmRegion, (const char* json, const uint32_t* layout, const uint32_t* memory_config, uint32_t* bytes), {
@@ -234,6 +235,9 @@ template <class Result, class Integer> Result FromFixed(ArmState* state, Integer
 } // namespace
 
 // Generated code imports these raw Wasm functions, avoiding JavaScript on memory access.
+extern "C" EMSCRIPTEN_KEEPALIVE uint32_t WasmCheckHalt(ArmState* state) {
+    return state->halt->load();
+}
 extern "C" {
 #define READ_MEMORY(bits, type) \
     EMSCRIPTEN_KEEPALIVE type A32ReadMemory##bits(ArmState* state, uint64_t, uint32_t address, uint32_t) { \
@@ -438,6 +442,7 @@ struct Jit::Impl {
             throw std::invalid_argument("Invalid ARM page table pointer mask");
         }
         state.config = &config;
+        state.halt = &halt;
     }
     ~Impl() { Clear(); ReleaseRetired(); }
     void ReleaseRetired() {
@@ -557,6 +562,7 @@ void Jit::Reset() {
     if (is_executing) throw std::logic_error("Cannot reset an executing ARM JIT");
     impl->state = {};
     impl->state.config = &impl->config;
+    impl->state.halt = &impl->halt;
 }
 void Jit::HaltExecution(HaltReason reason) { impl->halt.fetch_or(static_cast<uint32_t>(reason)); }
 void Jit::ClearHalt(HaltReason reason) { impl->halt.fetch_and(~static_cast<uint32_t>(reason)); }

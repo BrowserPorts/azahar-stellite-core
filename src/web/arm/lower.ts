@@ -272,8 +272,9 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         terminal(term.then); body.byte(0x05); terminal(term.else); body.byte(0x0b);
         break;
       case "check-halt":
-        // The block is bounded; the dispatcher checks halt state before the next block.
-        terminal(term.else);
+        helper("WasmCheckHalt", [], ["i32"], () => undefined);
+        body.byte(0x45).byte(0x04).byte(0x40);
+        terminal(term.else); body.byte(0x0b);
         break;
     }
     return undefined;
