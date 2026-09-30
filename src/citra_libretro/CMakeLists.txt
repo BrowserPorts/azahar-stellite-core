@@ -24,7 +24,12 @@ if(ENABLE_VULKAN)
     target_link_libraries(citra_libretro_common PRIVATE sirit vulkan-headers vma)
 endif()
 
-add_library(citra_libretro SHARED
+if(EMSCRIPTEN)
+    set(LIBRETRO_LIBRARY_TYPE STATIC)
+else()
+    set(LIBRETRO_LIBRARY_TYPE SHARED)
+endif()
+add_library(citra_libretro ${LIBRETRO_LIBRARY_TYPE}
         citra_libretro.cpp
         citra_libretro.h
         $<TARGET_OBJECTS:citra_libretro_common>)
@@ -90,7 +95,10 @@ if(IOS)
   target_link_libraries(citra_libretro PRIVATE "-framework CoreFoundation" "-framework Foundation")
 endif()
 
-if (CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR
+if(EMSCRIPTEN)
+    include("${PROJECT_SOURCE_DIR}/src/web/libretro/archive.cmake")
+    azahar_pack_libretro(citra_libretro)
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR
     CMAKE_SYSTEM_NAME STREQUAL "iOS" OR
     CMAKE_SYSTEM_NAME STREQUAL "tvOS")
   target_link_libraries(citra_libretro PRIVATE "-Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/libretro.osx.def")
@@ -98,4 +106,8 @@ else()
   target_link_libraries(citra_libretro PRIVATE "-Wl,-Bsymbolic")
 endif()
 
-add_custom_target(azahar_libretro DEPENDS citra_libretro)
+if(EMSCRIPTEN)
+    add_custom_target(azahar_libretro DEPENDS azahar_libretro_wasm)
+else()
+    add_custom_target(azahar_libretro DEPENDS citra_libretro)
+endif()
