@@ -359,6 +359,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     const pairedWiden = /^VectorPairedAdd(Signed|Unsigned)Widen(8|16|32)$/.exec(node.op);
     const reversedElements = /^VectorReverseElementsIn(Half|Word|Long)Groups(8|16|32)$/.exec(node.op);
     const leadingZeros = /^VectorCountLeadingZeros(8|16|32)$/.exec(node.op);
+    const doublingHigh = /^VectorSignedSaturatedDoublingMultiplyHigh(Rounding)?(16|32)$/.exec(node.op);
     const saturatedNarrow = /^Vector(SignedSaturatedNarrowTo(Signed|Unsigned)|UnsignedSaturatedNarrow)(16|32|64)$/.exec(node.op);
     const saturatedBinary = /^Vector(Signed|Unsigned)Saturated(Add|Sub)(8|16)$/.exec(node.op);
     const absoluteDifference = /^Vector(Signed|Unsigned)AbsoluteDifference(8|16|32)$/.exec(node.op);
@@ -407,6 +408,32 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         if (bits === 16) simd(0x7d);
         simd(vectorBinary[`VectorSub${bits}`]!);
       }
+    } else if (doublingHigh) {
+      const bits = Number(doublingHigh[2]);
+      const rounding = doublingHigh[1] !== undefined;
+      const splat = (value: number): Bytes => constant(value).byte(0xfd).u32(laneSplat[bits]!);
+      arg(0); splat(-(2 ** (bits - 1))); simd(vectorBinary[`VectorEqual${bits}`]!);
+      arg(1); splat(-(2 ** (bits - 1))); simd(vectorBinary[`VectorEqual${bits}`]!);
+      simd(0x4e); set(index + 2);
+      if (bits === 16 && rounding) { arg(0); arg(1); simd(0x82); }
+      else {
+        for (let part = 0; part < 2; ++part) {
+          arg(0); arg(1); simd((bits === 16 ? 0xbc : 0xdc) + part);
+          if (rounding) {
+            body.byte(0x42).signed(0x40000000n, 64); simd(0x12); simd(0xce);
+          }
+          constant(bits - 1); simd(vectorShiftLeft[bits * 2]! + 1);
+        }
+        if (bits === 16) simd(0x85);
+        else {
+          simd(0x0d);
+          for (let byte = 0; byte < 16; ++byte) body.byte(Math.floor(byte / 4) * 8 + byte % 4);
+          splat(0x7fffffff); get(index + 2); simd(0x4d); simd(0x52);
+        }
+      }
+      store(options.layout.fpscr, () => {
+        load(options.layout.fpscr); get(index + 2); simd(0x53); constant(27).byte(0x74).byte(0x72);
+      });
     } else if (variableShift || roundingShift) {
       const bits = Number((variableShift ?? roundingShift)![2]);
       const arithmetic = variableShift?.[1] === "Arithmetic" || roundingShift?.[1] === "S";
