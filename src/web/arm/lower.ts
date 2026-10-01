@@ -741,7 +741,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         arg(0); constant(0xf0000000).byte(0x71).byte(0x72);
       }); break;
       case "A32GetCFlag": bit(0x20000000); break;
-      case "A32SetGEFlagsCompressed": mergeFlags(0x000f0000, () => { arg(0); constant(16).byte(0x74); }); break;
+      case "A32SetGEFlagsCompressed": mergeFlags(0x000f0000, () => arg(0)); break;
       case "A32SetGEFlags": mergeFlags(0x000f0000, () => {
         for (let flag = 0; flag < 4; ++flag) {
           arg(0); constant(flag * 8).byte(0x76); constant(1).byte(0x71); constant(flag + 16).byte(0x74);
