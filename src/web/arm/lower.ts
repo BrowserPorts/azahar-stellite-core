@@ -361,7 +361,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     const leadingZeros = /^VectorCountLeadingZeros(8|16|32)$/.exec(node.op);
     const doublingHigh = /^VectorSignedSaturatedDoublingMultiplyHigh(Rounding)?(16|32)$/.exec(node.op);
     const saturatedNarrow = /^Vector(SignedSaturatedNarrowTo(Signed|Unsigned)|UnsignedSaturatedNarrow)(16|32|64)$/.exec(node.op);
-    const saturatedBinary = /^Vector(Signed|Unsigned)Saturated(Add|Sub)(8|16)$/.exec(node.op);
+    const saturatedBinary = /^Vector(Signed|Unsigned)Saturated(Add|Sub)(8|16|32|64)$/.exec(node.op);
     const absoluteDifference = /^Vector(Signed|Unsigned)AbsoluteDifference(8|16|32)$/.exec(node.op);
     if (/^Packed(Halving|Saturated)?(AddSub|SubAdd|Add|Sub)(S|U)(8|16)$/.test(node.op)) packed(node);
     else if (rearrangement) {
@@ -576,13 +576,41 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       const signed = saturatedBinary[1] === "Signed";
       const subtract = saturatedBinary[2] === "Sub";
       const bits = Number(saturatedBinary[3]);
-      const opcode = (bits === 8 ? 0x6f : 0x8f) + (signed ? 0 : 1) + (subtract ? 3 : 0);
-      arg(0); arg(1); simd(opcode); body.byte(0x22).u32(index + 2);
-      store(options.layout.fpscr, () => {
-        load(options.layout.fpscr); get(index + 2); arg(0); arg(1);
-        simd(vectorBinary[`Vector${subtract ? "Sub" : "Add"}${bits}`]!);
-        simd(0x51); simd(0x53); constant(27).byte(0x74).byte(0x72);
-      });
+      const wrapping = vectorBinary[`Vector${subtract ? "Sub" : "Add"}${bits}`]!;
+      if (bits <= 16) {
+        const opcode = (bits === 8 ? 0x6f : 0x8f) + (signed ? 0 : 1) + (subtract ? 3 : 0);
+        arg(0); arg(1); simd(opcode); body.byte(0x22).u32(index + 2);
+        store(options.layout.fpscr, () => {
+          load(options.layout.fpscr); get(index + 2); arg(0); arg(1); simd(wrapping);
+          simd(0x51); simd(0x53); constant(27).byte(0x74).byte(0x72);
+        });
+      } else {
+        const splat = (value: bigint): Bytes => {
+          if (bits === 32) constant(Number(value)); else body.byte(0x42).signed(value, 64);
+          return simd(laneSplat[bits]!);
+        };
+        arg(0); arg(1); simd(wrapping); set(index + 2);
+        if (signed) {
+          arg(0); constant(bits - 1); simd(vectorShiftLeft[bits]! + 1);
+          splat((1n << BigInt(bits - 1)) - 1n); simd(0x51);
+        } else if (subtract) zeroVector();
+        else splat(-1n);
+        get(index + 2);
+        if (signed) {
+          arg(0); get(index + 2); simd(0x51); arg(0); arg(1); simd(0x51);
+          simd(subtract ? 0x4e : 0x4f); constant(bits - 1); simd(vectorShiftLeft[bits]! + 1);
+        } else {
+          if (subtract) arg(1); else arg(0);
+          if (bits === 64) { splat(-0x8000000000000000n); simd(0x51); }
+          if (subtract) arg(0); else get(index + 2);
+          if (bits === 64) { splat(-0x8000000000000000n); simd(0x51); }
+          simd(bits === 32 ? 0x3c : 0xd9);
+        }
+        body.byte(0x22).u32(index + 2); simd(0x52);
+        store(options.layout.fpscr, () => {
+          load(options.layout.fpscr); get(index + 2); simd(0x53); constant(27).byte(0x74).byte(0x72);
+        });
+      }
     } else if (paired) {
       const bits = Number(paired[3]);
       const bytes = bits / 8;
