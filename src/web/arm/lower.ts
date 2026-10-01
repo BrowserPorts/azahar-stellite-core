@@ -360,6 +360,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     const reversedElements = /^VectorReverseElementsIn(Half|Word|Long)Groups(8|16|32)$/.exec(node.op);
     const leadingZeros = /^VectorCountLeadingZeros(8|16|32)$/.exec(node.op);
     const doublingHigh = /^VectorSignedSaturatedDoublingMultiplyHigh(Rounding)?(16|32)$/.exec(node.op);
+    const doublingLong = /^VectorSignedSaturatedDoublingMultiplyLong(16|32)$/.exec(node.op);
     const saturatedNarrow = /^Vector(SignedSaturatedNarrowTo(Signed|Unsigned)|UnsignedSaturatedNarrow)(16|32|64)$/.exec(node.op);
     const saturatedBinary = /^Vector(Signed|Unsigned)Saturated(Add|Sub)(8|16|32|64)$/.exec(node.op);
     const saturatedUnary = /^VectorSignedSaturated(Abs|Neg)(8|16|32|64)$/.exec(node.op);
@@ -409,6 +410,17 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         if (bits === 16) simd(0x7d);
         simd(vectorBinary[`VectorSub${bits}`]!);
       }
+    } else if (doublingLong) {
+      const bits = Number(doublingLong[1]);
+      arg(0); arg(1); simd(bits === 16 ? 0xbc : 0xdc);
+      constant(1); simd(vectorShiftLeft[bits * 2]!); body.byte(0x22).u32(index + 2);
+      get(index + 2);
+      if (bits === 16) constant(-0x80000000); else body.byte(0x42).signed(-0x8000000000000000n, 64);
+      simd(laneSplat[bits * 2]!); simd(vectorBinary[`VectorEqual${bits * 2}`]!);
+      body.byte(0x22).u32(index + 2); simd(0x51);
+      store(options.layout.fpscr, () => {
+        load(options.layout.fpscr); get(index + 2); simd(0x53); constant(27).byte(0x74).byte(0x72);
+      });
     } else if (doublingHigh) {
       const bits = Number(doublingHigh[2]);
       const rounding = doublingHigh[1] !== undefined;
