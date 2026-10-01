@@ -41,9 +41,10 @@ set_target_properties(azahar_unicorn_test_oracle PROPERTIES
     IMPORTED_LOCATION "${UNICORN_ORACLE_BINARY}/libunicorn.a")
 add_dependencies(azahar_unicorn_test_oracle unicorn_test_oracle)
 
-add_executable(dynarmic_arm_fuzz_fixtures "${DYNARMIC_ROOT}/tests/fuzz_util.cpp")
+add_executable(dynarmic_arm_fuzz_fixtures
+    fuzz-runtime.cpp "${DYNARMIC_ROOT}/tests/fuzz_util.cpp")
 target_include_directories(dynarmic_arm_fuzz_fixtures PRIVATE
-    "${UNICORN_ORACLE_SOURCE}/include")
+    "${UNICORN_ORACLE_SOURCE}/include" "${DYNARMIC_ROOT}/tests")
 target_link_libraries(dynarmic_arm_fuzz_fixtures PRIVATE
     azahar_unicorn_test_oracle Catch2::Catch2WithMain)
 target_sources(dynarmic_arm_fuzz_fixtures PRIVATE
