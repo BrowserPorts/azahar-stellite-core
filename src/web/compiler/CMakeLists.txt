@@ -19,23 +19,6 @@ endif()
 file(GLOB_RECURSE A32_TRANSLATION CONFIGURE_DEPENDS
     "${DYNARMIC_ROOT}/src/dynarmic/frontend/A32/translate/*.cpp")
 file(GLOB IR_SOURCES CONFIGURE_DEPENDS "${DYNARMIC_ROOT}/src/dynarmic/ir/*.cpp")
-if(EMSCRIPTEN)
-    # Dynarmic's native host-call encoding assumes 64-bit function pointers.
-    # A build-local copy keeps the pinned submodule untouched on wasm32.
-    set(IR_EMITTER "${DYNARMIC_ROOT}/src/dynarmic/ir/ir_emitter.cpp")
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${IR_EMITTER}")
-    file(READ "${IR_EMITTER}" IR_EMITTER_TEXT)
-    string(REGEX MATCHALL "mcl::bit_cast<u64>\\(fn\\)" HOST_CALL_CASTS "${IR_EMITTER_TEXT}")
-    list(LENGTH HOST_CALL_CASTS HOST_CALL_COUNT)
-    if(NOT HOST_CALL_COUNT EQUAL 4)
-        message(FATAL_ERROR "The pinned Dynarmic host-call implementation changed")
-    endif()
-    string(REPLACE "mcl::bit_cast<u64>(fn)" "static_cast<u64>(reinterpret_cast<uintptr_t>(fn))"
-        IR_EMITTER_TEXT "${IR_EMITTER_TEXT}")
-    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/wasm_ir_emitter.cpp" "${IR_EMITTER_TEXT}")
-    list(REMOVE_ITEM IR_SOURCES "${IR_EMITTER}")
-    list(APPEND IR_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/wasm_ir_emitter.cpp")
-endif()
 add_library(azahar_arm_frontend STATIC
     ir_json.cpp
     optimize.cpp
