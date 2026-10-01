@@ -16,6 +16,7 @@
 #include "../compiler/ir_json.h"
 #include "../compiler/optimize.h"
 #include "dynarmic/common/crypto/aes.h"
+#include "dynarmic/common/crypto/crc32.h"
 #include "dynarmic/common/fp/fpcr.h"
 #include "dynarmic/common/fp/fpsr.h"
 #include "dynarmic/common/fp/info.h"
@@ -693,6 +694,18 @@ AES_OPERATION(AESEncryptSingleRound, EncryptSingleRound)
 AES_OPERATION(AESInverseMixColumns, InverseMixColumns)
 AES_OPERATION(AESMixColumns, MixColumns)
 #undef AES_OPERATION
+#define CRC_OPERATIONS(bits, type) \
+    EMSCRIPTEN_KEEPALIVE uint32_t CRC32ISO##bits(ArmState*, uint32_t crc, type value) { \
+        return Dynarmic::Common::Crypto::CRC32::ComputeCRC32ISO(crc, value, bits / 8); \
+    } \
+    EMSCRIPTEN_KEEPALIVE uint32_t CRC32Castagnoli##bits(ArmState*, uint32_t crc, type value) { \
+        return Dynarmic::Common::Crypto::CRC32::ComputeCRC32Castagnoli(crc, value, bits / 8); \
+    }
+CRC_OPERATIONS(8, uint32_t)
+CRC_OPERATIONS(16, uint32_t)
+CRC_OPERATIONS(32, uint32_t)
+CRC_OPERATIONS(64, uint64_t)
+#undef CRC_OPERATIONS
 EMSCRIPTEN_KEEPALIVE v128_t SHA256Hash(ArmState*, v128_t x, v128_t y, v128_t words, uint32_t part1) {
     auto left = std::bit_cast<std::array<uint32_t, 4>>(x);
     auto right = std::bit_cast<std::array<uint32_t, 4>>(y);
