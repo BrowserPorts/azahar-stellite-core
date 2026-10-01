@@ -573,6 +573,10 @@ FP_SELECT(FPMinNumeric64, uint64_t, false, true)
     }
 FP_CONVERT(FPSingleToDouble, uint64_t, uint32_t)
 FP_CONVERT(FPDoubleToSingle, uint32_t, uint64_t)
+FP_CONVERT(FPHalfToSingle, uint32_t, uint16_t)
+FP_CONVERT(FPHalfToDouble, uint64_t, uint16_t)
+FP_CONVERT(FPSingleToHalf, uint16_t, uint32_t)
+FP_CONVERT(FPDoubleToHalf, uint16_t, uint64_t)
 #undef FP_CONVERT
 #define FP_FROM_FIXED(name, result_type, input_type, integer_type) \
     EMSCRIPTEN_KEEPALIVE result_type name(ArmState* state, input_type value, uint32_t fractional_bits, uint32_t rounding) { \
