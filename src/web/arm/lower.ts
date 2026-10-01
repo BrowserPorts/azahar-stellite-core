@@ -490,6 +490,26 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       case "ZeroVector": zeroVector(); break;
       case "ZeroExtendLongToQuad": vector64(() => arg(0)); break;
       case "VectorNot": arg(0); simd(0x4d); break;
+      case "VectorTranspose8": case "VectorTranspose16":
+      case "VectorTranspose32": case "VectorTranspose64": {
+        const bytes = Number(node.op.match(/\d+$/)![0]) / 8;
+        const part = immediate(node.args[2]!);
+        arg(0); arg(1); simd(0x0d);
+        for (let byte = 0; byte < 16; ++byte) {
+          const lane = Math.floor(byte / bytes);
+          body.byte((lane % 2) * 16 + (Math.floor(lane / 2) * 2 + part) * bytes + byte % bytes);
+        }
+        break;
+      }
+      case "VectorNarrow16": case "VectorNarrow32": case "VectorNarrow64": {
+        const bytes = Number(node.op.match(/\d+$/)![0]) / 8;
+        const half = bytes / 2;
+        arg(0); zeroVector(); simd(0x0d);
+        for (let byte = 0; byte < 16; ++byte) {
+          body.byte(byte < 8 ? Math.floor(byte / half) * bytes + byte % half : 16);
+        }
+        break;
+      }
       case "VectorMultiply8":
         arg(0); simd(0x89); arg(1); simd(0x89); simd(0x95);
         arg(0); simd(0x8a); arg(1); simd(0x8a); simd(0x95);
