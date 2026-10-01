@@ -21,6 +21,7 @@
 #include "dynarmic/common/fp/op/FPRoundInt.h"
 #include "dynarmic/common/fp/op/FPToFixed.h"
 #include "dynarmic/common/fp/process_exception.h"
+#include "dynarmic/common/fp/process_nan.h"
 #include "dynarmic/common/fp/unpacked.h"
 #include "dynarmic/frontend/A32/a32_ir_emitter.h"
 #include "dynarmic/frontend/A32/a32_location_descriptor.h"
@@ -217,6 +218,24 @@ template <class Operation> auto FloatingPoint(ArmState* state, Operation operati
     if (state->config->arch_version <= Dynarmic::A32::ArchVersion::v6K && fpcr.FZ() && fpsr.UFC()) result = 0;
     SetFPStatus(state, fpsr);
     return result;
+}
+template <class Bits, bool Maximum, bool Numeric> Bits SelectFP(Bits lhs, Bits rhs,
+    Dynarmic::FP::FPCR fpcr, Dynarmic::FP::FPSR& fpsr) {
+    using namespace Dynarmic::FP;
+    const auto [left_type, left_sign, left] = FPUnpack(lhs, fpcr, fpsr);
+    const auto [right_type, right_sign, right] = FPUnpack(rhs, fpcr, fpsr);
+    if (left_type == FPType::Zero) lhs = FPInfo<Bits>::Zero(left_sign);
+    if (right_type == FPType::Zero) rhs = FPInfo<Bits>::Zero(right_sign);
+    if constexpr (Numeric) {
+        if (left_type == FPType::QNaN && right_type != FPType::QNaN && right_type != FPType::SNaN) return rhs;
+        if (right_type == FPType::QNaN && left_type != FPType::QNaN && left_type != FPType::SNaN) return lhs;
+    }
+    if (const auto nan = FPProcessNaNs(left_type, right_type, lhs, rhs, fpcr, fpsr)) return *nan;
+    using Float = std::conditional_t<sizeof(Bits) == 4, float, double>;
+    const Float left_value = std::bit_cast<Float>(lhs);
+    const Float right_value = std::bit_cast<Float>(rhs);
+    if (left_value == right_value) return Maximum ? lhs & rhs : lhs | rhs;
+    return (Maximum ? left_value > right_value : left_value < right_value) ? lhs : rhs;
 }
 template <class Result, class Integer> Result ConvertFixed(Integer value,
     uint32_t fractional_bits, uint32_t rounding, Dynarmic::FP::FPCR fpcr, Dynarmic::FP::FPSR& fpsr) {
@@ -437,6 +456,22 @@ FIXED_CONVERSION(FPDoubleToFixedU64, uint64_t, uint64_t, 64, true)
 FP_ARITHMETIC(32, uint32_t)
 FP_ARITHMETIC(64, uint64_t)
 #undef FP_ARITHMETIC
+#define FP_SELECT(name, type, maximum, numeric) \
+    EMSCRIPTEN_KEEPALIVE type name(ArmState* state, type lhs, type rhs) { \
+        return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
+            return SelectFP<type, maximum, numeric>(VfpInput(state, lhs, fpcr, fpsr), \
+                VfpInput(state, rhs, fpcr, fpsr), fpcr, fpsr); \
+        }); \
+    }
+FP_SELECT(FPMax32, uint32_t, true, false)
+FP_SELECT(FPMax64, uint64_t, true, false)
+FP_SELECT(FPMaxNumeric32, uint32_t, true, true)
+FP_SELECT(FPMaxNumeric64, uint64_t, true, true)
+FP_SELECT(FPMin32, uint32_t, false, false)
+FP_SELECT(FPMin64, uint64_t, false, false)
+FP_SELECT(FPMinNumeric32, uint32_t, false, true)
+FP_SELECT(FPMinNumeric64, uint64_t, false, true)
+#undef FP_SELECT
 #define FP_CONVERT(name, result_type, input_type) \
     EMSCRIPTEN_KEEPALIVE result_type name(ArmState* state, input_type value, uint32_t rounding) { \
         return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
