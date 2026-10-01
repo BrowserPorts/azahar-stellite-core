@@ -362,6 +362,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     const doublingHigh = /^VectorSignedSaturatedDoublingMultiplyHigh(Rounding)?(16|32)$/.exec(node.op);
     const saturatedNarrow = /^Vector(SignedSaturatedNarrowTo(Signed|Unsigned)|UnsignedSaturatedNarrow)(16|32|64)$/.exec(node.op);
     const saturatedBinary = /^Vector(Signed|Unsigned)Saturated(Add|Sub)(8|16|32|64)$/.exec(node.op);
+    const saturatedUnary = /^VectorSignedSaturated(Abs|Neg)(8|16|32|64)$/.exec(node.op);
     const absoluteDifference = /^Vector(Signed|Unsigned)AbsoluteDifference(8|16|32)$/.exec(node.op);
     if (/^Packed(Halving|Saturated)?(AddSub|SubAdd|Add|Sub)(S|U)(8|16)$/.test(node.op)) packed(node);
     else if (rearrangement) {
@@ -571,6 +572,18 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         load(options.layout.fpscr); arg(0); get(index + 2);
         simd(vectorUnary[`Vector${signedOutput ? "Sign" : "Zero"}Extend${bits / 2}`]!);
         simd(0x51); simd(0x53); constant(27).byte(0x74).byte(0x72);
+      });
+    } else if (saturatedUnary) {
+      const bits = Number(saturatedUnary[2]);
+      if (saturatedUnary[1] === "Abs") { arg(0); simd(vectorUnary[`VectorAbs${bits}`]!); }
+      else { zeroVector(); arg(0); simd(vectorBinary[`VectorSub${bits}`]!); }
+      arg(0);
+      if (bits === 64) body.byte(0x42).signed(-0x8000000000000000n, 64);
+      else constant(-(2 ** (bits - 1)));
+      simd(laneSplat[bits]!); simd(vectorBinary[`VectorEqual${bits}`]!);
+      body.byte(0x22).u32(index + 2); simd(0x51);
+      store(options.layout.fpscr, () => {
+        load(options.layout.fpscr); get(index + 2); simd(0x53); constant(27).byte(0x74).byte(0x72);
       });
     } else if (saturatedBinary) {
       const signed = saturatedBinary[1] === "Signed";
