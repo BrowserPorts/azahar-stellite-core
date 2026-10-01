@@ -332,6 +332,20 @@ template <class Result, class Integer> Result ConvertFixed(Integer value,
     return Dynarmic::FP::FPRound<Result>(unpacked, fpcr,
         static_cast<Dynarmic::FP::RoundingMode>(rounding), fpsr);
 }
+template <class Bits, class Operation> v128_t VectorBinaryFP(ArmState* state,
+    v128_t lhs, v128_t rhs, bool fpcr_controlled, Operation operation) {
+    using Lanes = std::array<Bits, sizeof(v128_t) / sizeof(Bits)>;
+    const auto left = std::bit_cast<Lanes>(lhs);
+    const auto right = std::bit_cast<Lanes>(rhs);
+    Lanes result;
+    Dynarmic::FP::FPSR fpsr{};
+    const Dynarmic::FP::FPCR fpcr{fpcr_controlled ? state->fpscr : 0x03000000u};
+    for (size_t lane = 0; lane < result.size(); ++lane) {
+        result[lane] = operation(left[lane], right[lane], fpcr, fpsr);
+    }
+    SetFPStatus(state, fpsr);
+    return std::bit_cast<v128_t>(result);
+}
 template <class Result, class Integer> Result FromFixed(ArmState* state, Integer value,
                                                        uint32_t fractional_bits, uint32_t rounding) {
     return FloatingPoint(state, [&](auto fpcr, auto& fpsr) {
@@ -465,6 +479,21 @@ EMSCRIPTEN_KEEPALIVE v128_t FPVectorGreater32(ArmState* state, v128_t lhs, v128_
     SetFPStatus(state, fpsr);
     return std::bit_cast<v128_t>(result);
 }
+#define VECTOR_SELECT(name, type, maximum, numeric) \
+    EMSCRIPTEN_KEEPALIVE v128_t name(ArmState* state, v128_t lhs, v128_t rhs, uint32_t controlled) { \
+        return VectorBinaryFP<type>(state, lhs, rhs, controlled, [](auto left, auto right, auto fpcr, auto& fpsr) { \
+            return SelectFP<type, maximum, numeric>(left, right, fpcr, fpsr); \
+        }); \
+    }
+VECTOR_SELECT(FPVectorMax32, uint32_t, true, false)
+VECTOR_SELECT(FPVectorMax64, uint64_t, true, false)
+VECTOR_SELECT(FPVectorMaxNumeric32, uint32_t, true, true)
+VECTOR_SELECT(FPVectorMaxNumeric64, uint64_t, true, true)
+VECTOR_SELECT(FPVectorMin32, uint32_t, false, false)
+VECTOR_SELECT(FPVectorMin64, uint64_t, false, false)
+VECTOR_SELECT(FPVectorMinNumeric32, uint32_t, false, true)
+VECTOR_SELECT(FPVectorMinNumeric64, uint64_t, false, true)
+#undef VECTOR_SELECT
 #define VECTOR_TO_FIXED(name, bits_type, unsigned_value) \
     EMSCRIPTEN_KEEPALIVE v128_t name(ArmState* state, v128_t value, uint32_t fractional_bits, uint32_t rounding, uint32_t controlled) { \
         return VectorToFixed<bits_type, unsigned_value>(state, value, fractional_bits, rounding, controlled); \
