@@ -358,6 +358,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     const paired = /^(FP)?VectorPairedAdd(Lower)?(8|16|32|64)$/.exec(node.op);
     const pairedWiden = /^VectorPairedAdd(Signed|Unsigned)Widen(8|16|32)$/.exec(node.op);
     const reversedElements = /^VectorReverseElementsIn(Half|Word|Long)Groups(8|16|32)$/.exec(node.op);
+    const leadingZeros = /^VectorCountLeadingZeros(8|16|32)$/.exec(node.op);
     const saturatedNarrow = /^Vector(SignedSaturatedNarrowTo(Signed|Unsigned)|UnsignedSaturatedNarrow)(16|32|64)$/.exec(node.op);
     const saturatedBinary = /^Vector(Signed|Unsigned)Saturated(Add|Sub)(8|16)$/.exec(node.op);
     const absoluteDifference = /^Vector(Signed|Unsigned)AbsoluteDifference(8|16|32)$/.exec(node.op);
@@ -389,6 +390,23 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       if (elementBytes >= groupBytes) throw new JitError("compile", "Invalid ARM element reversal width");
       arg(0); arg(0); simd(0x0d);
       for (let byte = 0; byte < 16; ++byte) body.byte(byte ^ (groupBytes - elementBytes));
+    } else if (leadingZeros) {
+      const bits = Number(leadingZeros[1]);
+      if (bits === 32) {
+        zeroVector();
+        for (let lane = 0; lane < 4; ++lane) {
+          arg(0); simd(0x1b).byte(lane); body.byte(0x67); simd(0x1c).byte(lane);
+        }
+      } else {
+        arg(0); set(index + 2);
+        for (let shift = 1; shift < bits; shift *= 2) {
+          get(index + 2); get(index + 2); constant(shift);
+          simd(vectorShiftLeft[bits]! + 2); simd(0x50); set(index + 2);
+        }
+        constant(bits); simd(laneSplat[bits]!); get(index + 2); simd(0x62);
+        if (bits === 16) simd(0x7d);
+        simd(vectorBinary[`VectorSub${bits}`]!);
+      }
     } else if (variableShift || roundingShift) {
       const bits = Number((variableShift ?? roundingShift)![2]);
       const arithmetic = variableShift?.[1] === "Arithmetic" || roundingShift?.[1] === "S";
