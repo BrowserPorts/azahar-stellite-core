@@ -355,6 +355,8 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     const roundingShift = /^VectorRoundingShiftLeft(S|U)(8|16|32|64)$/.exec(node.op);
     const halving = /^Vector(Rounding)?Halving(Add|Sub)(S|U)(8|16|32)$/.exec(node.op);
     const vectorSign = /^FPVector(Abs|Neg)(16|32|64)$/.exec(node.op);
+    const paired = /^(FP)?VectorPairedAdd(Lower)?(8|16|32|64)$/.exec(node.op);
+    const pairedWiden = /^VectorPairedAdd(Signed|Unsigned)Widen(8|16|32)$/.exec(node.op);
     const absoluteDifference = /^Vector(Signed|Unsigned)AbsoluteDifference(8|16|32)$/.exec(node.op);
     if (/^Packed(Halving|Saturated)?(AddSub|SubAdd|Add|Sub)(S|U)(8|16)$/.test(node.op)) packed(node);
     else if (rearrangement) {
@@ -483,6 +485,40 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         arg(0); arg(1); simd(rounded ? 0x50 : 0x4e);
         arg(0); arg(1); simd(0x51); constant(1); simd(vectorShiftLeft[bits]! + (signed ? 1 : 2));
         simd(vectorBinary[`Vector${rounded ? "Sub" : "Add"}${bits}`]!);
+      }
+    } else if (paired) {
+      const bits = Number(paired[3]);
+      const bytes = bits / 8;
+      const lower = paired[2] !== undefined;
+      const operand = (part: number): undefined => {
+        arg(0); arg(1); simd(0x0d);
+        const lanes = (lower ? 8 : 16) / bytes;
+        for (let byte = 0; byte < 16; ++byte) {
+          const lane = Math.floor(byte / bytes);
+          const source = lower && bits === 64 ? part * 16 :
+            (lane < lanes / 2 ? 0 : 16) + ((lane % (lanes / 2)) * 2 + part) * bytes;
+          body.byte(lower && byte >= 8 ? 0 : source + byte % bytes);
+        }
+        if (lower) { body.byte(0x42).signed(0n, 64); simd(0x1e).byte(1); }
+        return undefined;
+      };
+      if (paired[1]) {
+        helper(`FPVectorAdd${bits}`, ["v128", "v128", "i32"], ["v128"], () => {
+          operand(0); operand(1); arg(2);
+        });
+      } else { operand(0); operand(1); simd(vectorBinary[`VectorAdd${bits}`]!); }
+      if (lower) { body.byte(0x42).signed(0n, 64); simd(0x1e).byte(1); }
+    } else if (pairedWiden) {
+      const bits = Number(pairedWiden[2]);
+      const signed = pairedWiden[1] === "Signed";
+      if (bits <= 16) { arg(0); simd((bits === 8 ? 0x7c : 0x7e) + (signed ? 0 : 1)); }
+      else {
+        for (let part = 0; part < 2; ++part) {
+          arg(0); arg(0); simd(0x0d);
+          for (let byte = 0; byte < 16; ++byte) body.byte((Math.floor(byte / 4) % 2) * 8 + part * 4 + byte % 4);
+          simd(signed ? 0xc7 : 0xc9);
+        }
+        simd(vectorBinary.VectorAdd64!);
       }
     } else if (vectorSign) {
       const bytes = Number(vectorSign[2]) / 8;
