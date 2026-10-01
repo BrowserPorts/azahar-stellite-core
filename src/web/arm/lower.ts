@@ -81,12 +81,13 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   const memoryPointer = locals.length + 2;
   if (options.memory) locals.push("i32");
   const scalarShiftCount = locals.length + 2;
-  if (block.nodes.some((node) => /^Vector(Arithmetic|Logical)VShift(32|64)$/.test(node.op))) {
+  if (block.nodes.some((node) => /^Vector((Arithmetic|Logical)VShift|RoundingShiftLeft(S|U))(32|64)$/.test(node.op))) {
     locals.push("i32", "i32");
   }
   const vectorShiftScratch = locals.length + 2;
-  if (block.nodes.some((node) => /^Vector(Arithmetic|Logical)VShift(8|16)$/.test(node.op))) {
+  if (block.nodes.some((node) => /^Vector((Arithmetic|Logical)VShift|RoundingShiftLeft(S|U))(8|16)$/.test(node.op))) {
     locals.push("v128", "v128", "v128", "v128", "v128");
+    if (block.nodes.some((node) => /^VectorRoundingShiftLeft(S|U)(8|16)$/.test(node.op))) locals.push("v128");
   }
   const constant = (value: number): Bytes => body.byte(0x41).signed(BigInt(value), 32);
   const get = (index: number): Bytes => body.byte(0x20).u32(index);
@@ -351,6 +352,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     const rearrangement = /^Vector(Interleave(Lower|Upper)|Deinterleave(Even|Odd)(Lower)?)(8|16|32|64)$/.exec(node.op);
     const vectorShift = /^Vector(ArithmeticShiftRight|LogicalShiftLeft|LogicalShiftRight)(8|16|32|64)$/.exec(node.op);
     const variableShift = /^Vector(Arithmetic|Logical)VShift(8|16|32|64)$/.exec(node.op);
+    const roundingShift = /^VectorRoundingShiftLeft(S|U)(8|16|32|64)$/.exec(node.op);
     const absoluteDifference = /^Vector(Signed|Unsigned)AbsoluteDifference(8|16|32)$/.exec(node.op);
     if (/^Packed(Halving|Saturated)?(AddSub|SubAdd|Add|Sub)(S|U)(8|16)$/.test(node.op)) packed(node);
     else if (rearrangement) {
@@ -374,15 +376,16 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         }
       }
       if (lower) { body.byte(0x42).signed(0n, 64); simd(0x1e).byte(1); }
-    } else if (variableShift) {
-      const bits = Number(variableShift[2]);
-      const arithmetic = variableShift[1] === "Arithmetic";
+    } else if (variableShift || roundingShift) {
+      const bits = Number((variableShift ?? roundingShift)![2]);
+      const arithmetic = variableShift?.[1] === "Arithmetic" || roundingShift?.[1] === "S";
       if (bits <= 16) {
         const left = vectorShiftScratch;
         const right = left + 1;
         const magnitude = left + 2;
         const negative = left + 3;
         const mask = left + 4;
+        const before = left + 5;
         const splat = (value: number): Bytes => constant(value).byte(0xfd).u32(laneSplat[bits]!);
         const compare = bits === 8 ? 0x23 : 0x2d;
         const shift = vectorShiftLeft[bits]!;
@@ -393,17 +396,28 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         set(magnitude);
         get(magnitude); zeroVector(); simd(compare + 2); set(negative);
         get(magnitude); simd(bits === 8 ? 0x60 : 0x80); set(magnitude);
+        if (roundingShift) {
+          get(magnitude); splat(1); simd(vectorBinary[`VectorSub${bits}`]!); set(before);
+        }
         // Parallel barrel shifts keep the byte and halfword lanes in SIMD registers.
         for (let amount = 1; amount < bits; amount *= 2) {
           get(magnitude); splat(amount); simd(0x4e); zeroVector(); simd(compare + 1); set(mask);
           get(left); constant(amount); simd(shift); get(left); get(mask); simd(0x52); set(left);
+          if (roundingShift) {
+            get(before); splat(amount); simd(0x4e); zeroVector(); simd(compare + 1); set(mask);
+          }
           get(right); constant(amount); simd(shift + (arithmetic ? 1 : 2));
           get(right); get(mask); simd(0x52); set(right);
         }
         get(magnitude); splat(bits); simd(compare + 3); set(mask);
         get(left); get(mask); simd(0x4e); set(left);
         get(right);
-        if (arithmetic) { arg(0); constant(bits - 1); simd(shift + 1); get(mask); simd(0x52); }
+        if (roundingShift) {
+          // Split the discarded bit from the shifted value to avoid rounding overflow.
+          constant(1); simd(shift + (arithmetic ? 1 : 2));
+          get(right); splat(1); simd(0x4e); simd(vectorBinary[`VectorAdd${bits}`]!);
+          get(magnitude); splat(bits + 1); simd(compare + 3); simd(0x4e);
+        } else if (arithmetic) { arg(0); constant(bits - 1); simd(shift + 1); get(mask); simd(0x52); }
         else { get(mask); simd(0x4e); }
         get(left); get(negative); simd(0x52);
       } else {
@@ -424,13 +438,30 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
           if (wide) body.byte(0xad);
           body.byte(wide ? 0x86 : 0x74); zero();
           get(magnitude); constant(bits).byte(0x49).byte(0x1b);
-          lane(position); get(magnitude);
-          if (arithmetic) {
-            constant(bits - 1); get(magnitude); constant(bits - 1).byte(0x49).byte(0x1b);
+          const rightOpcode = wide ? arithmetic ? 0x87 : 0x88 : arithmetic ? 0x75 : 0x76;
+          if (roundingShift) {
+            const shifted = (): undefined => {
+              lane(position); get(magnitude); constant(1).byte(0x6b);
+              if (wide) body.byte(0xad);
+              body.byte(rightOpcode);
+              return undefined;
+            };
+            shifted();
+            if (wide) body.byte(0x42).signed(1n, 64); else constant(1);
+            body.byte(rightOpcode);
+            shifted();
+            if (wide) body.byte(0x42).signed(1n, 64); else constant(1);
+            body.byte(wide ? 0x83 : 0x71).byte(wide ? 0x7c : 0x6a);
+            zero(); get(magnitude); constant(bits + 1).byte(0x49).byte(0x1b);
+          } else {
+            lane(position); get(magnitude);
+            if (arithmetic) {
+              constant(bits - 1); get(magnitude); constant(bits - 1).byte(0x49).byte(0x1b);
+            }
+            if (wide) body.byte(0xad);
+            body.byte(rightOpcode);
+            if (!arithmetic) { zero(); get(magnitude); constant(bits).byte(0x49).byte(0x1b); }
           }
-          if (wide) body.byte(0xad);
-          body.byte(wide ? arithmetic ? 0x87 : 0x88 : arithmetic ? 0x75 : 0x76);
-          if (!arithmetic) { zero(); get(magnitude); constant(bits).byte(0x49).byte(0x1b); }
           get(scalarShiftCount); constant(0).byte(0x4e).byte(0x1b);
           simd(laneReplace[bits]!).byte(position);
         }
