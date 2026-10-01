@@ -1,12 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 include(ExternalProject)
-set(UNICORN_ORACLE_BINARY "${CMAKE_CURRENT_BINARY_DIR}/unicorn-oracle")
 set(UNICORN_ORACLE_TOOLCHAIN)
 set(UNICORN_ORACLE_DOWNLOAD)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/prepare-unicorn.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/adapt-unicorn.py"
     "${DYNARMIC_ROOT}/tests/A32/fuzz_arm.cpp"
     "${DYNARMIC_ROOT}/tests/A32/fuzz_thumb.cpp"
@@ -14,17 +12,11 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${DYNARMIC_ROOT}/tests/unicorn_emu/a32_unicorn.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/llvm_disassemble.cpp")
 if(EMSCRIPTEN)
-    include(FetchContent)
-    FetchContent_Declare(unicorn_js
-        GIT_REPOSITORY https://github.com/AlexAltea/unicorn.js.git
-        GIT_TAG 1220477c7fb0f8fe4b500f4bd211de52f6dfe638
-        GIT_SUBMODULES unicorn
-        GIT_SUBMODULES_RECURSE FALSE)
-    FetchContent_MakeAvailable(unicorn_js)
-    set(UNICORN_ORACLE_SOURCE "${unicorn_js_SOURCE_DIR}/unicorn")
-    execute_process(COMMAND "${Python3_EXECUTABLE}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/prepare-unicorn.py" "${unicorn_js_SOURCE_DIR}"
-        COMMAND_ERROR_IS_FATAL ANY)
+    set(UNICORN_ORACLE_BINARY "${CMAKE_CURRENT_BINARY_DIR}/unicorn-wasm-oracle")
+    set(UNICORN_ORACLE_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/unicorn-wasm-source")
+    list(APPEND UNICORN_ORACLE_DOWNLOAD
+        GIT_REPOSITORY https://origin.cursor.com/mov/unicorn-stellite-wasm.git
+        GIT_TAG 42650600b97218412410647cf34f115d3dcfea41)
     list(APPEND UNICORN_ORACLE_TOOLCHAIN
         "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
         "-DCMAKE_C_FLAGS=-fwasm-exceptions")
