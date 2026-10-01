@@ -401,6 +401,57 @@ template <class Bits, class Integer> v128_t VectorFromFixed(ArmState* state, v12
     SetFPStatus(state, fpsr);
     return std::bit_cast<v128_t>(result);
 }
+template <class Type> v128_t SaturatingVectorShift(ArmState* state, v128_t value, v128_t counts) {
+    using Unsigned = std::make_unsigned_t<Type>;
+    using Lanes = std::array<Type, sizeof(v128_t) / sizeof(Type)>;
+    const auto input = std::bit_cast<Lanes>(value);
+    const auto shifts = std::bit_cast<std::array<Unsigned, sizeof(v128_t) / sizeof(Type)>>(counts);
+    constexpr int bits = sizeof(Type) * 8;
+    Lanes result;
+    bool saturated = false;
+    for (size_t lane = 0; lane < result.size(); ++lane) {
+        const auto element = input[lane];
+        const int shift = std::max<int>(static_cast<int8_t>(shifts[lane] & 0xff),
+            std::is_signed_v<Type> ? 1 - bits : -bits);
+        const auto bound = [&] {
+            if constexpr (std::is_signed_v<Type>) {
+                if (element < 0) return std::numeric_limits<Type>::min();
+            }
+            return std::numeric_limits<Type>::max();
+        };
+        if (element == 0 || shift <= -bits) result[lane] = 0;
+        else if (shift < 0) result[lane] = static_cast<Type>(element >> -shift);
+        else if (shift >= bits) { result[lane] = bound(); saturated = true; }
+        else {
+            const Type shifted = static_cast<Type>(static_cast<Unsigned>(element) << shift);
+            if ((shifted >> shift) != element) { result[lane] = bound(); saturated = true; }
+            else result[lane] = shifted;
+        }
+    }
+    if (saturated) state->fpscr |= 1u << 27;
+    return std::bit_cast<v128_t>(result);
+}
+template <class Type> v128_t SaturatingUnsignedVectorShift(ArmState* state, v128_t value, uint32_t shift) {
+    using Unsigned = std::make_unsigned_t<Type>;
+    const auto input = std::bit_cast<std::array<Type, sizeof(v128_t) / sizeof(Type)>>(value);
+    std::array<Unsigned, sizeof(v128_t) / sizeof(Type)> result;
+    constexpr uint32_t bits = sizeof(Type) * 8;
+    bool saturated = false;
+    for (size_t lane = 0; lane < result.size(); ++lane) {
+        const auto element = input[lane];
+        if (element == 0) result[lane] = 0;
+        else if (element < 0) { result[lane] = 0; saturated = true; }
+        else if (shift >= bits) { result[lane] = std::numeric_limits<Unsigned>::max(); saturated = true; }
+        else {
+            const Unsigned shifted = static_cast<Unsigned>(element) << shift;
+            if ((shifted >> shift) != static_cast<Unsigned>(element)) {
+                result[lane] = std::numeric_limits<Unsigned>::max(); saturated = true;
+            } else result[lane] = shifted;
+        }
+    }
+    if (saturated) state->fpscr |= 1u << 27;
+    return std::bit_cast<v128_t>(result);
+}
 } // namespace
 
 // Generated code imports these raw Wasm functions, avoiding JavaScript on memory access.
@@ -600,6 +651,21 @@ VECTOR_RECIPROCAL(16, uint16_t)
 VECTOR_RECIPROCAL(32, uint32_t)
 VECTOR_RECIPROCAL(64, uint64_t)
 #undef VECTOR_RECIPROCAL
+#define VECTOR_SATURATING_SHIFT(bits, signed_type, unsigned_type) \
+    EMSCRIPTEN_KEEPALIVE v128_t VectorSignedSaturatedShiftLeft##bits(ArmState* state, v128_t value, v128_t counts) { \
+        return SaturatingVectorShift<signed_type>(state, value, counts); \
+    } \
+    EMSCRIPTEN_KEEPALIVE v128_t VectorUnsignedSaturatedShiftLeft##bits(ArmState* state, v128_t value, v128_t counts) { \
+        return SaturatingVectorShift<unsigned_type>(state, value, counts); \
+    } \
+    EMSCRIPTEN_KEEPALIVE v128_t VectorSignedSaturatedShiftLeftUnsigned##bits(ArmState* state, v128_t value, uint32_t shift) { \
+        return SaturatingUnsignedVectorShift<signed_type>(state, value, shift); \
+    }
+VECTOR_SATURATING_SHIFT(8, int8_t, uint8_t)
+VECTOR_SATURATING_SHIFT(16, int16_t, uint16_t)
+VECTOR_SATURATING_SHIFT(32, int32_t, uint32_t)
+VECTOR_SATURATING_SHIFT(64, int64_t, uint64_t)
+#undef VECTOR_SATURATING_SHIFT
 #define VECTOR_TO_FIXED(name, bits_type, unsigned_value) \
     EMSCRIPTEN_KEEPALIVE v128_t name(ArmState* state, v128_t value, uint32_t fractional_bits, uint32_t rounding, uint32_t controlled) { \
         return VectorToFixed<bits_type, unsigned_value>(state, value, fractional_bits, rounding, controlled); \
