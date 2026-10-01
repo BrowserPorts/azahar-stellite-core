@@ -14,6 +14,7 @@
 #include <wasm_simd128.h>
 #include "../compiler/ir_json.h"
 #include "../compiler/optimize.h"
+#include "dynarmic/common/crypto/aes.h"
 #include "dynarmic/common/fp/fpcr.h"
 #include "dynarmic/common/fp/fpsr.h"
 #include "dynarmic/common/fp/info.h"
@@ -666,6 +667,18 @@ VECTOR_SATURATING_SHIFT(16, int16_t, uint16_t)
 VECTOR_SATURATING_SHIFT(32, int32_t, uint32_t)
 VECTOR_SATURATING_SHIFT(64, int64_t, uint64_t)
 #undef VECTOR_SATURATING_SHIFT
+#define AES_OPERATION(name, operation) \
+    EMSCRIPTEN_KEEPALIVE v128_t name(ArmState*, v128_t value) { \
+        using namespace Dynarmic::Common::Crypto; \
+        AES::State result; \
+        AES::operation(result, std::bit_cast<AES::State>(value)); \
+        return std::bit_cast<v128_t>(result); \
+    }
+AES_OPERATION(AESDecryptSingleRound, DecryptSingleRound)
+AES_OPERATION(AESEncryptSingleRound, EncryptSingleRound)
+AES_OPERATION(AESInverseMixColumns, InverseMixColumns)
+AES_OPERATION(AESMixColumns, MixColumns)
+#undef AES_OPERATION
 #define VECTOR_TO_FIXED(name, bits_type, unsigned_value) \
     EMSCRIPTEN_KEEPALIVE v128_t name(ArmState* state, v128_t value, uint32_t fractional_bits, uint32_t rounding, uint32_t controlled) { \
         return VectorToFixed<bits_type, unsigned_value>(state, value, fractional_bits, rounding, controlled); \

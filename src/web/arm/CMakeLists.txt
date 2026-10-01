@@ -13,6 +13,7 @@ endif()
 add_library(azahar_arm_jit STATIC
     jit.cpp
     spin_lock.cpp
+    "${DYNARMIC_ROOT}/src/dynarmic/common/crypto/aes.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/math_util.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/backend/arm64/exclusive_monitor.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/fused.cpp"
