@@ -353,6 +353,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     const vectorShift = /^Vector(ArithmeticShiftRight|LogicalShiftLeft|LogicalShiftRight)(8|16|32|64)$/.exec(node.op);
     const variableShift = /^Vector(Arithmetic|Logical)VShift(8|16|32|64)$/.exec(node.op);
     const roundingShift = /^VectorRoundingShiftLeft(S|U)(8|16|32|64)$/.exec(node.op);
+    const halving = /^Vector(Rounding)?Halving(Add|Sub)(S|U)(8|16|32)$/.exec(node.op);
     const absoluteDifference = /^Vector(Signed|Unsigned)AbsoluteDifference(8|16|32)$/.exec(node.op);
     if (/^Packed(Halving|Saturated)?(AddSub|SubAdd|Add|Sub)(S|U)(8|16)$/.test(node.op)) packed(node);
     else if (rearrangement) {
@@ -465,6 +466,22 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
           get(scalarShiftCount); constant(0).byte(0x4e).byte(0x1b);
           simd(laneReplace[bits]!).byte(position);
         }
+      }
+    } else if (halving) {
+      const rounded = halving[1] !== undefined;
+      const subtract = halving[2] === "Sub";
+      const signed = halving[3] === "S";
+      const bits = Number(halving[4]);
+      if (rounded && !signed && bits <= 16) {
+        arg(0); arg(1); simd(bits === 8 ? 0x7b : 0x9b);
+      } else if (subtract) {
+        arg(0); arg(1); simd(0x51); constant(1); simd(vectorShiftLeft[bits]! + (signed ? 1 : 2));
+        arg(1); arg(0); simd(0x4f); simd(vectorBinary[`VectorSub${bits}`]!);
+      } else {
+        // These identities retain the carry without widening or overflowing a lane.
+        arg(0); arg(1); simd(rounded ? 0x50 : 0x4e);
+        arg(0); arg(1); simd(0x51); constant(1); simd(vectorShiftLeft[bits]! + (signed ? 1 : 2));
+        simd(vectorBinary[`Vector${rounded ? "Sub" : "Add"}${bits}`]!);
       }
     } else if (absoluteDifference) {
       const sign = absoluteDifference[1] === "Signed" ? "S" : "U";
