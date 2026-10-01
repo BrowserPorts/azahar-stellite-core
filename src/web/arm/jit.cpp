@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <cmath>
 #include <cstdlib>
 #include <limits>
 #include <map>
@@ -219,6 +220,88 @@ template <class Operation> auto FloatingPoint(ArmState* state, Operation operati
     SetFPStatus(state, fpsr);
     return result;
 }
+template <class Bits> Dynarmic::FP::FPUnpacked UnpackNormal(Bits value) {
+    using Info = Dynarmic::FP::FPInfo<Bits>;
+    return {(value & Info::sign_mask) != 0,
+        static_cast<int>((value & Info::exponent_mask) >> Info::explicit_mantissa_width) - Info::exponent_bias,
+        static_cast<uint64_t>((value & Info::mantissa_mask) | Info::implicit_leading_bit)
+            << (Dynarmic::FP::normalized_point_position - Info::explicit_mantissa_width)};
+}
+template <class Bits> Bits RoundNative(Bits result, bool sign, int comparison,
+    Dynarmic::FP::FPCR fpcr, Dynarmic::FP::FPSR& fpsr) {
+    using namespace Dynarmic::FP;
+    if (comparison == 0) return result;
+    FPProcessException(FPExc::Inexact, fpcr, fpsr);
+    const auto rounding = fpcr.RMode();
+    if (rounding == RoundingMode::ToNearest_TieEven) return result;
+    const bool away = (rounding == RoundingMode::TowardsPlusInfinity && !sign) ||
+        (rounding == RoundingMode::TowardsMinusInfinity && sign);
+    if (away && comparison < 0) ++result;
+    if (!away && comparison > 0) --result;
+    return result;
+}
+template <class Bits> Bits DivideFP(Bits lhs, Bits rhs,
+    Dynarmic::FP::FPCR fpcr, Dynarmic::FP::FPSR& fpsr) {
+    using namespace Dynarmic::FP;
+    using Info = FPInfo<Bits>;
+    using Wide = __uint128_t;
+    const auto [left_type, left_sign, left] = FPUnpack(lhs, fpcr, fpsr);
+    const auto [right_type, right_sign, right] = FPUnpack(rhs, fpcr, fpsr);
+    if (const auto nan = FPProcessNaNs(left_type, right_type, lhs, rhs, fpcr, fpsr)) return *nan;
+    if ((left_type == FPType::Zero && right_type == FPType::Zero) ||
+        (left_type == FPType::Infinity && right_type == FPType::Infinity)) {
+        FPProcessException(FPExc::InvalidOp, fpcr, fpsr);
+        return Info::DefaultNaN();
+    }
+    const bool sign = left_sign != right_sign;
+    if (left_type == FPType::Infinity) return Info::Infinity(sign);
+    if (left_type == FPType::Zero || right_type == FPType::Infinity) return Info::Zero(sign);
+    if (right_type == FPType::Zero) {
+        FPProcessException(FPExc::DivideByZero, fpcr, fpsr);
+        return Info::Infinity(sign);
+    }
+    using Float = std::conditional_t<sizeof(Bits) == 4, float, double>;
+    const Bits result = std::bit_cast<Bits>(std::bit_cast<Float>(lhs) / std::bit_cast<Float>(rhs));
+    const Bits exponent = result & Info::exponent_mask;
+    const Bits binade = Bits{1} << Info::explicit_mantissa_width;
+    // Boundary binades use ARM's tininess and overflow rules before rounding.
+    if (exponent > binade && exponent < Info::exponent_mask - binade) {
+        const auto output = UnpackNormal(result);
+        const Wide rounded = Wide{output.mantissa} * right.mantissa;
+        const Wide exact = Wide{left.mantissa} <<
+            (normalized_point_position + left.exponent - right.exponent - output.exponent);
+        return RoundNative(result, sign, (rounded > exact) - (rounded < exact), fpcr, fpsr);
+    }
+    const Wide numerator = Wide{left.mantissa} << normalized_point_position;
+    const uint64_t quotient = static_cast<uint64_t>(numerator / right.mantissa) |
+        static_cast<uint64_t>(numerator % right.mantissa != 0);
+    return FPRound<Bits>({sign, left.exponent - right.exponent, quotient}, fpcr, fpsr);
+}
+template <class Bits> Bits SquareRootFP(Bits value,
+    Dynarmic::FP::FPCR fpcr, Dynarmic::FP::FPSR& fpsr) {
+    using namespace Dynarmic::FP;
+    using Info = FPInfo<Bits>;
+    using Wide = __uint128_t;
+    const auto [type, sign, input] = FPUnpack(value, fpcr, fpsr);
+    if (type == FPType::QNaN || type == FPType::SNaN) return FPProcessNaN(type, value, fpcr, fpsr);
+    if (type == FPType::Zero) return Info::Zero(sign);
+    if (sign) {
+        FPProcessException(FPExc::InvalidOp, fpcr, fpsr);
+        return Info::DefaultNaN();
+    }
+    if (type == FPType::Infinity) return value;
+    using Float = std::conditional_t<sizeof(Bits) == 4, float, double>;
+    const Bits result = std::bit_cast<Bits>(std::sqrt(std::bit_cast<Float>(value)));
+    const auto output = UnpackNormal(result);
+    // Every positive finite f32/f64 square root is normal. Compare its square
+    // to the input exactly, including inputs with an odd or negative exponent.
+    const int odd = input.exponent & 1;
+    const int exponent = (input.exponent - odd) / 2;
+    const Wide root = Wide{output.mantissa} << (output.exponent - exponent);
+    const Wide rounded = root * root;
+    const Wide exact = Wide{input.mantissa} << (normalized_point_position + odd);
+    return RoundNative(result, false, (rounded > exact) - (rounded < exact), fpcr, fpsr);
+}
 template <class Bits, bool Maximum, bool Numeric> Bits SelectFP(Bits lhs, Bits rhs,
     Dynarmic::FP::FPCR fpcr, Dynarmic::FP::FPSR& fpsr) {
     using namespace Dynarmic::FP;
@@ -420,6 +503,16 @@ FIXED_CONVERSION(FPDoubleToFixedS64, uint64_t, uint64_t, 64, false)
 FIXED_CONVERSION(FPDoubleToFixedU64, uint64_t, uint64_t, 64, true)
 #undef FIXED_CONVERSION
 #define FP_ARITHMETIC(bits, type) \
+    EMSCRIPTEN_KEEPALIVE type FPDiv##bits(ArmState* state, type lhs, type rhs) { \
+        return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
+            return DivideFP(VfpInput(state, lhs, fpcr, fpsr), VfpInput(state, rhs, fpcr, fpsr), fpcr, fpsr); \
+        }); \
+    } \
+    EMSCRIPTEN_KEEPALIVE type FPSqrt##bits(ArmState* state, type value) { \
+        return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
+            return SquareRootFP(VfpInput(state, value, fpcr, fpsr), fpcr, fpsr); \
+        }); \
+    } \
     EMSCRIPTEN_KEEPALIVE type FPAdd##bits(ArmState* state, type lhs, type rhs) { \
         return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
             lhs = VfpInput(state, lhs, fpcr, fpsr); \
