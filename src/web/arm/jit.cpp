@@ -21,6 +21,10 @@
 #include "dynarmic/common/fp/op/FPConvert.h"
 #include "dynarmic/common/fp/op/FPMulAdd.h"
 #include "dynarmic/common/fp/op/FPRoundInt.h"
+#include "dynarmic/common/fp/op/FPRecipEstimate.h"
+#include "dynarmic/common/fp/op/FPRecipStepFused.h"
+#include "dynarmic/common/fp/op/FPRSqrtEstimate.h"
+#include "dynarmic/common/fp/op/FPRSqrtStepFused.h"
 #include "dynarmic/common/fp/op/FPToFixed.h"
 #include "dynarmic/common/fp/process_exception.h"
 #include "dynarmic/common/fp/process_nan.h"
@@ -571,6 +575,31 @@ VECTOR_FUSED(16, uint16_t)
 VECTOR_FUSED(32, uint32_t)
 VECTOR_FUSED(64, uint64_t)
 #undef VECTOR_FUSED
+#define VECTOR_RECIPROCAL(bits, type) \
+    EMSCRIPTEN_KEEPALIVE v128_t FPVectorRecipEstimate##bits(ArmState* state, v128_t value, uint32_t controlled) { \
+        return VectorFP<type>(state, controlled, [](auto operand, auto fpcr, auto& fpsr) { \
+            return Dynarmic::FP::FPRecipEstimate(operand, fpcr, fpsr); \
+        }, value); \
+    } \
+    EMSCRIPTEN_KEEPALIVE v128_t FPVectorRSqrtEstimate##bits(ArmState* state, v128_t value, uint32_t controlled) { \
+        return VectorFP<type>(state, controlled, [](auto operand, auto fpcr, auto& fpsr) { \
+            return Dynarmic::FP::FPRSqrtEstimate(operand, fpcr, fpsr); \
+        }, value); \
+    } \
+    EMSCRIPTEN_KEEPALIVE v128_t FPVectorRecipStepFused##bits(ArmState* state, v128_t lhs, v128_t rhs, uint32_t controlled) { \
+        return VectorFP<type>(state, controlled, [](auto left, auto right, auto fpcr, auto& fpsr) { \
+            return Dynarmic::FP::FPRecipStepFused(left, right, fpcr, fpsr); \
+        }, lhs, rhs); \
+    } \
+    EMSCRIPTEN_KEEPALIVE v128_t FPVectorRSqrtStepFused##bits(ArmState* state, v128_t lhs, v128_t rhs, uint32_t controlled) { \
+        return VectorFP<type>(state, controlled, [](auto left, auto right, auto fpcr, auto& fpsr) { \
+            return Dynarmic::FP::FPRSqrtStepFused(left, right, fpcr, fpsr); \
+        }, lhs, rhs); \
+    }
+VECTOR_RECIPROCAL(16, uint16_t)
+VECTOR_RECIPROCAL(32, uint32_t)
+VECTOR_RECIPROCAL(64, uint64_t)
+#undef VECTOR_RECIPROCAL
 #define VECTOR_TO_FIXED(name, bits_type, unsigned_value) \
     EMSCRIPTEN_KEEPALIVE v128_t name(ArmState* state, v128_t value, uint32_t fractional_bits, uint32_t rounding, uint32_t controlled) { \
         return VectorToFixed<bits_type, unsigned_value>(state, value, fractional_bits, rounding, controlled); \

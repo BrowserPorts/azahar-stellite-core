@@ -13,12 +13,17 @@ endif()
 add_library(azahar_arm_jit STATIC
     jit.cpp
     spin_lock.cpp
+    "${DYNARMIC_ROOT}/src/dynarmic/common/math_util.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/backend/arm64/exclusive_monitor.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/fused.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPMulAdd.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPCompare.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPConvert.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPRoundInt.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPRecipEstimate.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPRecipStepFused.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPRSqrtEstimate.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPRSqrtStepFused.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPToFixed.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/process_exception.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/process_nan.cpp"
