@@ -15,10 +15,20 @@ const binary: Record<string, number> = {
 };
 const vectorBinary: Record<string, number> = {
   VectorAnd: 0x4e, VectorAndNot: 0x4f, VectorOr: 0x50, VectorEor: 0x51,
+  VectorAdd8: 0x6e, VectorAdd16: 0x8e, VectorAdd32: 0xae, VectorAdd64: 0xce,
+  VectorSub8: 0x71, VectorSub16: 0x91, VectorSub32: 0xb1, VectorSub64: 0xd1,
+  VectorMultiply16: 0x95, VectorMultiply32: 0xb5, VectorMultiply64: 0xd5,
+  VectorEqual8: 0x23, VectorEqual16: 0x2d, VectorEqual32: 0x37, VectorEqual64: 0xd6,
+  VectorGreaterS8: 0x27, VectorGreaterS16: 0x31, VectorGreaterS32: 0x3b, VectorGreaterS64: 0xd9,
+  VectorMinS8: 0x76, VectorMinU8: 0x77, VectorMaxS8: 0x78, VectorMaxU8: 0x79,
+  VectorMinS16: 0x96, VectorMinU16: 0x97, VectorMaxS16: 0x98, VectorMaxU16: 0x99,
+  VectorMinS32: 0xb6, VectorMinU32: 0xb7, VectorMaxS32: 0xb8, VectorMaxU32: 0xb9,
 };
 const vectorUnary: Record<string, number> = {
   VectorSignExtend8: 0x87, VectorSignExtend16: 0xa7, VectorSignExtend32: 0xc7,
   VectorZeroExtend8: 0x89, VectorZeroExtend16: 0xa9, VectorZeroExtend32: 0xc9,
+  VectorAbs8: 0x60, VectorAbs16: 0x80, VectorAbs32: 0xa0, VectorAbs64: 0xc0,
+  VectorPopulationCount: 0x62,
 };
 const vectorShiftLeft: Record<number, number> = { 8: 0x6b, 16: 0x8b, 32: 0xab, 64: 0xcb };
 const laneExtract: Record<number, number> = { 8: 0x16, 16: 0x19, 32: 0x1b, 64: 0x1d };
@@ -339,6 +349,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     const rearrangement = /^Vector(Interleave(Lower|Upper)|Deinterleave(Even|Odd)(Lower)?)(8|16|32|64)$/.exec(node.op);
     const vectorShift = /^Vector(ArithmeticShiftRight|LogicalShiftLeft|LogicalShiftRight)(8|16|32|64)$/.exec(node.op);
     const variableShift = /^Vector(Arithmetic|Logical)VShift(8|16|32|64)$/.exec(node.op);
+    const absoluteDifference = /^Vector(Signed|Unsigned)AbsoluteDifference(8|16|32)$/.exec(node.op);
     if (/^Packed(Halving|Saturated)?(AddSub|SubAdd|Add|Sub)(S|U)(8|16)$/.test(node.op)) packed(node);
     else if (rearrangement) {
       const elementBytes = Number(rearrangement[5]) / 8;
@@ -422,6 +433,12 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
           simd(laneReplace[bits]!).byte(position);
         }
       }
+    } else if (absoluteDifference) {
+      const sign = absoluteDifference[1] === "Signed" ? "S" : "U";
+      const bits = absoluteDifference[2]!;
+      arg(0); arg(1); simd(vectorBinary[`VectorMax${sign}${bits}`]!);
+      arg(0); arg(1); simd(vectorBinary[`VectorMin${sign}${bits}`]!);
+      simd(vectorBinary[`VectorSub${bits}`]!);
     } else if (vectorShift) {
       const bits = Number(vectorShift[2]);
       const amount = immediate(node.args[1]!);
@@ -471,6 +488,13 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       case "ZeroVector": zeroVector(); break;
       case "ZeroExtendLongToQuad": vector64(() => arg(0)); break;
       case "VectorNot": arg(0); simd(0x4d); break;
+      case "VectorMultiply8":
+        arg(0); simd(0x89); arg(1); simd(0x89); simd(0x95);
+        arg(0); simd(0x8a); arg(1); simd(0x8a); simd(0x95);
+        // Keep the low byte of each product without saturating the halfwords.
+        simd(0x0d);
+        for (let lane = 0; lane < 16; ++lane) body.byte(lane * 2);
+        break;
       case "VectorZeroUpper": case "VectorZeroExtend64":
         arg(0); body.byte(0x42).signed(0n, 64); simd(0x1e).byte(1); break;
       case "VectorSignExtend64":
