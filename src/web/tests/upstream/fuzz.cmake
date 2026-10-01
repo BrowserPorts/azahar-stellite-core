@@ -2,23 +2,19 @@
 
 include(ExternalProject)
 set(UNICORN_ORACLE_TOOLCHAIN)
-set(UNICORN_ORACLE_DOWNLOAD)
+set(UNICORN_ORACLE_DOWNLOAD
+    GIT_REPOSITORY https://origin.cursor.com/mov/unicorn-stellite-wasm.git
+    GIT_TAG bda928b0fc30425381bd16e1b79c97ca41390a3f)
 if(EMSCRIPTEN)
     set(UNICORN_ORACLE_BINARY "${CMAKE_CURRENT_BINARY_DIR}/unicorn-wasm-oracle")
     set(UNICORN_ORACLE_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/unicorn-wasm-source")
-    list(APPEND UNICORN_ORACLE_DOWNLOAD
-        GIT_REPOSITORY https://origin.cursor.com/mov/unicorn-stellite-wasm.git
-        GIT_TAG 42650600b97218412410647cf34f115d3dcfea41)
     list(APPEND UNICORN_ORACLE_TOOLCHAIN
         "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
         "-DCMAKE_C_FLAGS=-fwasm-exceptions")
 else()
-    # Native comparisons use pristine Unicorn, without the Wasm ABI adapters.
+    # The fork also fixes the native AArch64 oracle's single-lane encodings.
     set(UNICORN_ORACLE_BINARY "${CMAKE_CURRENT_BINARY_DIR}/unicorn-native-oracle")
     set(UNICORN_ORACLE_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/unicorn-native-source")
-    list(APPEND UNICORN_ORACLE_DOWNLOAD
-        GIT_REPOSITORY https://github.com/unicorn-engine/unicorn.git
-        GIT_TAG 8028ec436f2d9376525352dd38ed9ed6b9f6be10)
     if(APPLE)
         list(APPEND UNICORN_ORACLE_TOOLCHAIN
             "-DCMAKE_OSX_ARCHITECTURES=${CMAKE_HOST_SYSTEM_PROCESSOR}")
