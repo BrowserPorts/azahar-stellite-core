@@ -357,6 +357,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     const vectorSign = /^FPVector(Abs|Neg)(16|32|64)$/.exec(node.op);
     const paired = /^(FP)?VectorPairedAdd(Lower)?(8|16|32|64)$/.exec(node.op);
     const pairedWiden = /^VectorPairedAdd(Signed|Unsigned)Widen(8|16|32)$/.exec(node.op);
+    const reversedElements = /^VectorReverseElementsIn(Half|Word|Long)Groups(8|16|32)$/.exec(node.op);
     const saturatedNarrow = /^Vector(SignedSaturatedNarrowTo(Signed|Unsigned)|UnsignedSaturatedNarrow)(16|32|64)$/.exec(node.op);
     const saturatedBinary = /^Vector(Signed|Unsigned)Saturated(Add|Sub)(8|16)$/.exec(node.op);
     const absoluteDifference = /^Vector(Signed|Unsigned)AbsoluteDifference(8|16|32)$/.exec(node.op);
@@ -382,6 +383,12 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         }
       }
       if (lower) { body.byte(0x42).signed(0n, 64); simd(0x1e).byte(1); }
+    } else if (reversedElements) {
+      const groupBytes = { Half: 2, Word: 4, Long: 8 }[reversedElements[1] as "Half" | "Word" | "Long"];
+      const elementBytes = Number(reversedElements[2]) / 8;
+      if (elementBytes >= groupBytes) throw new JitError("compile", "Invalid ARM element reversal width");
+      arg(0); arg(0); simd(0x0d);
+      for (let byte = 0; byte < 16; ++byte) body.byte(byte ^ (groupBytes - elementBytes));
     } else if (variableShift || roundingShift) {
       const bits = Number((variableShift ?? roundingShift)![2]);
       const arithmetic = variableShift?.[1] === "Arithmetic" || roundingShift?.[1] === "S";
