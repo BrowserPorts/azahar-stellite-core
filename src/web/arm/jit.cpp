@@ -218,19 +218,52 @@ template <class Operation> auto FloatingPoint(ArmState* state, Operation operati
     SetFPStatus(state, fpsr);
     return result;
 }
+template <class Result, class Integer> Result ConvertFixed(Integer value,
+    uint32_t fractional_bits, uint32_t rounding, Dynarmic::FP::FPCR fpcr, Dynarmic::FP::FPSR& fpsr) {
+    const bool sign = std::is_signed_v<Integer> && value < 0;
+    const uint64_t magnitude = sign ? uint64_t{0} - static_cast<uint64_t>(value) : static_cast<uint64_t>(value);
+    if (!magnitude) return Result{0};
+    auto unpacked = magnitude >> 63
+        ? Dynarmic::FP::FPUnpacked{sign, 63, (magnitude >> 1) | (magnitude & 1)}
+        : Dynarmic::FP::ToNormalized(sign, 0, magnitude);
+    unpacked.exponent -= fractional_bits;
+    return Dynarmic::FP::FPRound<Result>(unpacked, fpcr,
+        static_cast<Dynarmic::FP::RoundingMode>(rounding), fpsr);
+}
 template <class Result, class Integer> Result FromFixed(ArmState* state, Integer value,
                                                        uint32_t fractional_bits, uint32_t rounding) {
     return FloatingPoint(state, [&](auto fpcr, auto& fpsr) {
-        const bool sign = std::is_signed_v<Integer> && value < 0;
-        const uint64_t magnitude = sign ? uint64_t{0} - static_cast<uint64_t>(value) : static_cast<uint64_t>(value);
-        if (!magnitude) return Result{0};
-        auto unpacked = magnitude >> 63
-            ? Dynarmic::FP::FPUnpacked{sign, 63, (magnitude >> 1) | (magnitude & 1)}
-            : Dynarmic::FP::ToNormalized(sign, 0, magnitude);
-        unpacked.exponent -= fractional_bits;
-        return Dynarmic::FP::FPRound<Result>(unpacked, fpcr,
-            static_cast<Dynarmic::FP::RoundingMode>(rounding), fpsr);
+        return ConvertFixed<Result>(value, fractional_bits, rounding, fpcr, fpsr);
     });
+}
+template <class Bits, bool Unsigned> v128_t VectorToFixed(ArmState* state, v128_t value,
+    uint32_t fractional_bits, uint32_t rounding, bool fpcr_controlled) {
+    using Lanes = std::array<Bits, sizeof(v128_t) / sizeof(Bits)>;
+    const auto input = std::bit_cast<Lanes>(value);
+    Lanes result;
+    Dynarmic::FP::FPSR fpsr{};
+    const Dynarmic::FP::FPCR fpcr{fpcr_controlled ? state->fpscr : 0x03000000u};
+    for (size_t lane = 0; lane < result.size(); ++lane) {
+        result[lane] = static_cast<Bits>(Dynarmic::FP::FPToFixed(sizeof(Bits) * 8,
+            input[lane], fractional_bits, Unsigned, fpcr,
+            static_cast<Dynarmic::FP::RoundingMode>(rounding), fpsr));
+    }
+    SetFPStatus(state, fpsr);
+    return std::bit_cast<v128_t>(result);
+}
+template <class Bits, class Integer> v128_t VectorFromFixed(ArmState* state, v128_t value,
+    uint32_t fractional_bits, uint32_t rounding, bool fpcr_controlled) {
+    using Lanes = std::array<Bits, sizeof(v128_t) / sizeof(Bits)>;
+    const auto input = std::bit_cast<Lanes>(value);
+    Lanes result;
+    Dynarmic::FP::FPSR fpsr{};
+    const Dynarmic::FP::FPCR fpcr{fpcr_controlled ? state->fpscr : 0x03000000u};
+    for (size_t lane = 0; lane < result.size(); ++lane) {
+        result[lane] = ConvertFixed<Bits>(static_cast<Integer>(input[lane]),
+            fractional_bits, rounding, fpcr, fpsr);
+    }
+    SetFPStatus(state, fpsr);
+    return std::bit_cast<v128_t>(result);
 }
 } // namespace
 
@@ -330,6 +363,26 @@ EMSCRIPTEN_KEEPALIVE v128_t FPVectorGreater32(ArmState* state, v128_t lhs, v128_
     SetFPStatus(state, fpsr);
     return std::bit_cast<v128_t>(result);
 }
+#define VECTOR_TO_FIXED(name, bits_type, unsigned_value) \
+    EMSCRIPTEN_KEEPALIVE v128_t name(ArmState* state, v128_t value, uint32_t fractional_bits, uint32_t rounding, uint32_t controlled) { \
+        return VectorToFixed<bits_type, unsigned_value>(state, value, fractional_bits, rounding, controlled); \
+    }
+VECTOR_TO_FIXED(FPVectorToSignedFixed16, uint16_t, false)
+VECTOR_TO_FIXED(FPVectorToSignedFixed32, uint32_t, false)
+VECTOR_TO_FIXED(FPVectorToSignedFixed64, uint64_t, false)
+VECTOR_TO_FIXED(FPVectorToUnsignedFixed16, uint16_t, true)
+VECTOR_TO_FIXED(FPVectorToUnsignedFixed32, uint32_t, true)
+VECTOR_TO_FIXED(FPVectorToUnsignedFixed64, uint64_t, true)
+#undef VECTOR_TO_FIXED
+#define VECTOR_FROM_FIXED(name, bits_type, integer_type) \
+    EMSCRIPTEN_KEEPALIVE v128_t name(ArmState* state, v128_t value, uint32_t fractional_bits, uint32_t rounding, uint32_t controlled) { \
+        return VectorFromFixed<bits_type, integer_type>(state, value, fractional_bits, rounding, controlled); \
+    }
+VECTOR_FROM_FIXED(FPVectorFromSignedFixed32, uint32_t, int32_t)
+VECTOR_FROM_FIXED(FPVectorFromSignedFixed64, uint64_t, int64_t)
+VECTOR_FROM_FIXED(FPVectorFromUnsignedFixed32, uint32_t, uint32_t)
+VECTOR_FROM_FIXED(FPVectorFromUnsignedFixed64, uint64_t, uint64_t)
+#undef VECTOR_FROM_FIXED
 #define FIXED_CONVERSION(name, input_type, result_type, bits, unsigned_value) \
     EMSCRIPTEN_KEEPALIVE result_type name(ArmState* state, input_type value, uint32_t fractional_bits, uint32_t rounding) { \
         return static_cast<result_type>(ToFixed(state, value, bits, fractional_bits, rounding, unsigned_value)); \
