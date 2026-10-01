@@ -31,6 +31,7 @@
 #include "dynarmic/common/fp/process_exception.h"
 #include "dynarmic/common/fp/process_nan.h"
 #include "dynarmic/common/fp/unpacked.h"
+#include "dynarmic/common/math_util.h"
 #include "dynarmic/frontend/A32/a32_ir_emitter.h"
 #include "dynarmic/frontend/A32/a32_location_descriptor.h"
 #include "dynarmic/frontend/A32/translate/a32_translate.h"
@@ -653,6 +654,18 @@ VECTOR_RECIPROCAL(16, uint16_t)
 VECTOR_RECIPROCAL(32, uint32_t)
 VECTOR_RECIPROCAL(64, uint64_t)
 #undef VECTOR_RECIPROCAL
+#define INTEGER_RECIPROCAL(name, operation, threshold) \
+    EMSCRIPTEN_KEEPALIVE v128_t name(ArmState*, v128_t value) { \
+        auto lanes = std::bit_cast<std::array<uint32_t, 4>>(value); \
+        for (auto& lane : lanes) { \
+            lane = lane < threshold ? UINT32_MAX \
+                : (0x100u | Dynarmic::Common::operation(lane >> 23)) << 23; \
+        } \
+        return std::bit_cast<v128_t>(lanes); \
+    }
+INTEGER_RECIPROCAL(VectorUnsignedRecipEstimate, RecipEstimate, 0x80000000u)
+INTEGER_RECIPROCAL(VectorUnsignedRecipSqrtEstimate, RecipSqrtEstimate, 0x40000000u)
+#undef INTEGER_RECIPROCAL
 #define VECTOR_SATURATING_SHIFT(bits, signed_type, unsigned_type) \
     EMSCRIPTEN_KEEPALIVE v128_t VectorSignedSaturatedShiftLeft##bits(ArmState* state, v128_t value, v128_t counts) { \
         return SaturatingVectorShift<signed_type>(state, value, counts); \
