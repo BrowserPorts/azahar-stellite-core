@@ -17,6 +17,7 @@
 #include "dynarmic/common/fp/fpcr.h"
 #include "dynarmic/common/fp/fpsr.h"
 #include "dynarmic/common/fp/info.h"
+#include "dynarmic/common/fp/op/FPCompare.h"
 #include "dynarmic/common/fp/op/FPConvert.h"
 #include "dynarmic/common/fp/op/FPMulAdd.h"
 #include "dynarmic/common/fp/op/FPRoundInt.h"
@@ -465,18 +466,28 @@ EMSCRIPTEN_KEEPALIVE uint32_t FPCompare64(ArmState* state, uint64_t lhs, uint64_
     SetFPStatus(state, fpsr);
     return flags;
 }
-EMSCRIPTEN_KEEPALIVE v128_t FPVectorGreater32(ArmState* state, v128_t lhs, v128_t rhs, uint32_t fpscr_controlled) {
-    const auto left = std::bit_cast<std::array<uint32_t, 4>>(lhs);
-    const auto right = std::bit_cast<std::array<uint32_t, 4>>(rhs);
-    std::array<uint32_t, 4> result;
-    Dynarmic::FP::FPSR fpsr{state->fpscr};
-    const Dynarmic::FP::FPCR fpcr{fpscr_controlled ? state->fpscr : 0x03000000u};
-    for (size_t lane = 0; lane < result.size(); ++lane) {
-        result[lane] = CompareFP(left[lane], right[lane], false, fpcr, fpsr) == 0x20000000 ? 0xffffffff : 0;
+#define VECTOR_EQUAL(name, type) \
+    EMSCRIPTEN_KEEPALIVE v128_t name(ArmState* state, v128_t lhs, v128_t rhs, uint32_t controlled) { \
+        return VectorFP<type>(state, controlled, [](auto left, auto right, auto fpcr, auto& fpsr) { \
+            return static_cast<type>(0 - Dynarmic::FP::FPCompareEQ(left, right, fpcr, fpsr)); \
+        }, lhs, rhs); \
     }
-    SetFPStatus(state, fpsr);
-    return std::bit_cast<v128_t>(result);
-}
+VECTOR_EQUAL(FPVectorEqual16, uint16_t)
+VECTOR_EQUAL(FPVectorEqual32, uint32_t)
+VECTOR_EQUAL(FPVectorEqual64, uint64_t)
+#undef VECTOR_EQUAL
+#define VECTOR_ORDERED(name, type, equal) \
+    EMSCRIPTEN_KEEPALIVE v128_t name(ArmState* state, v128_t lhs, v128_t rhs, uint32_t controlled) { \
+        return VectorFP<type>(state, controlled, [](auto left, auto right, auto fpcr, auto& fpsr) { \
+            const auto flags = CompareFP(left, right, true, fpcr, fpsr); \
+            return static_cast<type>(0 - (flags == 0x20000000 || (equal && flags == 0x60000000))); \
+        }, lhs, rhs); \
+    }
+VECTOR_ORDERED(FPVectorGreater32, uint32_t, false)
+VECTOR_ORDERED(FPVectorGreater64, uint64_t, false)
+VECTOR_ORDERED(FPVectorGreaterEqual32, uint32_t, true)
+VECTOR_ORDERED(FPVectorGreaterEqual64, uint64_t, true)
+#undef VECTOR_ORDERED
 #define VECTOR_SELECT(name, type, maximum, numeric) \
     EMSCRIPTEN_KEEPALIVE v128_t name(ArmState* state, v128_t lhs, v128_t rhs, uint32_t controlled) { \
         return VectorFP<type>(state, controlled, [](auto left, auto right, auto fpcr, auto& fpsr) { \

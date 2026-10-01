@@ -16,6 +16,7 @@ add_library(azahar_arm_jit STATIC
     "${DYNARMIC_ROOT}/src/dynarmic/backend/arm64/exclusive_monitor.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/fused.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPMulAdd.cpp"
+    "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPCompare.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPConvert.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPRoundInt.cpp"
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/op/FPToFixed.cpp"
