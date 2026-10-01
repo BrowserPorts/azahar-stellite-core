@@ -333,14 +333,31 @@ template <class Result, class Integer> Result ConvertFixed(Integer value,
     return Dynarmic::FP::FPRound<Result>(unpacked, fpcr,
         static_cast<Dynarmic::FP::RoundingMode>(rounding), fpsr);
 }
+Dynarmic::FP::FPCR VectorFPControl(ArmState* state, bool controlled) {
+    const Dynarmic::FP::FPCR fpcr{state->fpscr};
+    return controlled ? fpcr : fpcr.ASIMDStandardValue();
+}
 template <class Bits, class Operation, class... Vectors> v128_t VectorFP(ArmState* state,
     bool fpcr_controlled, Operation operation, Vectors... operands) {
     using Lanes = std::array<Bits, sizeof(v128_t) / sizeof(Bits)>;
     Lanes result;
     Dynarmic::FP::FPSR fpsr{};
-    const Dynarmic::FP::FPCR fpcr{fpcr_controlled ? state->fpscr : 0x03000000u};
+    const auto fpcr = VectorFPControl(state, fpcr_controlled);
     for (size_t lane = 0; lane < result.size(); ++lane) {
         result[lane] = operation(std::bit_cast<Lanes>(operands)[lane]..., fpcr, fpsr);
+    }
+    SetFPStatus(state, fpsr);
+    return std::bit_cast<v128_t>(result);
+}
+template <class Result, class Input> v128_t VectorConvert(ArmState* state, v128_t value,
+    uint32_t rounding, bool controlled) {
+    const auto input = std::bit_cast<std::array<Input, sizeof(v128_t) / sizeof(Input)>>(value);
+    std::array<Result, sizeof(v128_t) / sizeof(Result)> result{};
+    Dynarmic::FP::FPSR fpsr{};
+    const auto fpcr = VectorFPControl(state, controlled);
+    for (size_t lane = 0; lane < std::min(input.size(), result.size()); ++lane) {
+        result[lane] = Dynarmic::FP::FPConvert<Result>(input[lane], fpcr,
+            static_cast<Dynarmic::FP::RoundingMode>(rounding), fpsr);
     }
     SetFPStatus(state, fpsr);
     return std::bit_cast<v128_t>(result);
@@ -357,7 +374,7 @@ template <class Bits, bool Unsigned> v128_t VectorToFixed(ArmState* state, v128_
     const auto input = std::bit_cast<Lanes>(value);
     Lanes result;
     Dynarmic::FP::FPSR fpsr{};
-    const Dynarmic::FP::FPCR fpcr{fpcr_controlled ? state->fpscr : 0x03000000u};
+    const auto fpcr = VectorFPControl(state, fpcr_controlled);
     for (size_t lane = 0; lane < result.size(); ++lane) {
         result[lane] = static_cast<Bits>(Dynarmic::FP::FPToFixed(sizeof(Bits) * 8,
             input[lane], fractional_bits, Unsigned, fpcr,
@@ -372,7 +389,7 @@ template <class Bits, class Integer> v128_t VectorFromFixed(ArmState* state, v12
     const auto input = std::bit_cast<Lanes>(value);
     Lanes result;
     Dynarmic::FP::FPSR fpsr{};
-    const Dynarmic::FP::FPCR fpcr{fpcr_controlled ? state->fpscr : 0x03000000u};
+    const auto fpcr = VectorFPControl(state, fpcr_controlled);
     for (size_t lane = 0; lane < result.size(); ++lane) {
         result[lane] = ConvertFixed<Bits>(static_cast<Integer>(input[lane]),
             fractional_bits, rounding, fpcr, fpsr);
@@ -488,6 +505,12 @@ VECTOR_ORDERED(FPVectorGreater64, uint64_t, false)
 VECTOR_ORDERED(FPVectorGreaterEqual32, uint32_t, true)
 VECTOR_ORDERED(FPVectorGreaterEqual64, uint64_t, true)
 #undef VECTOR_ORDERED
+EMSCRIPTEN_KEEPALIVE v128_t FPVectorFromHalf32(ArmState* state, v128_t value, uint32_t rounding, uint32_t controlled) {
+    return VectorConvert<uint32_t, uint16_t>(state, value, rounding, controlled);
+}
+EMSCRIPTEN_KEEPALIVE v128_t FPVectorToHalf32(ArmState* state, v128_t value, uint32_t rounding, uint32_t controlled) {
+    return VectorConvert<uint16_t, uint32_t>(state, value, rounding, controlled);
+}
 #define VECTOR_SELECT(name, type, maximum, numeric) \
     EMSCRIPTEN_KEEPALIVE v128_t name(ArmState* state, v128_t lhs, v128_t rhs, uint32_t controlled) { \
         return VectorFP<type>(state, controlled, [](auto left, auto right, auto fpcr, auto& fpsr) { \
