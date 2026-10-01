@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <bit>
 #include <cmath>
@@ -679,6 +680,43 @@ AES_OPERATION(AESEncryptSingleRound, EncryptSingleRound)
 AES_OPERATION(AESInverseMixColumns, InverseMixColumns)
 AES_OPERATION(AESMixColumns, MixColumns)
 #undef AES_OPERATION
+EMSCRIPTEN_KEEPALIVE v128_t SHA256Hash(ArmState*, v128_t x, v128_t y, v128_t words, uint32_t part1) {
+    auto left = std::bit_cast<std::array<uint32_t, 4>>(x);
+    auto right = std::bit_cast<std::array<uint32_t, 4>>(y);
+    const auto message = std::bit_cast<std::array<uint32_t, 4>>(words);
+    for (const auto word : message) {
+        const auto sigma1 = std::rotr(right[0], 6) ^ std::rotr(right[0], 11) ^ std::rotr(right[0], 25);
+        const auto choice = (right[0] & right[1]) ^ (~right[0] & right[2]);
+        const auto first = right[3] + sigma1 + choice + word;
+        const auto sigma0 = std::rotr(left[0], 2) ^ std::rotr(left[0], 13) ^ std::rotr(left[0], 22);
+        const auto majority = (left[0] & left[1]) ^ (left[0] & left[2]) ^ (left[1] & left[2]);
+        right = {left[3] + first, right[0], right[1], right[2]};
+        left = {first + sigma0 + majority, left[0], left[1], left[2]};
+    }
+    return std::bit_cast<v128_t>(part1 ? left : right);
+}
+EMSCRIPTEN_KEEPALIVE v128_t SHA256MessageSchedule0(ArmState*, v128_t x, v128_t y) {
+    auto words = std::bit_cast<std::array<uint32_t, 4>>(x);
+    const auto next = std::bit_cast<std::array<uint32_t, 4>>(y);
+    for (size_t lane = 0; lane < words.size(); ++lane) {
+        const auto value = lane == 3 ? next[0] : words[lane + 1];
+        words[lane] += std::rotr(value, 7) ^ std::rotr(value, 18) ^ (value >> 3);
+    }
+    return std::bit_cast<v128_t>(words);
+}
+EMSCRIPTEN_KEEPALIVE v128_t SHA256MessageSchedule1(ArmState*, v128_t x, v128_t y, v128_t z) {
+    auto words = std::bit_cast<std::array<uint32_t, 4>>(x);
+    const auto middle = std::bit_cast<std::array<uint32_t, 4>>(y);
+    const auto last = std::bit_cast<std::array<uint32_t, 4>>(z);
+    const auto sigma1 = [](uint32_t value) {
+        return std::rotr(value, 17) ^ std::rotr(value, 19) ^ (value >> 10);
+    };
+    words[0] += middle[1] + sigma1(last[2]);
+    words[1] += middle[2] + sigma1(last[3]);
+    words[2] += middle[3] + sigma1(words[0]);
+    words[3] += last[0] + sigma1(words[1]);
+    return std::bit_cast<v128_t>(words);
+}
 #define VECTOR_TO_FIXED(name, bits_type, unsigned_value) \
     EMSCRIPTEN_KEEPALIVE v128_t name(ArmState* state, v128_t value, uint32_t fractional_bits, uint32_t rounding, uint32_t controlled) { \
         return VectorToFixed<bits_type, unsigned_value>(state, value, fractional_bits, rounding, controlled); \
