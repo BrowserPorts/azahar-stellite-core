@@ -3,7 +3,7 @@
 // Refer to the license.txt file included.
 
 #include "common/arch.h"
-#if CITRA_ARCH(x86_64) || CITRA_ARCH(arm64)
+#if CITRA_ARCH(x86_64) || CITRA_ARCH(arm64) || CITRA_ARCH(wasm)
 
 #include <algorithm>
 #include <cmath>
@@ -20,6 +20,8 @@
 #include "video_core/shader/shader_interpreter.h"
 #if CITRA_ARCH(x86_64)
 #include "video_core/shader/shader_jit_x64_compiler.h"
+#elif CITRA_ARCH(wasm)
+#include "web/pica/jit.h"
 #elif CITRA_ARCH(arm64)
 #include "video_core/shader/shader_jit_a64_compiler.h"
 #endif
@@ -844,4 +846,4 @@ SHADER_TEST_CASE("Source Swizzle", "[video_core][shader]") {
             Common::Vec4f(iota_vec.y, iota_vec.y, iota_vec.y, iota_vec.y));
 }
 
-#endif // CITRA_ARCH(x86_64) || CITRA_ARCH(arm64)
+#endif // CITRA_ARCH(x86_64) || CITRA_ARCH(arm64) || CITRA_ARCH(wasm)

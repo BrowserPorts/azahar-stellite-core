@@ -1,37 +1,8 @@
-set(CORE_TIMING_FIXTURE core/core_timing.cpp)
-set(SHADER_FIXTURE video_core/shader.cpp)
-if(EMSCRIPTEN)
-    # Keep the native fixture's 64-bit event payloads when adapting its callback signatures.
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/core/core_timing.cpp")
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/core/core_timing.cpp" CORE_TIMING_SOURCE)
-    string(REGEX MATCHALL "std::uintptr_t user_data" CORE_TIMING_PARAMETERS "${CORE_TIMING_SOURCE}")
-    list(LENGTH CORE_TIMING_PARAMETERS CORE_TIMING_PARAMETER_COUNT)
-    if(NOT CORE_TIMING_PARAMETER_COUNT EQUAL 4)
-        message(FATAL_ERROR "The native timing fixture callback signatures changed")
-    endif()
-    string(REPLACE "std::uintptr_t user_data" "u64 user_data" CORE_TIMING_SOURCE "${CORE_TIMING_SOURCE}")
-    set(CORE_TIMING_FIXTURE "${CMAKE_CURRENT_BINARY_DIR}/core_timing_wasm.cpp")
-    file(WRITE "${CORE_TIMING_FIXTURE}" "${CORE_TIMING_SOURCE}")
-
-    # Change only the architecture guard and JIT header in the original shader cases.
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/video_core/shader.cpp")
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/video_core/shader.cpp" SHADER_SOURCE)
-    string(REPLACE "CITRA_ARCH(x86_64) || CITRA_ARCH(arm64)"
-        "CITRA_ARCH(x86_64) || CITRA_ARCH(arm64) || CITRA_ARCH(wasm)" SHADER_SOURCE "${SHADER_SOURCE}")
-    string(REPLACE "#elif CITRA_ARCH(arm64)"
-        "#elif CITRA_ARCH(wasm)\n#include \"web/pica/jit.h\"\n#elif CITRA_ARCH(arm64)"
-        SHADER_SOURCE "${SHADER_SOURCE}")
-    set(SHADER_FIXTURE "${CMAKE_CURRENT_BINARY_DIR}/shader_wasm.cpp")
-    file(WRITE "${SHADER_FIXTURE}" "${SHADER_SOURCE}")
-endif()
-
 add_executable(tests
     common/bit_field.cpp
     common/file_util.cpp
     common/param_package.cpp
-    ${CORE_TIMING_FIXTURE}
+    core/core_timing.cpp
     core/file_sys/path_parser.cpp
     core/hle/kernel/hle_ipc.cpp
     core/memory/memory.cpp
@@ -43,7 +14,7 @@ add_executable(tests
     audio_core/audio_fixures.h
     audio_core/decoder_tests.cpp
     video_core/pica_types.cpp
-    ${SHADER_FIXTURE}
+    video_core/shader.cpp
     audio_core/merryhime_3ds_audio/merry_audio/merry_audio.cpp
     audio_core/merryhime_3ds_audio/merry_audio/merry_audio.h
     audio_core/merryhime_3ds_audio/merry_audio/service_fixture.cpp
