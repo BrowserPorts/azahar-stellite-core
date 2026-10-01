@@ -18,6 +18,8 @@ const vectorBinary: Record<string, number> = {
   VectorAdd8: 0x6e, VectorAdd16: 0x8e, VectorAdd32: 0xae, VectorAdd64: 0xce,
   VectorSub8: 0x71, VectorSub16: 0x91, VectorSub32: 0xb1, VectorSub64: 0xd1,
   VectorMultiply16: 0x95, VectorMultiply32: 0xb5, VectorMultiply64: 0xd5,
+  VectorMultiplySignedWiden8: 0x9c, VectorMultiplySignedWiden16: 0xbc, VectorMultiplySignedWiden32: 0xdc,
+  VectorMultiplyUnsignedWiden8: 0x9e, VectorMultiplyUnsignedWiden16: 0xbe, VectorMultiplyUnsignedWiden32: 0xde,
   VectorEqual8: 0x23, VectorEqual16: 0x2d, VectorEqual32: 0x37, VectorEqual64: 0xd6,
   VectorGreaterS8: 0x27, VectorGreaterS16: 0x31, VectorGreaterS32: 0x3b, VectorGreaterS64: 0xd9,
   VectorMinS8: 0x76, VectorMinU8: 0x77, VectorMaxS8: 0x78, VectorMaxU8: 0x79,
