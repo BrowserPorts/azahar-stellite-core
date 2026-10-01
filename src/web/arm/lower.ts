@@ -16,6 +16,11 @@ const binary: Record<string, number> = {
 const vectorBinary: Record<string, number> = {
   VectorAnd: 0x4e, VectorAndNot: 0x4f, VectorOr: 0x50, VectorEor: 0x51,
 };
+const vectorUnary: Record<string, number> = {
+  VectorSignExtend8: 0x87, VectorSignExtend16: 0xa7, VectorSignExtend32: 0xc7,
+  VectorZeroExtend8: 0x89, VectorZeroExtend16: 0xa9, VectorZeroExtend32: 0xc9,
+};
+const vectorShiftLeft: Record<number, number> = { 8: 0x6b, 16: 0x8b, 32: 0xab, 64: 0xcb };
 const laneExtract: Record<number, number> = { 8: 0x16, 16: 0x19, 32: 0x1b, 64: 0x1d };
 const laneReplace: Record<number, number> = { 8: 0x17, 16: 0x1a, 32: 0x1c, 64: 0x1e };
 const laneSplat: Record<number, number> = { 8: 0x0f, 16: 0x10, 32: 0x11, 64: 0x12 };
@@ -324,6 +329,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     const arg = (position: number): undefined => argument(node.args[position]!);
     let result = node.type !== "Void";
     const rearrangement = /^Vector(Interleave(Lower|Upper)|Deinterleave(Even|Odd)(Lower)?)(8|16|32|64)$/.exec(node.op);
+    const vectorShift = /^Vector(ArithmeticShiftRight|LogicalShiftLeft|LogicalShiftRight)(8|16|32|64)$/.exec(node.op);
     if (/^Packed(Halving|Saturated)?(AddSub|SubAdd|Add|Sub)(S|U)(8|16)$/.test(node.op)) packed(node);
     else if (rearrangement) {
       const elementBytes = Number(rearrangement[5]) / 8;
@@ -346,6 +352,21 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         }
       }
       if (lower) { body.byte(0x42).signed(0n, 64); simd(0x1e).byte(1); }
+    } else if (vectorShift) {
+      const bits = Number(vectorShift[2]);
+      const amount = immediate(node.args[1]!);
+      const arithmetic = vectorShift[1] === "ArithmeticShiftRight";
+      // ARM saturates oversized shifts; Wasm masks the count to the lane width.
+      if (!arithmetic && amount >= bits) zeroVector();
+      else {
+        arg(0);
+        if (amount !== 0) {
+          constant(arithmetic ? Math.min(amount, bits - 1) : amount);
+          simd(vectorShiftLeft[bits]! + (arithmetic ? 1 : vectorShift[1] === "LogicalShiftRight" ? 2 : 0));
+        }
+      }
+    } else if (vectorUnary[node.op] !== undefined) {
+      arg(0); simd(vectorUnary[node.op]!);
     } else if (binary[node.op] !== undefined) {
       arg(0); arg(1); body.byte(binary[node.op]!);
     } else if (vectorBinary[node.op] !== undefined) {
@@ -380,8 +401,11 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       case "ZeroVector": zeroVector(); break;
       case "ZeroExtendLongToQuad": vector64(() => arg(0)); break;
       case "VectorNot": arg(0); simd(0x4d); break;
-      case "VectorZeroUpper":
+      case "VectorZeroUpper": case "VectorZeroExtend64":
         arg(0); body.byte(0x42).signed(0n, 64); simd(0x1e).byte(1); break;
+      case "VectorSignExtend64":
+        arg(0); arg(0); simd(0x1d).byte(0);
+        body.byte(0x42).signed(63n, 64).byte(0x87); simd(0x1e).byte(1); break;
       case "VectorGetElement8": case "VectorGetElement16":
       case "VectorGetElement32": case "VectorGetElement64":
       case "VectorSetElement8": case "VectorSetElement16":
