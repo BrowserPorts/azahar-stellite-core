@@ -753,6 +753,20 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         }
         break;
       }
+      case "VectorPolynomialMultiply8": case "VectorPolynomialMultiplyLong8": {
+        const wide = node.op === "VectorPolynomialMultiplyLong8";
+        const bits = wide ? 16 : 8;
+        zeroVector();
+        for (let bit = 0; bit < 8; ++bit) {
+          arg(0); if (wide) simd(0x89);
+          if (bit > 0) { constant(bit); simd(vectorShiftLeft[bits]!); }
+          arg(1); if (wide) simd(0x89);
+          constant(1 << bit); simd(laneSplat[bits]!); simd(0x4e);
+          constant(1 << bit); simd(laneSplat[bits]!); simd(vectorBinary[`VectorEqual${bits}`]!);
+          simd(0x4e); simd(0x51);
+        }
+        break;
+      }
       case "VectorMultiply8":
         arg(0); simd(0x89); arg(1); simd(0x89); simd(0x95);
         arg(0); simd(0x8a); arg(1); simd(0x8a); simd(0x95);
