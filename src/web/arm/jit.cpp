@@ -332,16 +332,14 @@ template <class Result, class Integer> Result ConvertFixed(Integer value,
     return Dynarmic::FP::FPRound<Result>(unpacked, fpcr,
         static_cast<Dynarmic::FP::RoundingMode>(rounding), fpsr);
 }
-template <class Bits, class Operation> v128_t VectorBinaryFP(ArmState* state,
-    v128_t lhs, v128_t rhs, bool fpcr_controlled, Operation operation) {
+template <class Bits, class Operation, class... Vectors> v128_t VectorFP(ArmState* state,
+    bool fpcr_controlled, Operation operation, Vectors... operands) {
     using Lanes = std::array<Bits, sizeof(v128_t) / sizeof(Bits)>;
-    const auto left = std::bit_cast<Lanes>(lhs);
-    const auto right = std::bit_cast<Lanes>(rhs);
     Lanes result;
     Dynarmic::FP::FPSR fpsr{};
     const Dynarmic::FP::FPCR fpcr{fpcr_controlled ? state->fpscr : 0x03000000u};
     for (size_t lane = 0; lane < result.size(); ++lane) {
-        result[lane] = operation(left[lane], right[lane], fpcr, fpsr);
+        result[lane] = operation(std::bit_cast<Lanes>(operands)[lane]..., fpcr, fpsr);
     }
     SetFPStatus(state, fpsr);
     return std::bit_cast<v128_t>(result);
@@ -481,9 +479,9 @@ EMSCRIPTEN_KEEPALIVE v128_t FPVectorGreater32(ArmState* state, v128_t lhs, v128_
 }
 #define VECTOR_SELECT(name, type, maximum, numeric) \
     EMSCRIPTEN_KEEPALIVE v128_t name(ArmState* state, v128_t lhs, v128_t rhs, uint32_t controlled) { \
-        return VectorBinaryFP<type>(state, lhs, rhs, controlled, [](auto left, auto right, auto fpcr, auto& fpsr) { \
+        return VectorFP<type>(state, controlled, [](auto left, auto right, auto fpcr, auto& fpsr) { \
             return SelectFP<type, maximum, numeric>(left, right, fpcr, fpsr); \
-        }); \
+        }, lhs, rhs); \
     }
 VECTOR_SELECT(FPVectorMax32, uint32_t, true, false)
 VECTOR_SELECT(FPVectorMax64, uint64_t, true, false)
@@ -494,6 +492,51 @@ VECTOR_SELECT(FPVectorMin64, uint64_t, false, false)
 VECTOR_SELECT(FPVectorMinNumeric32, uint32_t, false, true)
 VECTOR_SELECT(FPVectorMinNumeric64, uint64_t, false, true)
 #undef VECTOR_SELECT
+#define VECTOR_ARITHMETIC(bits, type) \
+    EMSCRIPTEN_KEEPALIVE v128_t FPVectorAdd##bits(ArmState* state, v128_t lhs, v128_t rhs, uint32_t controlled) { \
+        return VectorFP<type>(state, controlled, [](auto left, auto right, auto fpcr, auto& fpsr) { \
+            return Dynarmic::FP::FPMulAdd(left, right, Dynarmic::FP::FPValue<type, false, 0, 1>(), fpcr, fpsr); \
+        }, lhs, rhs); \
+    } \
+    EMSCRIPTEN_KEEPALIVE v128_t FPVectorSub##bits(ArmState* state, v128_t lhs, v128_t rhs, uint32_t controlled) { \
+        return VectorFP<type>(state, controlled, [](auto left, auto right, auto fpcr, auto& fpsr) { \
+            return Dynarmic::FP::FPMulAdd(left, right, Dynarmic::FP::FPValue<type, true, 0, 1>(), fpcr, fpsr); \
+        }, lhs, rhs); \
+    } \
+    EMSCRIPTEN_KEEPALIVE v128_t FPVectorMul##bits(ArmState* state, v128_t lhs, v128_t rhs, uint32_t controlled) { \
+        return VectorFP<type>(state, controlled, [](auto left, auto right, auto fpcr, auto& fpsr) { \
+            const auto zero = Dynarmic::FP::FPInfo<type>::Zero(((left ^ right) & Dynarmic::FP::FPInfo<type>::sign_mask) != 0); \
+            return Dynarmic::FP::FPMulAdd(zero, left, right, fpcr, fpsr); \
+        }, lhs, rhs); \
+    } \
+    EMSCRIPTEN_KEEPALIVE v128_t FPVectorDiv##bits(ArmState* state, v128_t lhs, v128_t rhs, uint32_t controlled) { \
+        return VectorFP<type>(state, controlled, [](auto left, auto right, auto fpcr, auto& fpsr) { \
+            return DivideFP(left, right, fpcr, fpsr); \
+        }, lhs, rhs); \
+    } \
+    EMSCRIPTEN_KEEPALIVE v128_t FPVectorSqrt##bits(ArmState* state, v128_t value, uint32_t controlled) { \
+        return VectorFP<type>(state, controlled, [](auto operand, auto fpcr, auto& fpsr) { \
+            return SquareRootFP(operand, fpcr, fpsr); \
+        }, value); \
+    }
+VECTOR_ARITHMETIC(32, uint32_t)
+VECTOR_ARITHMETIC(64, uint64_t)
+#undef VECTOR_ARITHMETIC
+#define VECTOR_FUSED(bits, type) \
+    EMSCRIPTEN_KEEPALIVE v128_t FPVectorMulAdd##bits(ArmState* state, v128_t addend, v128_t lhs, v128_t rhs, uint32_t controlled) { \
+        return VectorFP<type>(state, controlled, [](auto add, auto left, auto right, auto fpcr, auto& fpsr) { \
+            return Dynarmic::FP::FPMulAdd(add, left, right, fpcr, fpsr); \
+        }, addend, lhs, rhs); \
+    } \
+    EMSCRIPTEN_KEEPALIVE v128_t FPVectorRoundInt##bits(ArmState* state, v128_t value, uint32_t rounding, uint32_t exact, uint32_t controlled) { \
+        return VectorFP<type>(state, controlled, [&](auto operand, auto fpcr, auto& fpsr) { \
+            return static_cast<type>(Dynarmic::FP::FPRoundInt(operand, fpcr, static_cast<Dynarmic::FP::RoundingMode>(rounding), exact, fpsr)); \
+        }, value); \
+    }
+VECTOR_FUSED(16, uint16_t)
+VECTOR_FUSED(32, uint32_t)
+VECTOR_FUSED(64, uint64_t)
+#undef VECTOR_FUSED
 #define VECTOR_TO_FIXED(name, bits_type, unsigned_value) \
     EMSCRIPTEN_KEEPALIVE v128_t name(ArmState* state, v128_t value, uint32_t fractional_bits, uint32_t rounding, uint32_t controlled) { \
         return VectorToFixed<bits_type, unsigned_value>(state, value, fractional_bits, rounding, controlled); \

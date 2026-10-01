@@ -354,6 +354,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     const variableShift = /^Vector(Arithmetic|Logical)VShift(8|16|32|64)$/.exec(node.op);
     const roundingShift = /^VectorRoundingShiftLeft(S|U)(8|16|32|64)$/.exec(node.op);
     const halving = /^Vector(Rounding)?Halving(Add|Sub)(S|U)(8|16|32)$/.exec(node.op);
+    const vectorSign = /^FPVector(Abs|Neg)(16|32|64)$/.exec(node.op);
     const absoluteDifference = /^Vector(Signed|Unsigned)AbsoluteDifference(8|16|32)$/.exec(node.op);
     if (/^Packed(Halving|Saturated)?(AddSub|SubAdd|Add|Sub)(S|U)(8|16)$/.test(node.op)) packed(node);
     else if (rearrangement) {
@@ -483,6 +484,14 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         arg(0); arg(1); simd(0x51); constant(1); simd(vectorShiftLeft[bits]! + (signed ? 1 : 2));
         simd(vectorBinary[`Vector${rounded ? "Sub" : "Add"}${bits}`]!);
       }
+    } else if (vectorSign) {
+      const bytes = Number(vectorSign[2]) / 8;
+      const negate = vectorSign[1] === "Neg";
+      arg(0); simd(0x0c);
+      for (let byte = 0; byte < 16; ++byte) {
+        body.byte(byte % bytes === bytes - 1 ? negate ? 0x80 : 0x7f : negate ? 0 : 0xff);
+      }
+      simd(negate ? 0x51 : 0x4e);
     } else if (absoluteDifference) {
       const sign = absoluteDifference[1] === "Signed" ? "S" : "U";
       const bits = absoluteDifference[2]!;
