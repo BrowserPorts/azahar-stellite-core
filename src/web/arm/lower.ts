@@ -1001,16 +1001,9 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         if (node.op === "SignedDiv32") body.byte(0x0b);
         body.byte(0x0b); break;
       case "PackedAbsDiffSumU8":
-        for (let byte = 0; byte < 4; ++byte) {
-          const lane = (position: number): undefined => {
-            arg(position); constant(byte * 8).byte(0x76); constant(255).byte(0x71);
-            return undefined;
-          };
-          lane(0); lane(1); body.byte(0x6b);
-          lane(1); lane(0); body.byte(0x6b);
-          lane(0); lane(1); body.byte(0x4f).byte(0x1b);
-          if (byte) body.byte(0x6a);
-        }
+        arg(0); simd(0x11); arg(1); simd(0x11); simd(0x79);
+        arg(0); simd(0x11); arg(1); simd(0x11); simd(0x77);
+        simd(0x71); simd(0x7d); simd(0x7f); simd(0x1b).byte(0);
         break;
       case "LogicalShiftLeft32": case "LogicalShiftRight32": case "ArithmeticShiftRight32":
       case "RotateRight32": case "RotateRightExtended": shift32(node.op, index, arg); break;
