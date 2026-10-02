@@ -105,6 +105,21 @@ FragmentModule::FragmentModule(const FSConfig& config_, const UserConfig& user_,
                                const Profile& profile_, BindingLayout bindings_)
     : config{config_}, user{user_}, profile{profile_}, bindings{bindings_} {
     config.ApplyProfile(profile_);
+    if (bindings == BindingLayout::WebGPU && config.framebuffer.alphablend_enable) {
+        using BlendFactor = FramebufferRegs::BlendFactor;
+        const auto alpha_factor = [](BlendFactor factor) {
+            return factor == BlendFactor::ConstantAlpha || factor == BlendFactor::OneMinusConstantAlpha;
+        };
+        const auto& blend = config.framebuffer.requested_rgb_blend;
+        emulate_rgb_blend = alpha_factor(blend.src_factor) || alpha_factor(blend.dst_factor);
+        if (config.framebuffer.requested_alpha_blend.RequiresMinMaxEmulation()) {
+            const auto source_alpha = [](BlendFactor factor) {
+                return factor == BlendFactor::SourceAlpha || factor == BlendFactor::OneMinusSourceAlpha ||
+                       factor == BlendFactor::SourceAlphaSaturate;
+            };
+            emulate_rgb_blend |= source_alpha(blend.src_factor) || source_alpha(blend.dst_factor);
+        }
+    }
     out.reserve(RESERVE_SIZE);
     DefineExtensions();
     DefineInterface();
@@ -966,7 +981,7 @@ void FragmentModule::WriteLogicOpWebGPU() {
 
 void FragmentModule::WriteBlending() {
     bool requires_rgb_minmax_emulation =
-        config.framebuffer.requested_rgb_blend.RequiresMinMaxEmulation();
+        config.framebuffer.requested_rgb_blend.RequiresMinMaxEmulation() || emulate_rgb_blend;
     bool requires_alpha_minmax_emulation =
         config.framebuffer.requested_alpha_blend.RequiresMinMaxEmulation();
     if (!requires_rgb_minmax_emulation && !requires_alpha_minmax_emulation) [[likely]] {
@@ -1006,6 +1021,11 @@ void FragmentModule::WriteBlending() {
             return "blend_color.aaaa";
         case BlendFactor::OneMinusConstantAlpha:
             return "vec4(1.f) - blend_color.aaaa";
+        case BlendFactor::SourceAlphaSaturate:
+            if (bindings == BindingLayout::WebGPU) {
+                return "vec4(vec3(min(source_color.a, 1.0 - dest_color.a)), 1.0)";
+            }
+            [[fallthrough]];
         default:
             LOG_CRITICAL(Render_OpenGL, "Unknown blend factor {}", factor);
             return "vec4(1.f)";
@@ -1018,11 +1038,31 @@ void FragmentModule::WriteBlending() {
     };
 
     if (requires_rgb_minmax_emulation) {
-        out += fmt::format(
-            "combiner_output.rgb = {}(source_color.rgb * ({}).rgb, dest_color.rgb * ({}).rgb);\n",
-            get_func(config.framebuffer.requested_rgb_blend.eq),
-            get_factor(config.framebuffer.requested_rgb_blend.src_factor),
-            get_factor(config.framebuffer.requested_rgb_blend.dst_factor));
+        const auto& blend = config.framebuffer.requested_rgb_blend;
+        if (emulate_rgb_blend && blend.eq != FramebufferRegs::BlendEquation::Min &&
+            blend.eq != FramebufferRegs::BlendEquation::Max) {
+            const auto source = fmt::format("source_color.rgb * ({}).rgb", get_factor(blend.src_factor));
+            const auto dest = fmt::format("dest_color.rgb * ({}).rgb", get_factor(blend.dst_factor));
+            switch (blend.eq) {
+            case FramebufferRegs::BlendEquation::Add:
+                out += fmt::format("combiner_output.rgb = {} + {};\n", source, dest);
+                break;
+            case FramebufferRegs::BlendEquation::Subtract:
+                out += fmt::format("combiner_output.rgb = {} - {};\n", source, dest);
+                break;
+            case FramebufferRegs::BlendEquation::ReverseSubtract:
+                out += fmt::format("combiner_output.rgb = {} - {};\n", dest, source);
+                break;
+            default:
+                UNREACHABLE_MSG("Invalid WebGPU blend equation");
+            }
+        } else {
+            out += fmt::format(
+                "combiner_output.rgb = {}(source_color.rgb * ({}).rgb, dest_color.rgb * ({}).rgb);\n",
+                get_func(config.framebuffer.requested_rgb_blend.eq),
+                get_factor(config.framebuffer.requested_rgb_blend.src_factor),
+                get_factor(config.framebuffer.requested_rgb_blend.dst_factor));
+        }
     }
     if (requires_alpha_minmax_emulation) {
         out +=
@@ -1315,7 +1355,7 @@ void FragmentModule::DefineExtensions() {
             use_fragment_shader_barycentric = false;
         }
     }
-    if (config.framebuffer.requested_rgb_blend.RequiresMinMaxEmulation() ||
+    if (emulate_rgb_blend || config.framebuffer.requested_rgb_blend.RequiresMinMaxEmulation() ||
         config.framebuffer.requested_alpha_blend.RequiresMinMaxEmulation()) [[unlikely]] {
         if (profile.has_gl_ext_framebuffer_fetch) {
             out += "#extension GL_EXT_shader_framebuffer_fetch : enable\n";

@@ -98,6 +98,7 @@ private:
     const BindingLayout bindings;
     std::string out;
     bool use_blend_fallback{};
+    bool emulate_rgb_blend{};
     bool use_fragment_shader_interlock{};
     bool use_fragment_shader_barycentric{};
 };

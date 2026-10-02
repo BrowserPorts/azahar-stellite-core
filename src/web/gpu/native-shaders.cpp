@@ -5,6 +5,7 @@
 #include <emscripten.h>
 #include "video_core/shader/generator/glsl_fs_shader_gen.h"
 #include "video_core/shader/generator/glsl_shader_gen.h"
+#include "web/gpu/draw-layout.h"
 
 namespace {
 std::string source;
@@ -14,7 +15,12 @@ constexpr Pica::Shader::Profile profile{
 } // namespace
 
 extern "C" EMSCRIPTEN_KEEPALIVE unsigned azahar_pica_shader_abi() {
-    return 1;
+    return 2;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE const u32* azahar_pica_vertex_layout() {
+    static constexpr auto layout = WebGPU::DrawLayout::VertexLayout();
+    return layout.data();
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE std::size_t azahar_pica_fs_config_size() {
@@ -40,6 +46,6 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_pica_fragment_source(
 
 extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_pica_vertex_source() {
     source = "#version 450\n" +
-             Pica::Shader::Generator::GLSL::GenerateTrivialVertexShader(true, true);
+             Pica::Shader::Generator::GLSL::GenerateTrivialVertexShader(true, true, true);
     return source.c_str();
 }

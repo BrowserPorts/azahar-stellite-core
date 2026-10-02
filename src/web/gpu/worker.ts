@@ -6,6 +6,7 @@ import { PicaShaders } from "./pica-shaders";
 import { WebGpuPresenter } from "./presenter";
 import { GraphicsTextures } from "./textures";
 import { GraphicsSamplers } from "./samplers";
+import { GraphicsDraws } from "./draws";
 
 const worker = self as unknown as DedicatedWorkerGlobalScope;
 let commands: Promise<unknown> = Promise.resolve();
@@ -16,6 +17,7 @@ let shaders: PicaShaders | undefined;
 let presenter: WebGpuPresenter | undefined;
 let textures: GraphicsTextures | undefined;
 let samplers: GraphicsSamplers | undefined;
+let draws: GraphicsDraws | undefined;
 let failure: string | undefined;
 let closed = false;
 
@@ -53,6 +55,7 @@ async function initialize(fence: SharedArrayBuffer): Promise<undefined> {
   shaders = await PicaShaders.create(device);
   textures = await GraphicsTextures.create(device);
   samplers = new GraphicsSamplers(device);
+  draws = await GraphicsDraws.create(device, shaders, textures, samplers);
   if (failure) throw new Error(failure);
   post({ type: "ready", configurationSize: shaders.configurationSize,
     configurationSchema: shaders.configurationSchema });
@@ -66,8 +69,10 @@ worker.onmessage = (event: MessageEvent<GraphicsRequest>): undefined => {
       if (closed) throw new Error("The graphics worker is closed");
       if (failure) throw new Error(failure);
       if (request.type === "initialize") return await initialize(request.fence);
-      if (!device || !shaders || !textures || !samplers || !control) throw new Error("WebGPU is unavailable");
+      if (!device || !shaders || !textures || !samplers || !draws || !control) throw new Error("WebGPU is unavailable");
       switch (request.type) {
+        case "draw": await draws.draw(request.draw); break;
+        case "lookup-table": draws.lookupTable(request.table, request.offset, request.bytes); break;
         case "sampler-create": samplers.create(request.handle, request.params); break;
         case "sampler-destroy": samplers.destroy(request.handle); break;
         case "texture-create":
@@ -109,6 +114,7 @@ worker.onmessage = (event: MessageEvent<GraphicsRequest>): undefined => {
           await device.queue.onSubmittedWorkDone();
           closed = true;
           presenter?.close();
+          draws.close();
           shaders.close();
           textures.close();
           samplers.close();
@@ -122,6 +128,7 @@ worker.onmessage = (event: MessageEvent<GraphicsRequest>): undefined => {
       if (request.type === "initialize") {
         closed = true;
         shaders?.close();
+        draws?.close();
         textures?.close();
         samplers?.close();
         device?.destroy();

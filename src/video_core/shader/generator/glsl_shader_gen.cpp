@@ -52,7 +52,7 @@ vec4 SanitizeVertex(vec4 vtx_pos) {
 )";
 
 static std::string GetVertexInterfaceDeclaration(bool is_output, bool use_clip_planes,
-                                                 bool separable_shader) {
+                                                 bool separable_shader, u32 clip_count = 2) {
     std::string out;
 
     const auto append_variable = [&](std::string_view var, int location) {
@@ -81,7 +81,7 @@ static std::string GetVertexInterfaceDeclaration(bool is_output, bool use_clip_p
         out += "    vec4 gl_Position;\n";
 #endif
         if (use_clip_planes) {
-            out += "    float gl_ClipDistance[2];\n";
+            out += fmt::format("    float gl_ClipDistance[{}];\n", clip_count);
         }
         out += "};\n";
     }
@@ -89,7 +89,8 @@ static std::string GetVertexInterfaceDeclaration(bool is_output, bool use_clip_p
     return out;
 }
 
-std::string GenerateTrivialVertexShader(bool use_clip_planes, bool separable_shader) {
+std::string GenerateTrivialVertexShader(bool use_clip_planes, bool separable_shader,
+                                      bool webgpu_viewport) {
     std::string out;
     if (separable_shader) {
         out += "#extension GL_ARB_separate_shader_objects : enable\n";
@@ -107,8 +108,13 @@ std::string GenerateTrivialVertexShader(bool use_clip_planes, bool separable_sha
                     ATTRIBUTE_POSITION, ATTRIBUTE_COLOR, ATTRIBUTE_TEXCOORD0, ATTRIBUTE_TEXCOORD1,
                     ATTRIBUTE_TEXCOORD2, ATTRIBUTE_TEXCOORD0_W, ATTRIBUTE_NORMQUAT, ATTRIBUTE_VIEW);
 
-    out += GetVertexInterfaceDeclaration(true, use_clip_planes, separable_shader);
+    out += GetVertexInterfaceDeclaration(true, use_clip_planes, separable_shader,
+                                         webgpu_viewport ? 6 : 2);
     out += VSUniformBlockDef;
+    if (webgpu_viewport) {
+        ASSERT(use_clip_planes && separable_shader);
+        out += "layout(set = 0, binding = 6, std140) uniform native_viewport { vec4 viewport_transform; };\n";
+    }
 
     out += R"(
 void main() {
@@ -136,6 +142,17 @@ void main() {
         )";
     }
 
+    if (webgpu_viewport) {
+        // WebGPU viewports must fit the attachment. Preserve PICA clipping before mapping a
+        // potentially negative native viewport into a viewport covering the whole attachment.
+        out += R"(
+    gl_ClipDistance[2] = vtx_pos.w + vtx_pos.x;
+    gl_ClipDistance[3] = vtx_pos.w - vtx_pos.x;
+    gl_ClipDistance[4] = vtx_pos.w + vtx_pos.y;
+    gl_ClipDistance[5] = vtx_pos.w - vtx_pos.y;
+    gl_Position.xy = gl_Position.xy * viewport_transform.xy + gl_Position.ww * viewport_transform.zw;
+)";
+    }
     out += "}\n";
 
     return out;

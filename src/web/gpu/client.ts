@@ -5,6 +5,7 @@ import { fenceByteLength, fenceErrorOffset } from "./messages";
 import type { TextureRegion } from "./textures";
 import type { TextureRect } from "./blits";
 import type { NativeSampler } from "./samplers";
+import type { NativeDrawState } from "./draw-types";
 
 type Pending = { resolve(): unknown; reject(error: Error): unknown };
 
@@ -18,6 +19,7 @@ export class GraphicsClient {
   #closed = false;
   #hasSurface = false;
   #queuedFrames = 0;
+  #queuedBytes = 0;
   #failure: Error | undefined;
   #reported = false;
   #ready: Promise<undefined>;
@@ -111,8 +113,27 @@ export class GraphicsClient {
     return this.post({ type: "sampler-destroy", handle });
   }
 
+  draw(state: NativeDrawState, configuration: Uint8Array<SharedArrayBuffer>, vertices: Uint8Array<SharedArrayBuffer>,
+    vertexUniforms: Uint8Array<SharedArrayBuffer>, fragmentUniforms: Uint8Array<SharedArrayBuffer>): undefined {
+    this.checkOpen();
+    this.accountBytes(configuration.byteLength + vertices.byteLength + vertexUniforms.byteLength + fragmentUniforms.byteLength);
+    const draw = { state, configuration: configuration.slice(), vertices: vertices.slice(),
+      vertexUniforms: vertexUniforms.slice(), fragmentUniforms: fragmentUniforms.slice() };
+    this.post({ type: "draw", draw }, [draw.configuration.buffer, draw.vertices.buffer,
+      draw.vertexUniforms.buffer, draw.fragmentUniforms.buffer]);
+    return undefined;
+  }
+
+  lookupTable(table: number, offset: number, view: Uint8Array<SharedArrayBuffer>): undefined {
+    this.checkOpen();
+    this.accountBytes(view.byteLength);
+    const bytes = view.slice();
+    return this.post({ type: "lookup-table", table, offset, bytes }, [bytes.buffer]);
+  }
+
   uploadTexture(handle: number, region: TextureRegion, view: Uint8Array<SharedArrayBuffer>): undefined {
     this.checkOpen();
+    this.accountBytes(view.byteLength);
     const bytes = view.slice();
     return this.post({ type: "texture-upload", handle, region, bytes }, [bytes.buffer]);
   }
@@ -138,6 +159,14 @@ export class GraphicsClient {
       Atomics.wait(this.#control, 0, previous, remaining);
     }
     this.checkOpen();
+    this.#queuedBytes = 0;
+    return undefined;
+  }
+
+  private accountBytes(bytes: number): undefined {
+    // Bound immutable heap snapshots while a cold native shader is being compiled.
+    if (this.#queuedBytes + bytes > 64 * 1024 * 1024) this.finish();
+    this.#queuedBytes += bytes;
     return undefined;
   }
 

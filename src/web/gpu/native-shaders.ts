@@ -10,6 +10,7 @@ interface NativeShaderModule {
   _azahar_pica_fs_config_schema(): bigint;
   _azahar_pica_fragment_source(configuration: number, userFlags: number): number;
   _azahar_pica_vertex_source(): number;
+  _azahar_pica_vertex_layout(): number;
 }
 
 type NativeShaderFactory = (options: { onAbort(reason: unknown): unknown }) => Promise<NativeShaderModule>;
@@ -20,9 +21,21 @@ export class NativeShaders {
   #input = 0;
   readonly configurationSize: number;
   readonly configurationSchema: bigint;
+  readonly vertexLayout: GPUVertexBufferLayout;
 
   private constructor(module: NativeShaderModule) {
-    if (module._azahar_pica_shader_abi() !== 1) throw new Error("Unsupported PICA shader ABI");
+    if (module._azahar_pica_shader_abi() !== 2) throw new Error("Unsupported PICA shader ABI");
+    const pointer = module._azahar_pica_vertex_layout();
+    if (!pointer || pointer % 4) throw new Error("Invalid PICA vertex layout");
+    const words = new Uint32Array(module.HEAPU8.buffer, pointer, 25);
+    const attributes: GPUVertexAttribute[] = [];
+    const formats: readonly GPUVertexFormat[] = ["float32", "float32x2", "float32x3", "float32x4"];
+    for (let i = 1; i < words.length; i += 3) {
+      const format = formats[words[i + 2]! - 1];
+      if (!format) throw new Error("Invalid PICA vertex attribute");
+      attributes.push({ shaderLocation: words[i]!, offset: words[i + 1]!, format });
+    }
+    this.vertexLayout = { arrayStride: words[0]!, attributes };
     this.configurationSize = module._azahar_pica_fs_config_size();
     this.configurationSchema = BigInt.asUintN(64, module._azahar_pica_fs_config_schema());
     this.#input = module._malloc(this.configurationSize);

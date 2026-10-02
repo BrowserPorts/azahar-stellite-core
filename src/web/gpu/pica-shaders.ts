@@ -10,6 +10,7 @@ export class PicaShaders {
   #closed = false;
   readonly configurationSize: number;
   readonly configurationSchema: bigint;
+  readonly vertexLayout: GPUVertexBufferLayout;
 
   private constructor(
     readonly device: GPUDevice,
@@ -20,6 +21,7 @@ export class PicaShaders {
   ) {
     this.configurationSize = native.configurationSize;
     this.configurationSchema = native.configurationSchema;
+    this.vertexLayout = native.vertexLayout;
   }
 
   static async create(device: GPUDevice): Promise<PicaShaders> {

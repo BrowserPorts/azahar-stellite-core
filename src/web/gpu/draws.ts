@@ -1,0 +1,265 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+import type { NativeDraw, NativeDrawState } from "./draw-types";
+import { PicaShaders } from "./pica-shaders";
+import { GraphicsSamplers } from "./samplers";
+import { ShadowPixels } from "./shadow-pixels";
+import { GraphicsTextures } from "./textures";
+
+const compares: readonly GPUCompareFunction[] = ["never", "always", "equal", "not-equal", "less", "less-equal", "greater", "greater-equal"];
+const stencilOps: readonly GPUStencilOperation[] = ["keep", "zero", "replace", "increment-clamp", "decrement-clamp", "invert", "increment-wrap", "decrement-wrap"];
+const factors: readonly GPUBlendFactor[] = ["zero", "one", "src", "one-minus-src", "dst", "one-minus-dst", "src-alpha", "one-minus-src-alpha", "dst-alpha", "one-minus-dst-alpha", "constant", "one-minus-constant", "constant", "one-minus-constant", "src-alpha-saturated"];
+const equations: readonly GPUBlendOperation[] = ["add", "subtract", "reverse-subtract"];
+
+interface DrawPipeline { pipeline: GPURenderPipeline; groups: readonly GPUBindGroupLayout[] }
+
+/** Executes native PICA triangle batches, retaining the upstream fragment generator. */
+export class GraphicsDraws {
+  #pipelines = new Map<string, Promise<DrawPipeline>>();
+  #luts: readonly GPUBuffer[];
+  #empty: GPUTexture;
+  #emptyShadow: GPUBuffer;
+  #utilitySampler: GPUSampler;
+  #closed = false;
+
+  private constructor(readonly device: GPUDevice, private readonly shaders: PicaShaders,
+    private readonly textures: GraphicsTextures, private readonly samplers: GraphicsSamplers,
+    private readonly shadows: ShadowPixels) {
+    this.#luts = [24 * 256 * 8 + 128 * 8, 128 * 3 * 8, 256 * 2 * 16].map(size =>
+      device.createBuffer({ label: "Azahar PICA lookup tables", size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST }));
+    this.#empty = device.createTexture({ label: "Azahar empty utility image", size: [1, 1], format: "rgba8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING });
+    this.#emptyShadow = device.createBuffer({ label: "Azahar empty shadow words", size: 4, usage: GPUBufferUsage.STORAGE });
+    this.#utilitySampler = device.createSampler({ minFilter: "nearest", magFilter: "nearest" });
+  }
+
+  static async create(device: GPUDevice, shaders: PicaShaders, textures: GraphicsTextures,
+    samplers: GraphicsSamplers): Promise<GraphicsDraws> {
+    return new GraphicsDraws(device, shaders, textures, samplers, await ShadowPixels.create(device));
+  }
+
+  lookupTable(table: number, offset: number, bytes: Uint8Array<ArrayBuffer>): undefined {
+    this.checkOpen();
+    const buffer = this.#luts[table];
+    if (!buffer || !Number.isInteger(offset) || offset < 0 || offset % 4 || bytes.byteLength % 4 ||
+      offset + bytes.byteLength > buffer.size) throw new Error("Invalid native lookup table upload");
+    this.device.queue.writeBuffer(buffer, offset, bytes);
+    return undefined;
+  }
+
+  async draw(draw: NativeDraw): Promise<undefined> {
+    this.checkOpen();
+    const state = draw.state;
+    const stride = this.shaders.vertexLayout.arrayStride;
+    if (draw.vertexUniforms.byteLength !== 32 || draw.fragmentUniforms.byteLength !== 0x530 ||
+      !draw.vertices.byteLength || draw.vertices.byteLength % (stride * 3)) throw new Error("Invalid native triangle batch");
+    if (!state.color && !state.depth) throw new Error("The native draw has no framebuffer");
+    const color = state.color ? this.textures.get(state.color).texture : undefined;
+    const depth = state.depth ? this.textures.get(state.depth).texture : undefined;
+    if (state.shadow && (!color || depth)) throw new Error("Invalid native shadow framebuffer");
+    const originalWidth = color ? Math.max(1, color.width >> state.colorLevel) : Math.max(1, depth!.width >> state.depthLevel);
+    const originalHeight = color ? Math.max(1, color.height >> state.colorLevel) : Math.max(1, depth!.height >> state.depthLevel);
+    const width = depth ? Math.max(1, depth.width >> state.depthLevel) : originalWidth;
+    const height = depth ? Math.max(1, depth.height >> state.depthLevel) : originalHeight;
+    const [x, y, w, h] = state.scissor;
+    if (![x, y, w, h].every(Number.isInteger) || x < 0 || y < 0 || w <= 0 || h <= 0 ||
+      x + w > Math.min(width, originalWidth) || y + h > Math.min(height, originalHeight) ||
+      !state.viewport.every(Number.isFinite) || state.viewport[2] <= 0 || state.viewport[3] <= 0) {
+      throw new Error("Invalid native draw rectangle");
+    }
+    const compiled = await this.pipeline(draw, color?.format, depth?.format);
+    this.checkOpen();
+    const encoder = this.device.createCommandEncoder({ label: "Azahar PICA draw" });
+    const temporary: (GPUTexture | GPUBuffer)[] = [];
+    const buffer = (bytes: Uint8Array<ArrayBuffer>, usage: GPUBufferUsageFlags): GPUBuffer => {
+      const resource = this.device.createBuffer({ size: bytes.byteLength, usage, mappedAtCreation: true });
+      new Uint8Array(resource.getMappedRange()).set(bytes); resource.unmap(); temporary.push(resource);
+      return resource;
+    };
+    try {
+      let attachment = color;
+      let colorLevel = state.colorLevel;
+      // Native caches may have equal subrects in images with different overall extents.
+      if (color && (originalWidth !== width || originalHeight !== height)) {
+        attachment = this.device.createTexture({ label: "Azahar aligned color attachment", size: [width, height],
+          format: color.format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC |
+            GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING });
+        temporary.push(attachment); colorLevel = 0;
+        encoder.copyTextureToTexture({ texture: color, mipLevel: state.colorLevel }, { texture: attachment },
+          [Math.min(width, originalWidth), Math.min(height, originalHeight)]);
+      }
+      const vertex = buffer(draw.vertices, GPUBufferUsage.VERTEX);
+      const vs = buffer(draw.vertexUniforms, GPUBufferUsage.UNIFORM);
+      const fs = buffer(draw.fragmentUniforms, GPUBufferUsage.UNIFORM);
+      const [vx, vy, vw, vh] = state.viewport;
+      const transform = buffer(new Uint8Array(new Float32Array([vw / width, -vh / height,
+        (2 * vx + vw) / width - 1, 1 - (2 * vy + vh) / height]).buffer), GPUBufferUsage.UNIFORM);
+      const dimensions = buffer(new Uint8Array(new Uint32Array([width, height, 0, 0]).buffer), GPUBufferUsage.UNIFORM);
+      let shadow = this.#emptyShadow;
+      if (state.shadow) { shadow = this.shadows.buffer(encoder, attachment!, colorLevel); temporary.push(shadow); }
+      const uniformGroup = this.device.createBindGroup({ layout: compiled.groups[0]!, entries: [
+        { binding: 1, resource: { buffer: vs } }, { binding: 2, resource: { buffer: fs } },
+        ...this.#luts.map((lut, i) => ({ binding: i + 3, resource: { buffer: lut } })),
+        { binding: 6, resource: { buffer: transform } },
+      ] });
+      const textureEntries: GPUBindGroupEntry[] = [];
+      for (let i = 0; i < 3; i++) {
+        let image = this.textures.get(state.textures[i]!).texture;
+        if (i === 0 && (state.texture0Type === 2 || state.texture0Type === 4)) {
+          image = this.shadows.image(encoder, image); temporary.push(image);
+        } else if (image === color || image === depth) {
+          image = this.snapshot(encoder, image); temporary.push(image);
+        }
+        const dimension: GPUTextureViewDimension = i === 0 && state.texture0Type === 1 ? "cube" :
+          i === 0 && state.texture0Type === 4 ? "2d-array" : "2d";
+        textureEntries.push({ binding: i, resource: image.createView({ dimension }) },
+          { binding: i + 3, resource: this.samplers.get(state.samplers[i]!) });
+      }
+      const textureGroup = this.device.createBindGroup({ layout: compiled.groups[1]!, entries: textureEntries });
+      const destRead = !!attachment && !state.shadow && this.readsDestination(state);
+      let dest = this.#empty;
+      if (destRead) {
+        dest = this.device.createTexture({ label: "Azahar destination snapshot", size: [width, height],
+          format: attachment!.format, usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING });
+        temporary.push(dest);
+      }
+      const utilityGroup = this.device.createBindGroup({ layout: compiled.groups[2]!, entries: [
+        { binding: 0, resource: { buffer: shadow } },
+        { binding: 1, resource: (state.normal ? this.textures.get(state.normal).texture : this.#empty).createView() },
+        { binding: 2, resource: state.normal ? this.samplers.get(state.samplers[0]) : this.#utilitySampler },
+        { binding: 3, resource: dest.createView() },
+        { binding: 4, resource: { buffer: dimensions } },
+      ] });
+      const count = draw.vertices.byteLength / stride;
+      // Logic ops and min/max blend factors read the result of preceding primitives.
+      const step = destRead ? 3 : count;
+      for (let first = 0; first < count; first += step) {
+        if (destRead) encoder.copyTextureToTexture({ texture: attachment!, mipLevel: colorLevel },
+          { texture: dest }, [width, height]);
+        const pass = encoder.beginRenderPass({ colorAttachments: attachment ? [{ view: this.view(attachment, colorLevel),
+          loadOp: "load", storeOp: "store" }] : [],
+          ...(depth ? { depthStencilAttachment: { view: this.view(depth, state.depthLevel),
+            depthLoadOp: "load", depthStoreOp: "store",
+            ...(depth.format === "depth24plus-stencil8" ? { stencilLoadOp: "load", stencilStoreOp: "store" } as const : {}),
+          } as GPURenderPassDepthStencilAttachment } : {}),
+        });
+        pass.setPipeline(compiled.pipeline); pass.setVertexBuffer(0, vertex);
+        pass.setBindGroup(0, uniformGroup); pass.setBindGroup(1, textureGroup); pass.setBindGroup(2, utilityGroup);
+        pass.setScissorRect(x, y, w, h); pass.setStencilReference(state.stencilReference);
+        const blendColor = state.blendColor >>> 0;
+        pass.setBlendConstant({ r: (blendColor & 255) / 255, g: ((blendColor >>> 8) & 255) / 255,
+          b: ((blendColor >>> 16) & 255) / 255, a: (blendColor >>> 24) / 255 });
+        pass.draw(step, 1, first); pass.end();
+      }
+      if (state.shadow) this.shadows.restore(encoder, attachment!, colorLevel, shadow, dimensions);
+      if (attachment && color && attachment !== color) encoder.copyTextureToTexture({ texture: attachment },
+        { texture: color, mipLevel: state.colorLevel }, [Math.min(width, originalWidth), Math.min(height, originalHeight)]);
+      this.device.queue.submit([encoder.finish()]);
+    } finally { for (const resource of temporary) resource.destroy(); }
+    return undefined;
+  }
+
+  private readsDestination(state: NativeDrawState): boolean {
+    return state.blend ? this.rgbEmulated(state) || state.alphaEquation >= 3 :
+      ![0, 3, 4, 5, 6].includes(state.logicOp);
+  }
+
+  private rgbEmulated(state: NativeDrawState): boolean {
+    const factors = [state.rgbSource, state.rgbDest];
+    return state.rgbEquation >= 3 || factors.some(factor => factor === 12 || factor === 13) ||
+      (state.alphaEquation >= 3 && factors.some(factor => factor === 6 || factor === 7 || factor === 14));
+  }
+
+  private pipeline(draw: NativeDraw, color?: GPUTextureFormat, depth?: GPUTextureFormat): Promise<DrawPipeline> {
+    const s = draw.state;
+    const key = String.fromCharCode(...draw.configuration) + JSON.stringify([color, depth, s.cull, s.flipped,
+      s.colorMask, s.depthWrite, s.depthCompare, s.stencil, s.stencilCompare, s.stencilFail, s.stencilDepthFail,
+      s.stencilPass, s.stencilReadMask, s.stencilWriteMask, s.blend, s.rgbEquation, s.alphaEquation,
+      s.rgbSource, s.rgbDest, s.alphaSource, s.alphaDest, s.logicOp, s.texture0Type, !!s.normal, s.shadow]);
+    const cached = this.#pipelines.get(key);
+    if (cached) { this.#pipelines.delete(key); this.#pipelines.set(key, cached); return cached; }
+    const pending = this.createPipeline(draw, color, depth).catch(error => {
+      if (this.#pipelines.get(key) === pending) this.#pipelines.delete(key);
+      throw error;
+    });
+    if (this.#pipelines.size >= 512) this.#pipelines.delete(this.#pipelines.keys().next().value!);
+    this.#pipelines.set(key, pending); return pending;
+  }
+
+  private async createPipeline(draw: NativeDraw, color?: GPUTextureFormat, depth?: GPUTextureFormat): Promise<DrawPipeline> {
+    const s = draw.state;
+    const fragment = await this.shaders.fragment(draw.configuration, Number(!!s.normal));
+    const groups = [
+      this.device.createBindGroupLayout({ entries: [
+        { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform", minBindingSize: 32 } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform", minBindingSize: 0x530 } },
+        ...[3, 4, 5].map(binding => ({ binding, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } as const })),
+        { binding: 6, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform", minBindingSize: 16 } },
+      ] }),
+      this.device.createBindGroupLayout({ entries: [
+        ...[0, 1, 2].map(binding => ({ binding, visibility: GPUShaderStage.FRAGMENT, texture: {
+          sampleType: binding === 0 && (s.texture0Type === 2 || s.texture0Type === 4) ? "uint" : "float",
+          viewDimension: binding === 0 && s.texture0Type === 1 ? "cube" : binding === 0 && s.texture0Type === 4 ? "2d-array" : "2d",
+        } as GPUTextureBindingLayout })),
+        ...[3, 4, 5].map(binding => ({ binding, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } as const })),
+      ] }),
+      this.device.createBindGroupLayout({ entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "storage" } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform", minBindingSize: 16 } },
+      ] }),
+    ];
+    const blend = (eq: number, src: number, dst: number, emulated: boolean): GPUBlendComponent => {
+      // The native fragment generator implements min/max with PICA's blend factors.
+      if (emulated) return { operation: "add", srcFactor: "one", dstFactor: "zero" };
+      if (!equations[eq] || !factors[src] || !factors[dst]) throw new Error("Invalid native blend state");
+      return { operation: equations[eq]!, srcFactor: factors[src]!, dstFactor: factors[dst]! };
+    };
+    const stencil: GPUStencilFaceState = s.stencil ? { compare: compares[s.stencilCompare]!,
+      failOp: stencilOps[s.stencilFail]!, depthFailOp: stencilOps[s.stencilDepthFail]!, passOp: stencilOps[s.stencilPass]! } : { compare: "always" };
+    const pipeline = await this.device.createRenderPipelineAsync({ label: "Azahar PICA pipeline",
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: groups }),
+      vertex: { module: this.shaders.vertex, entryPoint: "main", buffers: [this.shaders.vertexLayout] },
+      fragment: { module: fragment, entryPoint: "main", targets: color ? [{ format: color,
+        writeMask: s.shadow || (!s.blend && s.logicOp === 6) ? 0 : s.colorMask,
+        ...(s.blend && !s.shadow ? { blend: { color: blend(s.rgbEquation, s.rgbSource, s.rgbDest, this.rgbEmulated(s)),
+          alpha: blend(s.alphaEquation, s.alphaSource, s.alphaDest, s.alphaEquation >= 3) } } : {}),
+      }] : [] },
+      primitive: { topology: "triangle-list", frontFace: s.cull === 2 ? "cw" : "ccw",
+        cullMode: s.cull === 0 || s.cull === 3 ? "none" : s.flipped ? "front" : "back" },
+      ...(depth ? { depthStencil: { format: depth, depthWriteEnabled: s.depthWrite, depthCompare: compares[s.depthCompare]!,
+        ...(depth === "depth24plus-stencil8" ? { stencilFront: stencil, stencilBack: stencil,
+          stencilReadMask: s.stencilReadMask, stencilWriteMask: s.stencil ? s.stencilWriteMask : 0 } : {}),
+      } } : {}),
+    });
+    return { pipeline, groups };
+  }
+
+  private snapshot(encoder: GPUCommandEncoder, source: GPUTexture): GPUTexture {
+    const copy = this.device.createTexture({ size: [source.width, source.height, source.depthOrArrayLayers],
+      format: source.format, mipLevelCount: source.mipLevelCount, usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING });
+    for (let level = 0; level < source.mipLevelCount; level++) encoder.copyTextureToTexture(
+      { texture: source, mipLevel: level }, { texture: copy, mipLevel: level },
+      [Math.max(1, source.width >> level), Math.max(1, source.height >> level), source.depthOrArrayLayers]);
+    return copy;
+  }
+
+  private view(texture: GPUTexture, level: number): GPUTextureView {
+    return texture.createView({ dimension: "2d", baseMipLevel: level, mipLevelCount: 1, baseArrayLayer: 0, arrayLayerCount: 1 });
+  }
+
+  private checkOpen(): undefined {
+    if (this.#closed) throw new Error("The native draw backend is closed");
+    return undefined;
+  }
+
+  close(): undefined {
+    if (this.#closed) return undefined;
+    this.#closed = true; this.#pipelines.clear();
+    for (const buffer of this.#luts) buffer.destroy();
+    this.#empty.destroy(); this.#emptyShadow.destroy();
+    return undefined;
+  }
+}
