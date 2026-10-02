@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
+    "build:runtime": "cmake --build ../../build/web-core --target azahar_browser_runtime",
     "configure:fixtures": "emcmake cmake -S tests/upstream -B ../../build/web-fixtures -G Ninja -DCMAKE_BUILD_TYPE=Release",
     "build:fixtures": "cmake --build ../../build/web-fixtures --target upstream_fixtures",
     "test:fixtures": "ctest --test-dir ../../build/web-fixtures --output-on-failure"
