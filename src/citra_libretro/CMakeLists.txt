@@ -98,6 +98,7 @@ endif()
 if(EMSCRIPTEN)
     include("${PROJECT_SOURCE_DIR}/src/web/libretro/archive.cmake")
     azahar_pack_libretro(citra_libretro)
+    add_subdirectory("${PROJECT_SOURCE_DIR}/src/web/runtime" "${CMAKE_CURRENT_BINARY_DIR}/web-runtime")
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR
     CMAKE_SYSTEM_NAME STREQUAL "iOS" OR
     CMAKE_SYSTEM_NAME STREQUAL "tvOS")
