@@ -2,6 +2,18 @@
 
 add_subdirectory(../gpu/compiler "${CMAKE_CURRENT_BINARY_DIR}/shader-compiler")
 
+add_executable(azahar_pica_shader_generator ../gpu/native-shaders.cpp)
+target_link_libraries(azahar_pica_shader_generator PRIVATE video_core)
+set_target_properties(azahar_pica_shader_generator PROPERTIES
+    OUTPUT_NAME "azahar-pica-shaders" SUFFIX ".mjs"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
+target_link_options(azahar_pica_shader_generator PRIVATE
+    --no-entry -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createAzaharPicaShaders
+    -sENVIRONMENT=web,worker,node -sDYNAMIC_EXECUTION=0
+    -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=4194304 -sEXIT_RUNTIME=0
+    "-sEXPORTED_RUNTIME_METHODS=['HEAPU8','UTF8ToString']"
+    "-sEXPORTED_FUNCTIONS=['_malloc','_free']")
+
 add_executable(azahar_browser entry.cpp)
 target_link_libraries(azahar_browser PRIVATE citra_libretro libretro Boost::boost fmt::fmt)
 target_include_directories(azahar_browser PRIVATE "${PROJECT_BINARY_DIR}/src")
@@ -35,4 +47,4 @@ add_custom_command(OUTPUT "${CLIENT_OUTPUT}"
     DEPENDS client.ts messages.ts session.ts
     VERBATIM)
 add_custom_target(azahar_browser_runtime DEPENDS azahar_browser azahar_shader_compiler azahar_glslang
-    "${WORKER_OUTPUT}" "${CLIENT_OUTPUT}")
+    azahar_pica_shader_generator "${WORKER_OUTPUT}" "${CLIENT_OUTPUT}")
