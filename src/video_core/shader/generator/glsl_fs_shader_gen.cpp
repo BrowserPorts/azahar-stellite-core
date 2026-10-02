@@ -102,17 +102,20 @@ layout (binding = 2, std140) uniform fs_data {
 )";
 
 FragmentModule::FragmentModule(const FSConfig& config_, const UserConfig& user_,
-                               const Profile& profile_)
-    : config{config_}, user{user_}, profile{profile_} {
+                               const Profile& profile_, BindingLayout bindings_)
+    : config{config_}, user{user_}, profile{profile_}, bindings{bindings_} {
     config.ApplyProfile(profile_);
     out.reserve(RESERVE_SIZE);
     DefineExtensions();
     DefineInterface();
-    if (profile.is_vulkan) {
+    if (bindings == BindingLayout::WebGPU) {
+        DefineBindingsWebGPU();
+    } else if (profile.is_vulkan) {
         DefineBindingsVK();
     } else {
         DefineBindingsGL();
     }
+    DefineLutAccessors();
     DefineHelpers();
     DefineShadowHelpers();
     DefineLightingHelpers();
@@ -823,8 +826,7 @@ void FragmentModule::WriteFog() {
     // Generate clamped fog factor from LUT for given fog index
     out += "float fog_i = clamp(floor(fog_index), 0.0, 127.0);\n"
            "float fog_f = fog_index - fog_i;\n"
-           "vec2 fog_lut_entry = texelFetch(texture_buffer_lut_lf, int(fog_i) + "
-           "fog_lut_offset).rg;\n"
+           "vec2 fog_lut_entry = FetchLightingLut(int(fog_i) + fog_lut_offset);\n"
            "float fog_factor = fog_lut_entry.r + fog_lut_entry.g * fog_f;\n"
            "fog_factor = clamp(fog_factor, 0.0, 1.0);\n";
 
@@ -848,7 +850,18 @@ uint s = uint(combiner_output.g * float(0xFF));
 ivec2 image_coord = ivec2(gl_FragCoord.xy);
 )";
 
-    if (use_fragment_shader_interlock) {
+    if (bindings == BindingLayout::WebGPU) {
+        out += R"(
+uint shadow_index = uint(image_coord.x) + uint(image_coord.y) * shadow_size.x;
+uint old = atomicAdd(shadow_pixels[shadow_index], 0u);
+uint new1;
+uint old2;
+do {
+    old2 = old;
+    new1 = UpdateShadow(old, d, s);
+} while ((old = atomicCompSwap(shadow_pixels[shadow_index], old, new1)) != old2);
+)";
+    } else if (use_fragment_shader_interlock) {
         out += R"(
 beginInvocationInterlock();
 uint old_shadow = imageLoad(shadow_buffer, image_coord).x;
@@ -870,6 +883,10 @@ do {
 }
 
 void FragmentModule::WriteLogicOp() {
+    if (bindings == BindingLayout::WebGPU) {
+        WriteLogicOpWebGPU();
+        return;
+    }
     const auto logic_op = config.framebuffer.logic_op.Value();
     switch (logic_op) {
     case FramebufferRegs::LogicOp::Clear:
@@ -892,6 +909,59 @@ void FragmentModule::WriteLogicOp() {
         LOG_CRITICAL(HW_GPU, "Unhandled logic_op {:x}", logic_op);
         UNIMPLEMENTED();
     }
+}
+
+void FragmentModule::WriteLogicOpWebGPU() {
+    using LogicOp = FramebufferRegs::LogicOp;
+    const auto logic_op = config.framebuffer.logic_op.Value();
+    switch (logic_op) {
+    case LogicOp::Clear:
+        out += "color = vec4(0.0);\n";
+        return;
+    case LogicOp::Set:
+        out += "color = vec4(1.0);\n";
+        return;
+    case LogicOp::Copy:
+    case LogicOp::NoOp: // The rasterizer disables color writes for NoOp.
+        return;
+    case LogicOp::CopyInverted:
+        out += "color = vec4(1.0) - color;\n";
+        return;
+    default:
+        break;
+    }
+    out += "uvec4 source_bits = uvec4(round(clamp(color, 0.0, 1.0) * 255.0));\n"
+           "uvec4 dest_bits = uvec4(round(texelFetch(tex_color, ivec2(gl_FragCoord.xy), 0) * 255.0));\n";
+    const std::string_view operation = [&]() -> std::string_view {
+        switch (logic_op) {
+        case LogicOp::And:
+            return "source_bits & dest_bits";
+        case LogicOp::AndReverse:
+            return "source_bits & ~dest_bits";
+        case LogicOp::Invert:
+            return "~dest_bits";
+        case LogicOp::Nand:
+            return "~(source_bits & dest_bits)";
+        case LogicOp::Or:
+            return "source_bits | dest_bits";
+        case LogicOp::Nor:
+            return "~(source_bits | dest_bits)";
+        case LogicOp::Xor:
+            return "source_bits ^ dest_bits";
+        case LogicOp::Equiv:
+            return "~(source_bits ^ dest_bits)";
+        case LogicOp::AndInverted:
+            return "~source_bits & dest_bits";
+        case LogicOp::OrReverse:
+            return "source_bits | ~dest_bits";
+        case LogicOp::OrInverted:
+            return "~source_bits | dest_bits";
+        default:
+            UNREACHABLE();
+            return "source_bits";
+        }
+    }();
+    out += fmt::format("color = vec4(({}) & uvec4(255u)) / 255.0;\n", operation);
 }
 
 void FragmentModule::WriteBlending() {
@@ -1053,7 +1123,7 @@ float ProcTexLookupLUT(int offset, float coord) {
     float index_i = clamp(floor(coord), 0.0, 127.0);
     float index_f = coord - index_i; // fract() cannot be used here because 128.0 needs to be
                                      // extracted as index_i = 127.0 and index_f = 1.0
-    vec2 entry = texelFetch(texture_buffer_lut_rg, int(index_i) + offset).rg;
+    vec2 entry = FetchProcTexLut(int(index_i) + offset);
     return clamp(entry.r + entry.g * index_f, 0.0, 1.0);
 }
     )";
@@ -1114,16 +1184,16 @@ float ProcTexNoiseCoef(vec2 x) {
     case ProcTexFilter::LinearMipmapNearest:
         out += "int lut_index_i = int(lut_coord) + lut_offset;\n";
         out += "float lut_index_f = fract(lut_coord);\n";
-        out += "return texelFetch(texture_buffer_lut_rgba, lut_index_i + "
+        out += "return FetchProcTexColor(lut_index_i + "
                "proctex_lut_offset) + "
                "lut_index_f * "
-               "texelFetch(texture_buffer_lut_rgba, lut_index_i + proctex_diff_lut_offset);\n";
+               "FetchProcTexColor(lut_index_i + proctex_diff_lut_offset);\n";
         break;
     case ProcTexFilter::Nearest:
     case ProcTexFilter::NearestMipmapLinear:
     case ProcTexFilter::NearestMipmapNearest:
         out += "lut_coord += float(lut_offset);\n";
-        out += "return texelFetch(texture_buffer_lut_rgba, int(round(lut_coord)) + "
+        out += "return FetchProcTexColor(int(round(lut_coord)) + "
                "proctex_lut_offset);\n";
         break;
     }
@@ -1212,7 +1282,7 @@ void FragmentModule::DefineExtensions() {
     if (profile.has_separable_shaders) {
         out += "#extension GL_ARB_separate_shader_objects : enable\n";
     }
-    if (config.framebuffer.shadow_rendering) {
+    if (config.framebuffer.shadow_rendering && bindings != BindingLayout::WebGPU) {
         use_fragment_shader_interlock = true;
         if (profile.has_fragment_shader_interlock) {
             out += "#extension GL_ARB_fragment_shader_interlock : enable\n";
@@ -1231,7 +1301,7 @@ void FragmentModule::DefineExtensions() {
             use_fragment_shader_interlock = false;
         }
     }
-    if (config.lighting.enable) {
+    if (config.lighting.enable && bindings != BindingLayout::WebGPU) {
         use_fragment_shader_barycentric = true;
         if (profile.has_fragment_shader_barycentric) {
             out += "#extension GL_EXT_fragment_shader_barycentric : enable\n";
@@ -1257,6 +1327,14 @@ void FragmentModule::DefineExtensions() {
             out += "#define destFactor texelFetch(tex_color, ivec2(gl_FragCoord.xy), 0)\n";
             use_blend_fallback = true;
         }
+    }
+
+    if (bindings == BindingLayout::WebGPU) {
+        using LogicOp = FramebufferRegs::LogicOp;
+        const auto operation = config.framebuffer.logic_op.Value();
+        use_blend_fallback |= operation != LogicOp::Clear && operation != LogicOp::Set &&
+                              operation != LogicOp::Copy && operation != LogicOp::CopyInverted &&
+                              operation != LogicOp::NoOp;
     }
 
     if (!profile.is_vulkan) {
@@ -1362,6 +1440,68 @@ void FragmentModule::DefineBindingsGL() {
     }
 }
 
+void FragmentModule::DefineBindingsWebGPU() {
+    out += FSUniformBlockDef;
+    out += R"(
+layout(set = 0, binding = 3, std430) readonly buffer lighting_lut_data { vec2 lighting_lut[]; };
+layout(set = 0, binding = 4, std430) readonly buffer proctex_lut_data { vec2 proctex_lut[]; };
+layout(set = 0, binding = 5, std430) readonly buffer proctex_color_data { vec4 proctex_color[]; };
+)";
+    const auto texture_type = config.texture.texture0_type.Value();
+    const std::string_view tex0_type = [&]() -> std::string_view {
+        switch (texture_type) {
+        case TextureType::Shadow2D:
+        case TextureType::ShadowCube:
+            return "u";
+        default:
+            return "";
+        }
+    }();
+    for (u32 i = 0; i < 3; ++i) {
+        const std::string_view dimension =
+            i == 0 && texture_type == TextureType::TextureCube ? "Cube" :
+            i == 0 && texture_type == TextureType::ShadowCube ? "2DArray" : "2D";
+        const auto prefix = i == 0 ? tex0_type : "";
+        out += fmt::format("layout(set = 1, binding = {0}) uniform {1}texture{2} image{0};\n"
+                           "layout(set = 1, binding = {3}) uniform sampler sampler{0};\n"
+                           "#define tex{0} {1}sampler{2}(image{0}, sampler{0})\n",
+                           i, prefix, dimension, i + 3);
+    }
+    if (config.framebuffer.shadow_rendering) {
+        out += R"(
+layout(set = 2, binding = 0, std430) buffer shadow_data { uint shadow_pixels[]; };
+layout(set = 2, binding = 4, std140) uniform shadow_dimensions { uvec2 shadow_size; };
+)";
+    }
+    if (user.use_custom_normal || use_blend_fallback) {
+        out += "layout(set = 2, binding = 2) uniform sampler utility_sampler;\n";
+    }
+    if (user.use_custom_normal) {
+        out += "layout(set = 2, binding = 1) uniform texture2D normal_image;\n"
+               "#define tex_normal sampler2D(normal_image, utility_sampler)\n";
+    }
+    if (use_blend_fallback) {
+        out += "layout(set = 2, binding = 3) uniform texture2D color_image;\n"
+               "#define tex_color sampler2D(color_image, utility_sampler)\n";
+    }
+}
+
+void FragmentModule::DefineLutAccessors() {
+    if (bindings == BindingLayout::WebGPU) {
+        out += R"(
+vec2 FetchLightingLut(int index) { return lighting_lut[index]; }
+vec2 FetchProcTexLut(int index) { return proctex_lut[index]; }
+vec4 FetchProcTexColor(int index) { return proctex_color[index]; }
+)";
+    } else {
+        out += R"(
+vec2 FetchLightingLut(int index) { return texelFetch(texture_buffer_lut_lf, index).rg; }
+vec2 FetchProcTexLut(int index) { return texelFetch(texture_buffer_lut_rg, index).rg; }
+vec4 FetchProcTexColor(int index) { return texelFetch(texture_buffer_lut_rgba, index); }
+)";
+    }
+}
+
 void FragmentModule::DefineHelpers() {
     out += R"(
 vec3 quaternion_rotate(vec4 q, vec3 v) {
@@ -1402,7 +1542,7 @@ void FragmentModule::DefineLightingHelpers() {
 
     out += R"(
 float LookupLightingLUT(int lut_index, int index, float delta) {
-    vec2 entry = texelFetch(texture_buffer_lut_lf, lighting_lut_offset[lut_index >> 2][lut_index & 3] + index).rg;
+    vec2 entry = FetchLightingLut(lighting_lut_offset[lut_index >> 2][lut_index & 3] + index);
     return entry.r + entry.g * delta;
 }
 
@@ -1466,7 +1606,7 @@ float mix2(vec4 s, vec2 a) {
 )";
 
         if (config.texture.texture0_type == TexturingRegs::TextureConfig::Shadow2D) {
-            if (profile.is_vulkan) {
+            if (profile.is_vulkan || bindings == BindingLayout::WebGPU) {
                 out += R"(
 float SampleShadow2D(ivec2 uv, uint z) {
     if (any(bvec4(lessThan(uv, ivec2(0)), greaterThanEqual(uv, textureSize(tex0, 0)))))
@@ -1523,8 +1663,22 @@ vec4 shadowTexture(vec2 uv, float w) {
 )";
             }
         } else if (config.texture.texture0_type == TexturingRegs::TextureConfig::ShadowCube) {
-            if (profile.is_vulkan) {
-                out += R"(
+            if (profile.is_vulkan || bindings == BindingLayout::WebGPU) {
+                if (bindings == BindingLayout::WebGPU) {
+                    out += R"(
+uvec4 SampleShadowCube(int face, ivec2 i00, ivec2 i10, ivec2 i01, ivec2 i11) {
+    return uvec4(
+        texelFetch(tex0, ivec3(i00, face), 0).r,
+        texelFetch(tex0, ivec3(i10, face), 0).r,
+        texelFetch(tex0, ivec3(i01, face), 0).r,
+        texelFetch(tex0, ivec3(i11, face), 0).r);
+}
+
+vec4 shadowTextureCube(vec2 uv, float w) {
+    ivec2 size = textureSize(tex0, 0).xy;
+)";
+                } else {
+                    out += R"(
 uvec4 SampleShadowCube(int face, ivec2 i00, ivec2 i10, ivec2 i01, ivec2 i11) {
     return uvec4(
         texelFetch(tex0[face], i00, 0).r,
@@ -1535,6 +1689,9 @@ uvec4 SampleShadowCube(int face, ivec2 i00, ivec2 i10, ivec2 i01, ivec2 i11) {
 
 vec4 shadowTextureCube(vec2 uv, float w) {
     ivec2 size = textureSize(tex0[0], 0);
+)";
+                }
+                out += R"(
     vec3 c = vec3(uv, w);
     vec3 a = abs(c);
     if (a.x > a.y && a.x > a.z) {
@@ -1762,8 +1919,8 @@ void FragmentModule::DefineTexUnitSampler(u32 texture_unit) {
 }
 
 std::string GenerateFragmentShader(const FSConfig& config, const UserConfig& user,
-                                   const Profile& profile) {
-    FragmentModule module{config, user, profile};
+                                   const Profile& profile, BindingLayout bindings) {
+    FragmentModule module{config, user, profile, bindings};
     return module.Generate();
 }
 

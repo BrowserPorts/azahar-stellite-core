@@ -8,9 +8,15 @@
 
 namespace Pica::Shader::Generator::GLSL {
 
+enum class BindingLayout {
+    Native,
+    WebGPU,
+};
+
 class FragmentModule {
 public:
-    explicit FragmentModule(const FSConfig& config, const UserConfig& user, const Profile& profile);
+    explicit FragmentModule(const FSConfig& config, const UserConfig& user, const Profile& profile,
+                            BindingLayout bindings = BindingLayout::Native);
     ~FragmentModule();
 
     /// Emits GLSL source corresponding to the provided pica fragment configuration
@@ -37,6 +43,7 @@ private:
 
     /// Writes the code to emulate logic ops in the fragment shader
     void WriteLogicOp();
+    void WriteLogicOpWebGPU();
 
     /// Writes the code to emulate PICA min/max blending factors
     void WriteBlending();
@@ -76,6 +83,8 @@ private:
     void DefineInterface();
     void DefineBindingsVK();
     void DefineBindingsGL();
+    void DefineBindingsWebGPU();
+    void DefineLutAccessors();
     void DefineHelpers();
     void DefineLightingHelpers();
     void DefineShadowHelpers();
@@ -86,6 +95,7 @@ private:
     FSConfig config;
     const UserConfig& user;
     const Profile& profile;
+    const BindingLayout bindings;
     std::string out;
     bool use_blend_fallback{};
     bool use_fragment_shader_interlock{};
@@ -99,6 +109,7 @@ private:
  * @returns String of the shader source code
  */
 std::string GenerateFragmentShader(const FSConfig& config, const UserConfig& user,
-                                   const Profile& profile);
+                                   const Profile& profile,
+                                   BindingLayout bindings = BindingLayout::Native);
 
 } // namespace Pica::Shader::Generator::GLSL
