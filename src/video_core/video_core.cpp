@@ -15,6 +15,9 @@
 #include "video_core/renderer_vulkan/renderer_vulkan.h"
 #endif
 #include "video_core/video_core.h"
+#ifdef __EMSCRIPTEN__
+#include "web/gpu/renderer.h"
+#endif
 
 #ifdef ENABLE_SDL2
 #include <SDL.h>
@@ -27,6 +30,10 @@ std::unique_ptr<RendererBase> CreateRenderer(Frontend::EmuWindow& emu_window,
                                              Pica::PicaCore& pica, Core::System& system) {
     const auto graphics_api = Settings::GetWorkingGraphicsAPI();
     switch (graphics_api) {
+#ifdef __EMSCRIPTEN__
+    case Settings::GraphicsAPI::WebGPU:
+        return std::make_unique<WebGPU::Renderer>(system, pica, emu_window);
+#endif
 #ifdef ENABLE_SOFTWARE_RENDERER
     case Settings::GraphicsAPI::Software:
         return std::make_unique<SwRenderer::RendererSoftware>(system, pica, emu_window);
@@ -49,7 +56,9 @@ std::unique_ptr<RendererBase> CreateRenderer(Frontend::EmuWindow& emu_window,
         LOG_CRITICAL(Render,
                      "Unknown or unsupported graphics API {}, falling back to available default",
                      graphics_api);
-#ifdef ENABLE_OPENGL
+#ifdef __EMSCRIPTEN__
+        return std::make_unique<WebGPU::Renderer>(system, pica, emu_window);
+#elif defined(ENABLE_OPENGL)
         return std::make_unique<OpenGL::RendererOpenGL>(system, pica, emu_window, secondary_window);
 #elif ENABLE_VULKAN
         return std::make_unique<Vulkan::RendererVulkan>(system, pica, emu_window, secondary_window);

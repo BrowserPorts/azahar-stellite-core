@@ -71,6 +71,11 @@ void EmuWindow_LibRetro::SwapBuffers() {
     submittedFrame = true;
 
     switch (Settings::values.graphics_api.GetValue()) {
+#ifdef __EMSCRIPTEN__
+    case Settings::GraphicsAPI::WebGPU:
+        Core::System::GetInstance().GPU().Renderer().TryPresent(0);
+        break;
+#endif
     case Settings::GraphicsAPI::OpenGL: {
 #ifdef ENABLE_OPENGL
         auto current_state = OpenGL::OpenGLState::GetCurState();

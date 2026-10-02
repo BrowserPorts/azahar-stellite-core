@@ -304,13 +304,18 @@ static constexpr retro_core_option_v2_definition option_definitions[] = {
         config::category::graphics,
         {
             { "Auto", "Auto" },
+#ifdef __EMSCRIPTEN__
+            { "WebGPU", "WebGPU" },
+#endif
 #ifdef ENABLE_VULKAN
             { "Vulkan", "Vulkan" },
 #endif
 #ifdef ENABLE_OPENGL
             { "OpenGL", "OpenGL" },
 #endif
+#ifndef __EMSCRIPTEN__
             { "Software", "Software" },
+#endif
             { nullptr, nullptr }
         },
         "auto"
@@ -961,6 +966,9 @@ static Settings::TextureSampling GetTextureSampling(const std::string& name) {
 }
 
 static Settings::GraphicsAPI GetGraphicsAPI(const std::string& name) {
+#ifdef __EMSCRIPTEN__
+    return Settings::GraphicsAPI::WebGPU;
+#else
     if (name == "Software")
         return Settings::GraphicsAPI::Software;
 #ifdef ENABLE_VULKAN
@@ -973,6 +981,7 @@ static Settings::GraphicsAPI GetGraphicsAPI(const std::string& name) {
 #endif
     // Auto selection
     return LibRetro::GetPreferredRenderer();
+#endif
 }
 
 static void ParseGraphicsOptions(void) {

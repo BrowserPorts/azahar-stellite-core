@@ -22,6 +22,7 @@ public:
     bool AccelerateFill(const Pica::MemoryFillConfig& config) override;
     void TickFrame();
     RasterizerCache& Cache() { return cache; }
+    TextureRuntime& Runtime() { return runtime; }
 
 private:
     void SyncLookupTables();

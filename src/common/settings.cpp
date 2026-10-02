@@ -36,6 +36,10 @@ std::string_view GetGraphicsAPIName(GraphicsAPI api) {
         return "OpenGL";
     case GraphicsAPI::Vulkan:
         return "Vulkan";
+#ifdef __EMSCRIPTEN__
+    case GraphicsAPI::WebGPU:
+        return "WebGPU";
+#endif
     default:
         return "Invalid";
     }

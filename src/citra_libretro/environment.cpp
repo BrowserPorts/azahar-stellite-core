@@ -63,6 +63,9 @@ bool GetMicrophoneInterface(struct retro_microphone_interface* mic_interface) {
 }
 
 Settings::GraphicsAPI GetPreferredRenderer() {
+#ifdef __EMSCRIPTEN__
+    return Settings::GraphicsAPI::WebGPU;
+#else
     // On Android, we really want to default to Vulkan if we can, so we'll ignore the frontend's
     // recommendation if possible...
 #if defined(ANDROID) && defined(ENABLE_VULKAN)
@@ -96,6 +99,7 @@ Settings::GraphicsAPI GetPreferredRenderer() {
     return Settings::GraphicsAPI::OpenGL;
 #else
     return Settings::GraphicsAPI::Software;
+#endif
 #endif
 }
 

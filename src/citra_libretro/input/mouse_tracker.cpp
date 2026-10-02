@@ -67,6 +67,11 @@ MouseTracker::MouseTracker() {
     // Create renderer-specific cursor renderer based on current graphics API
     cursor_renderer = nullptr;
     switch (Settings::values.graphics_api.GetValue()) {
+#ifdef __EMSCRIPTEN__
+    case Settings::GraphicsAPI::WebGPU:
+        // The WebGPU compositor draws the native cursor from GetCursorInfo().
+        break;
+#endif
     case Settings::GraphicsAPI::OpenGL:
 #ifdef ENABLE_OPENGL
         cursor_renderer = std::make_unique<OpenGLCursorRenderer>();
