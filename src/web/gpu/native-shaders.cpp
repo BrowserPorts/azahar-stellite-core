@@ -40,6 +40,6 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_pica_fragment_source(
 
 extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_pica_vertex_source() {
     source = "#version 450\n" +
-             Pica::Shader::Generator::GLSL::GenerateTrivialVertexShader(false, true);
+             Pica::Shader::Generator::GLSL::GenerateTrivialVertexShader(true, true);
     return source.c_str();
 }

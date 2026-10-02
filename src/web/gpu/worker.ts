@@ -46,7 +46,8 @@ async function initialize(fence: SharedArrayBuffer): Promise<undefined> {
   if (!navigator.gpu) throw new Error("WebGPU is unavailable");
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
   if (!adapter) throw new Error("No WebGPU adapter is available");
-  device = await adapter.requestDevice({ label: "Azahar graphics" });
+  if (!adapter.features.has("clip-distances")) throw new Error("WebGPU clip distances are required for PICA clipping");
+  device = await adapter.requestDevice({ label: "Azahar graphics", requiredFeatures: ["clip-distances"] });
   device.onuncapturederror = (event): undefined => fail(event.error);
   device.lost.then((info) => { if (!closed) fail(new Error(`WebGPU device lost: ${info.message}`)); });
   shaders = await PicaShaders.create(device);

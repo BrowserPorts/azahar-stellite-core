@@ -45,7 +45,10 @@ impl Compiler {
             Some(source) => error.emit_to_string(source),
             None => format!("{error:?}"),
         };
-        let mut validator = Validator::new(ValidationFlags::all(), Capabilities::default());
+        let mut validator = Validator::new(
+            ValidationFlags::all(),
+            Capabilities::default() | Capabilities::CLIP_DISTANCES,
+        );
         validator.validate(&module).map_err(diagnostic)?;
         naga::compact::compact(&mut module, naga::compact::KeepUnused::No);
         let info = validator.validate(&module).map_err(diagnostic)?;
