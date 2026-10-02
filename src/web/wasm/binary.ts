@@ -102,8 +102,14 @@ export function regionModule(options: ModuleOptions): Uint8Array<ArrayBuffer> {
   module.section(2, importSection);
   module.section(3, new Bytes().u32(1).u32(imports.length));
   module.section(7, new Bytes().u32(1).name("run").byte(0).u32(imports.length));
-  const body = new Bytes().u32(options.locals.length);
-  for (const local of options.locals) body.u32(1).byte(Type[local]);
+  const localRuns: { type: ValueType; count: number }[] = [];
+  for (const local of options.locals) {
+    const previous = localRuns[localRuns.length - 1];
+    if (previous?.type === local) previous.count++;
+    else localRuns.push({ type: local, count: 1 });
+  }
+  const body = new Bytes().u32(localRuns.length);
+  for (const run of localRuns) body.u32(run.count).byte(Type[run.type]);
   body.append(options.body.data).byte(0x0b);
   module.section(10, new Bytes().u32(1).u32(body.data.length).append(body.data));
   return module.finish();
