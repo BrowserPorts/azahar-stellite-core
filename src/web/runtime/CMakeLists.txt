@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+add_subdirectory(../gpu/compiler "${CMAKE_CURRENT_BINARY_DIR}/shader-compiler")
+
 add_executable(azahar_browser entry.cpp)
 target_link_libraries(azahar_browser PRIVATE citra_libretro libretro Boost::boost fmt::fmt)
 target_include_directories(azahar_browser PRIVATE "${PROJECT_BINARY_DIR}/src")
@@ -32,4 +34,5 @@ add_custom_command(OUTPUT "${CLIENT_OUTPUT}"
         --target browser --outfile "${CLIENT_OUTPUT}"
     DEPENDS client.ts messages.ts session.ts
     VERBATIM)
-add_custom_target(azahar_browser_runtime DEPENDS azahar_browser "${WORKER_OUTPUT}" "${CLIENT_OUTPUT}")
+add_custom_target(azahar_browser_runtime DEPENDS azahar_browser azahar_shader_compiler
+    "${WORKER_OUTPUT}" "${CLIENT_OUTPUT}")
