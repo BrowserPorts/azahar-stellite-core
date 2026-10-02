@@ -2,6 +2,7 @@
 
 import { ArmJitHost } from "../arm/jit-host";
 import { PicaJitHost } from "../pica/jit-host";
+import type { GraphicsClient } from "../gpu/client";
 import type { AzaharModule, AzaharModuleFactory } from "./module";
 import { OpfsSaveStates } from "./save-states";
 
@@ -31,13 +32,15 @@ export class BrowserSession {
 
   private constructor(readonly core: AzaharModule) {}
 
-  static async create(factory: AzaharModuleFactory, output: SessionOutput): Promise<BrowserSession> {
+  static async create(factory: AzaharModuleFactory, output: SessionOutput,
+    graphics: GraphicsClient): Promise<BrowserSession> {
     if (!globalThis.crossOriginIsolated) {
       throw new Error("Azahar requires Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy headers");
     }
     const core = await factory({
       azaharJitHost: new ArmJitHost(),
       azaharPicaJitHost: new PicaJitHost(),
+      azaharGraphicsHost: graphics,
       print: output.log,
       printErr: output.log,
       azaharVideo: (pointer, width, height, pitch) => {

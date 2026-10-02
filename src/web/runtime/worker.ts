@@ -70,7 +70,7 @@ async function initialize(): Promise<BrowserSession> {
         const samples = view.slice();
         return post({ type: "audio", samples }, [samples.buffer]);
       },
-    });
+    }, graphics);
   } catch (error) {
     await graphics.close().catch(() => undefined);
     throw error;

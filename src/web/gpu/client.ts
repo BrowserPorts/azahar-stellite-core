@@ -2,6 +2,7 @@
 
 import type { GraphicsEvent, GraphicsRequest } from "./messages";
 import { fenceByteLength, fenceErrorOffset } from "./messages";
+import type { TextureRegion } from "./textures";
 
 type Pending = { resolve(): unknown; reject(error: Error): unknown };
 
@@ -72,10 +73,38 @@ export class GraphicsClient {
   }
 
   finish(): undefined {
+    return this.synchronize((sequence) => ({ type: "finish", sequence }));
+  }
+
+  createTexture(handle: number, width: number, height: number, levels: number, layers: number,
+    format: number): undefined {
+    return this.post({ type: "texture-create", handle, width, height, levels, layers, format });
+  }
+
+  destroyTexture(handle: number): undefined {
+    return this.post({ type: "texture-destroy", handle });
+  }
+
+  clearTexture(handle: number, region: TextureRegion, value: readonly number[], stencil = 0): undefined {
+    return this.post({ type: "texture-clear", handle, region, value, stencil });
+  }
+
+  uploadTexture(handle: number, region: TextureRegion, view: Uint8Array<SharedArrayBuffer>): undefined {
+    this.checkOpen();
+    const bytes = view.slice();
+    return this.post({ type: "texture-upload", handle, region, bytes }, [bytes.buffer]);
+  }
+
+  downloadTexture(handle: number, region: TextureRegion,
+    destination: Uint8Array<SharedArrayBuffer>): undefined {
+    return this.synchronize((sequence) => ({ type: "texture-download", handle, region, destination, sequence }));
+  }
+
+  private synchronize(build: (sequence: number) => GraphicsRequest): undefined {
     this.checkOpen();
     const previous = this.#sequence;
     this.#sequence = (previous + 1) | 0;
-    this.post({ type: "finish", sequence: this.#sequence });
+    this.post(build(this.#sequence));
     const deadline = performance.now() + 60000;
     while (Atomics.load(this.#control, 0) !== this.#sequence) {
       this.checkOpen();

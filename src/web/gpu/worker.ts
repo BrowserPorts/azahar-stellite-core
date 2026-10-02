@@ -4,6 +4,7 @@ import type { GraphicsEvent, GraphicsRequest } from "./messages";
 import { fenceByteLength, fenceErrorOffset } from "./messages";
 import { PicaShaders } from "./pica-shaders";
 import { WebGpuPresenter } from "./presenter";
+import { GraphicsTextures } from "./textures";
 
 const worker = self as unknown as DedicatedWorkerGlobalScope;
 let commands: Promise<unknown> = Promise.resolve();
@@ -12,6 +13,7 @@ let errorBytes: Uint8Array<SharedArrayBuffer> | undefined;
 let device: GPUDevice | undefined;
 let shaders: PicaShaders | undefined;
 let presenter: WebGpuPresenter | undefined;
+let textures: GraphicsTextures | undefined;
 let failure: string | undefined;
 let closed = false;
 
@@ -46,6 +48,7 @@ async function initialize(fence: SharedArrayBuffer): Promise<undefined> {
   device.onuncapturederror = (event): undefined => fail(event.error);
   device.lost.then((info) => { if (!closed) fail(new Error(`WebGPU device lost: ${info.message}`)); });
   shaders = await PicaShaders.create(device);
+  textures = await GraphicsTextures.create(device);
   if (failure) throw new Error(failure);
   post({ type: "ready", configurationSize: shaders.configurationSize,
     configurationSchema: shaders.configurationSchema });
@@ -59,8 +62,21 @@ worker.onmessage = (event: MessageEvent<GraphicsRequest>): undefined => {
       if (closed) throw new Error("The graphics worker is closed");
       if (failure) throw new Error(failure);
       if (request.type === "initialize") return await initialize(request.fence);
-      if (!device || !shaders || !control) throw new Error("WebGPU is unavailable");
+      if (!device || !shaders || !textures || !control) throw new Error("WebGPU is unavailable");
       switch (request.type) {
+        case "texture-create":
+          textures.create(request.handle, request.width, request.height, request.levels, request.layers, request.format);
+          break;
+        case "texture-destroy": textures.destroy(request.handle); break;
+        case "texture-clear": await textures.clear(request.handle, request.region, request.value, request.stencil); break;
+        case "texture-upload": await textures.upload(request.handle, request.region, request.bytes); break;
+        case "texture-download": {
+          await textures.download(request.handle, request.region, request.destination);
+          if (failure) throw new Error(failure);
+          Atomics.store(control, 0, request.sequence);
+          Atomics.notify(control, 0);
+          break;
+        }
         case "surface": {
           const next = await WebGpuPresenter.create(request.canvas, fail, device);
           presenter?.close();
@@ -85,6 +101,7 @@ worker.onmessage = (event: MessageEvent<GraphicsRequest>): undefined => {
           closed = true;
           presenter?.close();
           shaders.close();
+          textures.close();
           device.destroy();
           post({ type: "reply", id: request.id });
           worker.close();
@@ -95,6 +112,7 @@ worker.onmessage = (event: MessageEvent<GraphicsRequest>): undefined => {
       if (request.type === "initialize") {
         closed = true;
         shaders?.close();
+        textures?.close();
         device?.destroy();
         worker.close();
       }

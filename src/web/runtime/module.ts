@@ -2,6 +2,7 @@
 
 import type { ArmJitHost } from "../arm/jit-host";
 import type { PicaJitHost } from "../pica/jit-host";
+import type { GraphicsClient } from "../gpu/client";
 
 export interface CoreFileSystem {
   mkdirTree(path: string): unknown;
@@ -50,6 +51,7 @@ export interface AzaharModule {
 export interface AzaharModuleOptions {
   azaharJitHost: ArmJitHost;
   azaharPicaJitHost: PicaJitHost;
+  azaharGraphicsHost: GraphicsClient;
   print: (line: string) => unknown;
   printErr: (line: string) => unknown;
   azaharVideo: (pointer: number, width: number, height: number, pitch: number) => unknown;
