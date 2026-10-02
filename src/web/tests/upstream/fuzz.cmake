@@ -4,7 +4,7 @@ include(ExternalProject)
 set(UNICORN_ORACLE_TOOLCHAIN)
 set(UNICORN_ORACLE_DOWNLOAD
     GIT_REPOSITORY https://origin.cursor.com/mov/unicorn-stellite-wasm.git
-    GIT_TAG 2b73ee9d33278d35d4435391b9baab84f81a775a)
+    GIT_TAG 25808cc5e80e59d5cf6a0daba3487e5d5cc21da5)
 if(EMSCRIPTEN)
     set(UNICORN_ORACLE_BINARY "${CMAKE_CURRENT_BINARY_DIR}/unicorn-wasm-oracle")
     set(UNICORN_ORACLE_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/unicorn-wasm-source")
@@ -56,7 +56,8 @@ if(EMSCRIPTEN)
     target_link_libraries(dynarmic_arm_fuzz_fixtures PRIVATE azahar_arm_jit)
     target_link_options(dynarmic_arm_fuzz_fixtures PRIVATE
         -g2 -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker,node
-        -sINITIAL_MEMORY=67108864 -sMAXIMUM_MEMORY=536870912)
+        -sINITIAL_MEMORY=67108864 -sMAXIMUM_MEMORY=536870912
+        -sEXPORTED_RUNTIME_METHODS=FS,ENV)
     set_target_properties(dynarmic_arm_fuzz_fixtures PROPERTIES SUFFIX ".mjs")
     add_test(NAME dynarmic_arm_fuzz_fixtures COMMAND "${BUN_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/run-jit.ts" "$<TARGET_FILE:dynarmic_arm_fuzz_fixtures>")
