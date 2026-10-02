@@ -7,6 +7,7 @@ import { WebGpuPresenter } from "./presenter";
 import { GraphicsTextures } from "./textures";
 import { GraphicsSamplers } from "./samplers";
 import { GraphicsDraws } from "./draws";
+import { GraphicsScreens } from "./screens";
 
 const worker = self as unknown as DedicatedWorkerGlobalScope;
 let commands: Promise<unknown> = Promise.resolve();
@@ -18,6 +19,7 @@ let presenter: WebGpuPresenter | undefined;
 let textures: GraphicsTextures | undefined;
 let samplers: GraphicsSamplers | undefined;
 let draws: GraphicsDraws | undefined;
+let screens: GraphicsScreens | undefined;
 let failure: string | undefined;
 let closed = false;
 
@@ -56,6 +58,7 @@ async function initialize(fence: SharedArrayBuffer): Promise<undefined> {
   textures = await GraphicsTextures.create(device);
   samplers = new GraphicsSamplers(device);
   draws = await GraphicsDraws.create(device, shaders, textures, samplers);
+  screens = await GraphicsScreens.create(device, textures);
   if (failure) throw new Error(failure);
   post({ type: "ready", configurationSize: shaders.configurationSize,
     configurationSchema: shaders.configurationSchema });
@@ -69,7 +72,7 @@ worker.onmessage = (event: MessageEvent<GraphicsRequest>): undefined => {
       if (closed) throw new Error("The graphics worker is closed");
       if (failure) throw new Error(failure);
       if (request.type === "initialize") return await initialize(request.fence);
-      if (!device || !shaders || !textures || !samplers || !draws || !control) throw new Error("WebGPU is unavailable");
+      if (!device || !shaders || !textures || !samplers || !draws || !screens || !control) throw new Error("WebGPU is unavailable");
       switch (request.type) {
         case "draw": await draws.draw(request.draw); break;
         case "lookup-table": draws.lookupTable(request.table, request.offset, request.bytes); break;
@@ -104,6 +107,12 @@ worker.onmessage = (event: MessageEvent<GraphicsRequest>): undefined => {
           await device.queue.onSubmittedWorkDone();
           post({ type: "presented" });
           break;
+        case "screens":
+          if (!presenter) throw new Error("No WebGPU presentation surface is attached");
+          presenter.screens(request.frame, screens);
+          await device.queue.onSubmittedWorkDone();
+          post({ type: "presented" });
+          break;
         case "finish":
           await device.queue.onSubmittedWorkDone();
           if (failure) throw new Error(failure);
@@ -115,6 +124,7 @@ worker.onmessage = (event: MessageEvent<GraphicsRequest>): undefined => {
           closed = true;
           presenter?.close();
           draws.close();
+          screens.close();
           shaders.close();
           textures.close();
           samplers.close();
@@ -129,6 +139,7 @@ worker.onmessage = (event: MessageEvent<GraphicsRequest>): undefined => {
         closed = true;
         shaders?.close();
         draws?.close();
+        screens?.close();
         textures?.close();
         samplers?.close();
         device?.destroy();

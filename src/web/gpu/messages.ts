@@ -4,11 +4,13 @@ import type { TextureRegion } from "./textures";
 import type { TextureRect } from "./blits";
 import type { NativeSampler } from "./samplers";
 import type { NativeDraw } from "./draw-types";
+import type { ScreenFrame } from "./screens";
 
 export type GraphicsRequest =
   { type: "initialize"; fence: SharedArrayBuffer } |
   { type: "surface"; id: number; canvas: OffscreenCanvas } |
   { type: "video"; bytes: Uint8Array<ArrayBuffer>; width: number; height: number; pitch: number } |
+  { type: "screens"; frame: ScreenFrame } |
   { type: "finish"; sequence: number } |
   { type: "texture-create"; handle: number; width: number; height: number; levels: number; layers: number; format: number } |
   { type: "texture-destroy"; handle: number } |

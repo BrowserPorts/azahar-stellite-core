@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { GraphicsScreens, type ScreenFrame } from "./screens";
+
 const shader = `
 @group(0) @binding(0) var pixels: texture_2d<f32>;
 
@@ -128,6 +130,20 @@ export class WebGpuPresenter {
     this.#binding = undefined;
     this.context.unconfigure();
     if (this.ownsDevice) this.device.destroy();
+    return undefined;
+  }
+
+  screens(frame: ScreenFrame, compositor: GraphicsScreens): undefined {
+    if (this.#closed) throw new Error("The WebGPU presenter is closed");
+    if (this.#failure) throw new Error(this.#failure);
+    const { width, height } = frame;
+    const limit = this.device.limits.maxTextureDimension2D;
+    if (![width, height].every(Number.isInteger) || width < 1 || height < 1 || width > limit || height > limit) {
+      throw new Error("Invalid native presentation dimensions");
+    }
+    if (this.canvas.width !== width) this.canvas.width = width;
+    if (this.canvas.height !== height) this.canvas.height = height;
+    compositor.render(this.context.getCurrentTexture(), frame);
     return undefined;
   }
 

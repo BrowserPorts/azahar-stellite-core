@@ -6,6 +6,7 @@ import type { TextureRegion } from "./textures";
 import type { TextureRect } from "./blits";
 import type { NativeSampler } from "./samplers";
 import type { NativeDrawState } from "./draw-types";
+import type { ScreenFrame } from "./screens";
 
 type Pending = { resolve(): unknown; reject(error: Error): unknown };
 
@@ -78,6 +79,16 @@ export class GraphicsClient {
 
   finish(): undefined {
     return this.synchronize((sequence) => ({ type: "finish", sequence }));
+  }
+
+  screens(frame: ScreenFrame): boolean {
+    this.checkOpen();
+    if (!this.#hasSurface) return false;
+    if (this.#queuedFrames >= 2) return true;
+    const quads = frame.quads.map(quad => ({ ...quad, vertices: quad.vertices.slice() }));
+    this.post({ type: "screens", frame: { ...frame, quads } }, quads.map(quad => quad.vertices.buffer));
+    this.#queuedFrames++;
+    return true;
   }
 
   createTexture(handle: number, width: number, height: number, levels: number, layers: number,
