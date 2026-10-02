@@ -39,6 +39,9 @@ if(ENABLE_TESTS)
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}" VERBATIM)
     if(TARGET browser_core_fixtures)
         add_dependencies(browser_core_fixtures naga_shader_fixtures)
+        if(TARGET glslangtests)
+            add_dependencies(browser_core_fixtures glslangtests)
+        endif()
     endif()
     add_test(NAME naga_shader_fixtures
         COMMAND ${SHADER_CARGO_COMMAND} test

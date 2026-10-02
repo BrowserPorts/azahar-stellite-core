@@ -459,7 +459,9 @@ if (ENABLE_VULKAN)
     endif()
 
     # glslang
-    if(USE_SYSTEM_GLSLANG)
+    if(EMSCRIPTEN)
+        add_subdirectory("${PROJECT_SOURCE_DIR}/src/web/gpu/glslang" web-glslang EXCLUDE_FROM_ALL)
+    elseif(USE_SYSTEM_GLSLANG)
         find_package(glslang REQUIRED)
         add_library(glslang INTERFACE)
         add_library(SPIRV INTERFACE)
@@ -525,6 +527,11 @@ if (ENABLE_VULKAN)
     if (ANDROID AND "arm64" IN_LIST ARCHITECTURE)
         add_subdirectory(libadrenotools EXCLUDE_FROM_ALL)
     endif()
+endif()
+
+# WebGPU shader compilation also needs glslang when Vulkan is disabled.
+if(EMSCRIPTEN AND NOT TARGET azahar_glslang)
+    add_subdirectory("${PROJECT_SOURCE_DIR}/src/web/gpu/glslang" web-glslang EXCLUDE_FROM_ALL)
 endif()
 
 if(NOT USE_SYSTEM_XXHASH)

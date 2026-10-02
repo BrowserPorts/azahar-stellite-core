@@ -34,5 +34,5 @@ add_custom_command(OUTPUT "${CLIENT_OUTPUT}"
         --target browser --outfile "${CLIENT_OUTPUT}"
     DEPENDS client.ts messages.ts session.ts
     VERBATIM)
-add_custom_target(azahar_browser_runtime DEPENDS azahar_browser azahar_shader_compiler
+add_custom_target(azahar_browser_runtime DEPENDS azahar_browser azahar_shader_compiler azahar_glslang
     "${WORKER_OUTPUT}" "${CLIENT_OUTPUT}")
