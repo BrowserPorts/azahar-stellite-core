@@ -22,7 +22,7 @@ file(GLOB RUNTIME_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.ts")
 add_custom_command(OUTPUT "${WORKER_OUTPUT}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/worker.ts"
         --target browser --outfile "${WORKER_OUTPUT}"
-    DEPENDS ${RUNTIME_SOURCES}
+    DEPENDS ${RUNTIME_SOURCES} ../gpu/presenter.ts
         ../arm/jit-host.ts ../arm/lower.ts ../arm/ir.ts
         ../pica/jit-host.ts ../pica/lower.ts ../pica/control-flow.ts ../pica/instruction.ts
         ../wasm/binary.ts ../protocol.ts

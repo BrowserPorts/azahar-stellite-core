@@ -73,6 +73,12 @@ export class AzaharClient {
     return result;
   }
 
+  /** Attach a transferred canvas before starting emulation. */
+  async connectSurface(canvas: OffscreenCanvas): Promise<undefined> {
+    await this.request({ type: "surface", canvas }, [canvas]);
+    return undefined;
+  }
+
   async start(): Promise<undefined> { await this.request({ type: "start" }); return undefined; }
   async pause(): Promise<undefined> { await this.request({ type: "pause" }); return undefined; }
   async input(state: InputState): Promise<undefined> {
@@ -99,7 +105,8 @@ export class AzaharClient {
     return this.#closing;
   }
 
-  private async request(request: SessionCommand): Promise<string | number | undefined> {
+  private async request(request: SessionCommand,
+    transfer: Transferable[] = []): Promise<string | number | undefined> {
     if (this.#closing) throw new Error("The Azahar session is closing");
     await this.ready;
     if (this.#disposed) throw new Error("The Azahar session is closed");
@@ -107,7 +114,7 @@ export class AzaharClient {
     const id = this.#nextId++;
     return new Promise((resolve, reject) => {
       this.#pending.set(id, { resolve, reject });
-      try { this.#worker.postMessage({ ...request, id } satisfies SessionRequest); }
+      try { this.#worker.postMessage({ ...request, id } satisfies SessionRequest, transfer); }
       catch (error) {
         this.#pending.delete(id);
         reject(error);

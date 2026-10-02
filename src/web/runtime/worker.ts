@@ -3,6 +3,7 @@
 import type { AzaharModuleFactory } from "./module";
 import type { SessionEvent, SessionRequest } from "./messages";
 import { BrowserSession } from "./session";
+import { WebGpuPresenter } from "../gpu/presenter";
 
 const worker = self as unknown as DedicatedWorkerGlobalScope;
 const post = (event: SessionEvent, transfer: Transferable[] = []): undefined => {
@@ -19,6 +20,7 @@ let running = false;
 let nextFrame = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let session: BrowserSession | undefined;
+let presenter: WebGpuPresenter | undefined;
 let commands: Promise<unknown> = Promise.resolve();
 
 function pause(): undefined {
@@ -58,6 +60,7 @@ async function initialize(): Promise<BrowserSession> {
   return BrowserSession.create(factory, {
     log: (line) => post({ type: "log", line }),
     video: (view, width, height, pitch) => {
+      if (presenter) return presenter.present(view, width, height, pitch);
       const bytes = view.slice();
       return post({ type: "video", bytes, width, height, pitch }, [bytes.buffer]);
     },
@@ -77,6 +80,15 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
       let result: string | number | undefined;
       switch (request.type) {
         case "load": pause(); result = await session.load(request.file); break;
+        case "surface": {
+          pause();
+          const next = await WebGpuPresenter.create(request.canvas, (message) => {
+            pause(); report(new Error(message));
+          });
+          presenter?.close();
+          presenter = next;
+          break;
+        }
         case "start": start(); break;
         case "pause": pause(); break;
         case "input": session.input(request.state); break;
@@ -95,7 +107,7 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
           }
           break;
         }
-        case "close": pause(); session.close(); break;
+        case "close": pause(); session.close(); presenter?.close(); presenter = undefined; break;
         default: throw new Error("Unknown Azahar session request");
       }
       post({ type: "reply", id: request.id, result });

@@ -4,6 +4,7 @@ import type { InputState } from "./session";
 
 export type SessionRequest = { id: number } & (
   { type: "load"; file: File } |
+  { type: "surface"; canvas: OffscreenCanvas } |
   { type: "start" | "pause" | "close" } |
   { type: "save" | "restore"; slot: number } |
   { type: "input"; state: InputState }
