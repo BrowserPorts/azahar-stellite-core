@@ -938,7 +938,7 @@ struct Jit::Impl {
             config.HasOptimization(OptimizationFlag::ConstProp), config.callbacks);
         const auto json = Azahar::Wasm::SerializeArmBlock(block, [this](const auto& instruction) {
             return CoprocessorBinding(instruction, config);
-        });
+        }, config.always_little_endian);
         const uint32_t layout[] = {offsetof(ArmState, registers), offsetof(ArmState, cpsr),
             offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit)};
         const uint32_t memory_config[] = {static_cast<uint32_t>(reinterpret_cast<uintptr_t>(config.page_table)),

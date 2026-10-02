@@ -11,6 +11,7 @@ class Inst;
 
 namespace Azahar::Wasm {
 std::string SerializeArmBlock(const Dynarmic::IR::Block& block,
-    const std::function<std::string(const Dynarmic::IR::Inst&)>& binding = {});
+    const std::function<std::string(const Dynarmic::IR::Inst&)>& binding = {},
+    bool always_little_endian = false);
 std::string EncodeJsonString(const std::string& text);
 }

@@ -62,6 +62,7 @@ export interface MemoryOptions {
 export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<ArrayBuffer> {
   const body = new Bytes();
   const imports: FunctionImport[] = [];
+  const hasBxWritePc = block.nodes.some((node) => node.op === "A32BXWritePC");
   const locals: ValueType[] = block.nodes.map((node) => wasmType(node.type));
   const carryLocals = new Map<number, number>();
   const wideLocals = new Map<number, number>();
@@ -706,7 +707,12 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     } else if (vectorBinary[node.op] !== undefined) {
       arg(0); arg(1); simd(vectorBinary[node.op]!);
     } else switch (node.op) {
-      case "Void": case "PushRSB": case "A32UpdateUpperLocationDescriptor": result = false; break;
+      case "Void": case "PushRSB": result = false; break;
+      case "A32UpdateUpperLocationDescriptor":
+        if (block.endCpsr === undefined) throw new JitError("compile", "ARM block is missing its end location");
+        if (!hasBxWritePc) mergeFlags(0x0600fe20, () => constant(block.endCpsr));
+        result = false;
+        break;
       case "Identity": arg(0); break;
       case "A32ReadMemory8": case "A32ReadMemory16": case "A32ReadMemory32": case "A32ReadMemory64":
       case "A32WriteMemory8": case "A32WriteMemory16": case "A32WriteMemory32": case "A32WriteMemory64":

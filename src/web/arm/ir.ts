@@ -18,6 +18,7 @@ export type Terminal =
 export interface ArmBlock {
   cycles: number;
   condition: number;
+  endCpsr: number;
   conditionFailedPc?: number;
   conditionFailedCpsr?: number;
   conditionFailedCycles?: number;

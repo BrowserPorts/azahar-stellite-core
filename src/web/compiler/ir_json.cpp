@@ -81,12 +81,15 @@ std::string EncodeJsonString(const std::string& text) {
 }
 
 std::string SerializeArmBlock(const Dynarmic::IR::Block& block,
-    const std::function<std::string(const Dynarmic::IR::Inst&)>& binding) {
+    const std::function<std::string(const Dynarmic::IR::Inst&)>& binding,
+    bool always_little_endian) {
     std::unordered_map<const Dynarmic::IR::Inst*, unsigned> names;
     unsigned index = 0;
     for (const auto& instruction : block) names.emplace(&instruction, index++);
     std::ostringstream stream;
-    stream << "{\"cycles\":" << block.CycleCount() << ",\"condition\":" << static_cast<int>(block.GetCondition());
+    const auto end_cpsr = Dynarmic::A32::LocationDescriptor(block.EndLocation()).CPSR().Value();
+    stream << "{\"cycles\":" << block.CycleCount() << ",\"condition\":" << static_cast<int>(block.GetCondition())
+           << ",\"endCpsr\":" << (end_cpsr & ~(always_little_endian ? 0x200u : 0u));
     if (block.HasConditionFailedLocation()) {
         const auto failed = Dynarmic::A32::LocationDescriptor(block.ConditionFailedLocation());
         stream << ",\"conditionFailedPc\":" << failed.PC()
