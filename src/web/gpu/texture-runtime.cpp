@@ -112,7 +112,8 @@ void TextureRuntime::DestroySampler(u32 handle) {
 }
 
 bool TextureRuntime::NeedsConversion(const Surface& surface) const {
-    return surface.pixel_format != PixelFormat::D16 && surface.pixel_format != PixelFormat::D24S8;
+    // The native codec already expands texture-only formats to RGBA8.
+    return surface.pixel_format <= PixelFormat::RGBA4 || surface.pixel_format == PixelFormat::D24;
 }
 
 bool TextureRuntime::Reinterpret(Surface&, Surface&, const TextureCopy&) {
