@@ -49,7 +49,8 @@ target_sources(dynarmic_arm_fuzz_fixtures PRIVATE
     "${DYNARMIC_ROOT}/tests/unicorn_emu/a32_unicorn.cpp")
 if(EMSCRIPTEN)
     target_sources(dynarmic_arm_fuzz_fixtures PRIVATE
-        "${DYNARMIC_ROOT}/src/dynarmic/common/llvm_disassemble.cpp"
+        disassemble.cpp
+        "${DYNARMIC_ROOT}/src/dynarmic/frontend/A32/disassembler/disassembler_arm.cpp"
         "${DYNARMIC_ROOT}/src/dynarmic/frontend/A32/disassembler/disassembler_thumb.cpp"
         "${DYNARMIC_ROOT}/src/dynarmic/ir/opt/naming_pass.cpp")
     target_link_libraries(dynarmic_arm_fuzz_fixtures PRIVATE azahar_arm_jit)
