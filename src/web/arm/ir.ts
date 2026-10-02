@@ -19,6 +19,7 @@ export interface ArmBlock {
   cycles: number;
   condition: number;
   conditionFailedPc?: number;
+  conditionFailedCpsr?: number;
   conditionFailedCycles?: number;
   terminal: Terminal;
   nodes: Node[];

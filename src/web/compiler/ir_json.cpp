@@ -88,7 +88,9 @@ std::string SerializeArmBlock(const Dynarmic::IR::Block& block,
     std::ostringstream stream;
     stream << "{\"cycles\":" << block.CycleCount() << ",\"condition\":" << static_cast<int>(block.GetCondition());
     if (block.HasConditionFailedLocation()) {
-        stream << ",\"conditionFailedPc\":" << Dynarmic::A32::LocationDescriptor(block.ConditionFailedLocation()).PC()
+        const auto failed = Dynarmic::A32::LocationDescriptor(block.ConditionFailedLocation());
+        stream << ",\"conditionFailedPc\":" << failed.PC()
+               << ",\"conditionFailedCpsr\":" << failed.CPSR().Value()
                << ",\"conditionFailedCycles\":" << block.ConditionFailedCycleCount();
     }
     stream << ",\"terminal\":" << boost::apply_visitor(TerminalWriter{}, block.GetTerminal()) << ",\"nodes\":[";

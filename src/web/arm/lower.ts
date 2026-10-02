@@ -339,11 +339,13 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   get(1).byte(0x42).signed(0n, 64).byte(0x57).byte(0x04).byte(0x40);
   get(1).byte(0x0f).byte(0x0b);
   if (block.condition !== 14) {
-    if (block.conditionFailedPc === undefined || block.conditionFailedCycles === undefined) {
+    if (block.conditionFailedPc === undefined || block.conditionFailedCpsr === undefined ||
+      block.conditionFailedCycles === undefined) {
       throw new JitError("compile", "Conditional ARM block is missing its failure location");
     }
     condition(block.condition); body.byte(0x45).byte(0x04).byte(0x40);
     store(options.layout.registers + 60, () => constant(block.conditionFailedPc!));
+    mergeFlags(0x0600fe20, () => constant(block.conditionFailedCpsr!));
     consume(block.conditionFailedCycles).byte(0x0f).byte(0x0b);
   }
   block.nodes.forEach((node, index) => {
