@@ -102,6 +102,8 @@ add_library(video_core STATIC EXCLUDE_FROM_ALL
 if(EMSCRIPTEN)
     target_sources(video_core PRIVATE ../web/pica/jit.cpp ../web/pica/jit.h
         ../web/gpu/texture-runtime.cpp ../web/gpu/texture-runtime.h)
+    target_sources(video_core PRIVATE ../web/gpu/rasterizer.cpp ../web/gpu/rasterizer.h
+        ../web/gpu/draw-layout.h)
 else()
     target_sources(video_core PRIVATE shader/shader_interpreter.cpp)
 endif()
