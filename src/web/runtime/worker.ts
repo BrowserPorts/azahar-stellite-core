@@ -3,7 +3,7 @@
 import type { AzaharModuleFactory } from "./module";
 import type { SessionEvent, SessionRequest } from "./messages";
 import { BrowserSession } from "./session";
-import { WebGpuPresenter } from "../gpu/presenter";
+import { GraphicsClient } from "../gpu/client";
 
 const worker = self as unknown as DedicatedWorkerGlobalScope;
 const post = (event: SessionEvent, transfer: Transferable[] = []): undefined => {
@@ -20,7 +20,7 @@ let running = false;
 let nextFrame = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let session: BrowserSession | undefined;
-let presenter: WebGpuPresenter | undefined;
+let graphics: GraphicsClient | undefined;
 let commands: Promise<unknown> = Promise.resolve();
 
 function pause(): undefined {
@@ -57,18 +57,24 @@ function start(): undefined {
 async function initialize(): Promise<BrowserSession> {
   const url = new URL("./azahar-core.mjs", import.meta.url);
   const { default: factory } = await import(url.href) as { default: AzaharModuleFactory };
-  return BrowserSession.create(factory, {
-    log: (line) => post({ type: "log", line }),
-    video: (view, width, height, pitch) => {
-      if (presenter) return presenter.present(view, width, height, pitch);
-      const bytes = view.slice();
-      return post({ type: "video", bytes, width, height, pitch }, [bytes.buffer]);
-    },
-    audio: (view) => {
-      const samples = view.slice();
-      return post({ type: "audio", samples }, [samples.buffer]);
-    },
-  });
+  graphics = await GraphicsClient.create((error) => { pause(); report(error); });
+  try {
+    return await BrowserSession.create(factory, {
+      log: (line) => post({ type: "log", line }),
+      video: (view, width, height, pitch) => {
+        if (graphics?.present(view, width, height, pitch)) return undefined;
+        const bytes = view.slice();
+        return post({ type: "video", bytes, width, height, pitch }, [bytes.buffer]);
+      },
+      audio: (view) => {
+        const samples = view.slice();
+        return post({ type: "audio", samples }, [samples.buffer]);
+      },
+    });
+  } catch (error) {
+    await graphics.close().catch(() => undefined);
+    throw error;
+  }
 }
 
 worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
@@ -82,11 +88,8 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
         case "load": pause(); result = await session.load(request.file); break;
         case "surface": {
           pause();
-          const next = await WebGpuPresenter.create(request.canvas, (message) => {
-            pause(); report(new Error(message));
-          });
-          presenter?.close();
-          presenter = next;
+          if (!graphics) throw new Error("WebGPU is unavailable");
+          await graphics.surface(request.canvas);
           break;
         }
         case "start": start(); break;
@@ -107,7 +110,7 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
           }
           break;
         }
-        case "close": pause(); session.close(); presenter?.close(); presenter = undefined; break;
+        case "close": pause(); session.close(); await graphics?.close(); graphics = undefined; break;
         default: throw new Error("Unknown Azahar session request");
       }
       post({ type: "reply", id: request.id, result });

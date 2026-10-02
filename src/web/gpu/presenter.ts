@@ -29,22 +29,32 @@ export class WebGpuPresenter {
     readonly context: GPUCanvasContext,
     readonly pipeline: GPURenderPipeline,
     readonly onError: (message: string) => unknown,
+    private readonly ownsDevice: boolean,
   ) {
-    device.onuncapturederror = (event): undefined => {
-      this.fail(event.error.message);
-      return undefined;
-    };
+    if (ownsDevice) {
+      device.onuncapturederror = (event): undefined => {
+        this.fail(event.error.message);
+        return undefined;
+      };
+    }
     device.lost.then((info) => this.fail(`WebGPU device lost: ${info.message}`));
   }
 
   static async create(canvas: OffscreenCanvas,
-    onError: (message: string) => unknown): Promise<WebGpuPresenter> {
+    onError: (message: string) => unknown, sharedDevice?: GPUDevice): Promise<WebGpuPresenter> {
     if (!navigator.gpu) throw new Error("WebGPU is unavailable");
-    const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
-    if (!adapter) throw new Error("No WebGPU adapter is available");
-    const device = await adapter.requestDevice({ label: "Azahar graphics" });
+    const ownsDevice = !sharedDevice;
+    let device = sharedDevice;
+    if (!device) {
+      const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+      if (!adapter) throw new Error("No WebGPU adapter is available");
+      device = await adapter.requestDevice({ label: "Azahar graphics" });
+    }
     const context = canvas.getContext("webgpu");
-    if (!context) { device.destroy(); throw new Error("Could not create the WebGPU canvas context"); }
+    if (!context) {
+      if (ownsDevice) device.destroy();
+      throw new Error("Could not create the WebGPU canvas context");
+    }
     try {
       const format = navigator.gpu.getPreferredCanvasFormat();
       const module = device.createShaderModule({ label: "Azahar framebuffer presentation", code: shader });
@@ -56,15 +66,15 @@ export class WebGpuPresenter {
         primitive: { topology: "triangle-list" },
       });
       context.configure({ device, format, alphaMode: "opaque" });
-      return new WebGpuPresenter(canvas, device, context, pipeline, onError);
+      return new WebGpuPresenter(canvas, device, context, pipeline, onError, ownsDevice);
     } catch (error) {
       context.unconfigure();
-      device.destroy();
+      if (ownsDevice) device.destroy();
       throw error;
     }
   }
 
-  present(bytes: Uint8Array<SharedArrayBuffer>, width: number, height: number,
+  present(bytes: Uint8Array<ArrayBufferLike>, width: number, height: number,
     pitch: number): undefined {
     if (this.#closed) throw new Error("The WebGPU presenter is closed");
     if (this.#failure) throw new Error(this.#failure);
@@ -117,7 +127,7 @@ export class WebGpuPresenter {
     this.#texture = undefined;
     this.#binding = undefined;
     this.context.unconfigure();
-    this.device.destroy();
+    if (this.ownsDevice) this.device.destroy();
     return undefined;
   }
 

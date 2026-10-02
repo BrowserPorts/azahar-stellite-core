@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+export type GraphicsRequest =
+  { type: "initialize"; fence: SharedArrayBuffer } |
+  { type: "surface"; id: number; canvas: OffscreenCanvas } |
+  { type: "video"; bytes: Uint8Array<ArrayBuffer>; width: number; height: number; pitch: number } |
+  { type: "finish"; sequence: number } |
+  { type: "close"; id: number };
+
+export type GraphicsEvent =
+  { type: "ready"; configurationSize: number; configurationSchema: bigint } |
+  { type: "presented" } |
+  { type: "reply"; id: number } |
+  { type: "error"; message: string; id?: number };
+
+// Completion sequence, permanent failure flag, UTF-8 error length, and error bytes.
+export const fenceErrorOffset = 12;
+export const fenceByteLength = fenceErrorOffset + 2048;

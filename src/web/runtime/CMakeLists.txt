@@ -32,14 +32,21 @@ target_link_options(azahar_browser PRIVATE
 find_program(BUN_EXECUTABLE NAMES bun REQUIRED)
 set(WORKER_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-worker.js")
 set(CLIENT_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar.js")
+set(GPU_WORKER_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-gpu-worker.js")
 file(GLOB RUNTIME_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.ts")
+file(GLOB GPU_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../gpu/*.ts")
 add_custom_command(OUTPUT "${WORKER_OUTPUT}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/worker.ts"
         --target browser --outfile "${WORKER_OUTPUT}"
-    DEPENDS ${RUNTIME_SOURCES} ../gpu/presenter.ts
+    DEPENDS ${RUNTIME_SOURCES} ../gpu/client.ts ../gpu/messages.ts
         ../arm/jit-host.ts ../arm/lower.ts ../arm/ir.ts
         ../pica/jit-host.ts ../pica/lower.ts ../pica/control-flow.ts ../pica/instruction.ts
         ../wasm/binary.ts ../protocol.ts
+    VERBATIM)
+add_custom_command(OUTPUT "${GPU_WORKER_OUTPUT}"
+    COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/../gpu/worker.ts"
+        --target browser --outfile "${GPU_WORKER_OUTPUT}"
+    DEPENDS ${GPU_SOURCES}
     VERBATIM)
 add_custom_command(OUTPUT "${CLIENT_OUTPUT}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/client.ts"
@@ -47,4 +54,4 @@ add_custom_command(OUTPUT "${CLIENT_OUTPUT}"
     DEPENDS client.ts messages.ts session.ts
     VERBATIM)
 add_custom_target(azahar_browser_runtime DEPENDS azahar_browser azahar_shader_compiler azahar_glslang
-    azahar_pica_shader_generator "${WORKER_OUTPUT}" "${CLIENT_OUTPUT}")
+    azahar_pica_shader_generator "${WORKER_OUTPUT}" "${GPU_WORKER_OUTPUT}" "${CLIENT_OUTPUT}")
