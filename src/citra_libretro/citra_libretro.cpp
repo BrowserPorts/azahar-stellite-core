@@ -211,16 +211,14 @@ static void UpdateSettings() {
     Core::System::GetInstance().ApplySettings();
 }
 
-/**
- * libretro callback; Called every game tick.
- */
-void retro_run() {
+/// Runs one frame for libretro and browser frontends.
+bool LibRetro::RunFrame() {
     if (!emu_instance->game_loaded) {
         // Game failed to load (e.g. encrypted ROM, bad path).
         // Present an empty frame so RetroArch doesn't hang.
         LibRetro::PollInput();
         LibRetro::UploadVideoFrame(nullptr, 0, 0, 0);
-        return;
+        return false;
     }
 
     // Check to see if we actually have any config updates to process.
@@ -288,6 +286,9 @@ void retro_run() {
         auto result = Core::System::GetInstance().RunLoop();
 
         if (result != Core::System::ResultStatus::Success) {
+            if (result == Core::System::ResultStatus::ShutdownRequested) {
+                return false;
+            }
             std::string errorContent = Core::System::GetInstance().GetStatusDetails();
             std::string msg;
 
@@ -302,8 +303,14 @@ void retro_run() {
             }
 
             LibRetro::DisplayMessage(msg.c_str());
+            return false;
         }
     }
+    return true;
+}
+
+void retro_run() {
+    LibRetro::RunFrame();
 }
 
 static void setup_memory_maps() {

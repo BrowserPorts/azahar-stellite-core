@@ -8,6 +8,7 @@
 #include <string>
 #include <emscripten.h>
 #include <emscripten/console.h>
+#include "citra_libretro/citra_libretro.h"
 #include "core/core.h"
 #include "core/loader/loader.h"
 #include "libretro.h"
@@ -141,8 +142,7 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_program_id() {
 
 extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_run_frame() {
     if (!initialized || !loaded) return false;
-    retro_run();
-    return true;
+    return LibRetro::RunFrame();
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE void azahar_set_input(unsigned mask, int lx, int ly,
