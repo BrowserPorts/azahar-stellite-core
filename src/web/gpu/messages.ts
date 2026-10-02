@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { TextureRegion } from "./textures";
+import type { TextureRect } from "./blits";
+import type { NativeSampler } from "./samplers";
 
 export type GraphicsRequest =
   { type: "initialize"; fence: SharedArrayBuffer } |
@@ -9,6 +11,11 @@ export type GraphicsRequest =
   { type: "finish"; sequence: number } |
   { type: "texture-create"; handle: number; width: number; height: number; levels: number; layers: number; format: number } |
   { type: "texture-destroy"; handle: number } |
+  { type: "texture-copy"; source: number; dest: number; src: TextureRegion; dst: TextureRegion } |
+  { type: "texture-blit"; source: number; dest: number; src: TextureRect; dst: TextureRect } |
+  { type: "texture-mipmaps"; handle: number } |
+  { type: "sampler-create"; handle: number; params: NativeSampler } |
+  { type: "sampler-destroy"; handle: number } |
   { type: "texture-clear"; handle: number; region: TextureRegion; value: readonly number[]; stencil: number } |
   { type: "texture-upload"; handle: number; region: TextureRegion; bytes: Uint8Array<ArrayBuffer> } |
   { type: "texture-download"; handle: number; region: TextureRegion;

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { TextureBlitter, type TextureRect } from "./blits";
+
 export interface TextureRegion {
   x: number;
   y: number;
@@ -99,6 +101,7 @@ export class GraphicsTextures {
     private readonly clearModule: GPUShaderModule,
     private readonly downloadPipeline: GPUComputePipeline,
     private readonly nullStencil: GPUTexture,
+    private readonly blitter: TextureBlitter,
   ) {}
 
   static async create(device: GPUDevice): Promise<GraphicsTextures> {
@@ -122,7 +125,10 @@ export class GraphicsTextures {
       label: "Azahar empty stencil", size: [1, 1], format: "r8uint",
       usage: GPUTextureUsage.TEXTURE_BINDING,
     });
-    const textures = new GraphicsTextures(device, uploadModule, uploadLayout, clearModule, downloadPipeline, nullStencil);
+    let blitter: TextureBlitter;
+    try { blitter = await TextureBlitter.create(device, nullStencil); }
+    catch (error) { nullStencil.destroy(); throw error; }
+    const textures = new GraphicsTextures(device, uploadModule, uploadLayout, clearModule, downloadPipeline, nullStencil, blitter);
     try {
       await Promise.all([
         textures.uploadPipeline("depth16unorm", 0), textures.uploadPipeline("depth32float", 0),
@@ -205,6 +211,47 @@ export class GraphicsTextures {
     const surface = this.#surfaces.get(id);
     if (!surface) throw new Error(`Unknown native texture ${id}`);
     return surface;
+  }
+
+  async copy(sourceId: number, destId: number, src: TextureRegion, dst: TextureRegion): Promise<undefined> {
+    const source = this.get(sourceId);
+    const dest = this.get(destId);
+    this.validateRegion(source, src);
+    this.validateRegion(dest, dst);
+    if (src.width !== dst.width || src.height !== dst.height) throw new Error("Native copy extents differ");
+    const full = (surface: TextureSurface, region: TextureRegion): boolean => region.x === 0 && region.y === 0 &&
+      region.width === Math.max(1, surface.texture.width >> region.level) &&
+      region.height === Math.max(1, surface.texture.height >> region.level);
+    if (source.texture !== dest.texture && source.format === dest.format &&
+      (source.nativeFormat <= 13 || (full(source, src) && full(dest, dst)))) {
+      const encoder = this.device.createCommandEncoder({ label: "Azahar surface copy" });
+      encoder.copyTextureToTexture({ texture: source.texture, mipLevel: src.level, origin: [src.x, src.y, src.layer] },
+        { texture: dest.texture, mipLevel: dst.level, origin: [dst.x, dst.y, dst.layer] }, [src.width, src.height]);
+      this.device.queue.submit([encoder.finish()]);
+      return undefined;
+    }
+    const rect = (region: TextureRegion): TextureRect => ({ left: region.x, bottom: region.y,
+      right: region.x + region.width, top: region.y + region.height, level: region.level, layer: region.layer });
+    return this.blitter.blit(source, dest, rect(src), rect(dst), false);
+  }
+
+  blit(sourceId: number, destId: number, src: TextureRect, dst: TextureRect): Promise<undefined> {
+    return this.blitter.blit(this.get(sourceId), this.get(destId), src, dst);
+  }
+
+  async mipmaps(id: number): Promise<undefined> {
+    const surface = this.get(id);
+    const texture = surface.texture;
+    for (let layer = 0; layer < texture.depthOrArrayLayers; layer++) {
+      for (let level = 1; level < texture.mipLevelCount; level++) {
+        await this.blitter.blit(surface, surface, {
+          left: 0, bottom: 0, right: Math.max(1, texture.width >> (level - 1)),
+          top: Math.max(1, texture.height >> (level - 1)), level: level - 1, layer,
+        }, { left: 0, bottom: 0, right: Math.max(1, texture.width >> level),
+          top: Math.max(1, texture.height >> level), level, layer });
+      }
+    }
+    return undefined;
   }
 
   destroy(id: number): undefined {
@@ -393,6 +440,7 @@ export class GraphicsTextures {
     this.#uploadPipelines.clear();
     this.#clearPipelines.clear();
     this.nullStencil.destroy();
+    this.blitter.close();
     return undefined;
   }
 }

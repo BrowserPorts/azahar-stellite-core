@@ -3,6 +3,8 @@
 import type { GraphicsEvent, GraphicsRequest } from "./messages";
 import { fenceByteLength, fenceErrorOffset } from "./messages";
 import type { TextureRegion } from "./textures";
+import type { TextureRect } from "./blits";
+import type { NativeSampler } from "./samplers";
 
 type Pending = { resolve(): unknown; reject(error: Error): unknown };
 
@@ -87,6 +89,26 @@ export class GraphicsClient {
 
   clearTexture(handle: number, region: TextureRegion, value: readonly number[], stencil = 0): undefined {
     return this.post({ type: "texture-clear", handle, region, value, stencil });
+  }
+
+  copyTexture(source: number, dest: number, src: TextureRegion, dst: TextureRegion): undefined {
+    return this.post({ type: "texture-copy", source, dest, src, dst });
+  }
+
+  blitTexture(source: number, dest: number, src: TextureRect, dst: TextureRect): undefined {
+    return this.post({ type: "texture-blit", source, dest, src, dst });
+  }
+
+  generateMipmaps(handle: number): undefined {
+    return this.post({ type: "texture-mipmaps", handle });
+  }
+
+  createSampler(handle: number, params: NativeSampler): undefined {
+    return this.post({ type: "sampler-create", handle, params });
+  }
+
+  destroySampler(handle: number): undefined {
+    return this.post({ type: "sampler-destroy", handle });
   }
 
   uploadTexture(handle: number, region: TextureRegion, view: Uint8Array<SharedArrayBuffer>): undefined {

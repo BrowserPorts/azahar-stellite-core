@@ -5,6 +5,7 @@ import { fenceByteLength, fenceErrorOffset } from "./messages";
 import { PicaShaders } from "./pica-shaders";
 import { WebGpuPresenter } from "./presenter";
 import { GraphicsTextures } from "./textures";
+import { GraphicsSamplers } from "./samplers";
 
 const worker = self as unknown as DedicatedWorkerGlobalScope;
 let commands: Promise<unknown> = Promise.resolve();
@@ -14,6 +15,7 @@ let device: GPUDevice | undefined;
 let shaders: PicaShaders | undefined;
 let presenter: WebGpuPresenter | undefined;
 let textures: GraphicsTextures | undefined;
+let samplers: GraphicsSamplers | undefined;
 let failure: string | undefined;
 let closed = false;
 
@@ -49,6 +51,7 @@ async function initialize(fence: SharedArrayBuffer): Promise<undefined> {
   device.lost.then((info) => { if (!closed) fail(new Error(`WebGPU device lost: ${info.message}`)); });
   shaders = await PicaShaders.create(device);
   textures = await GraphicsTextures.create(device);
+  samplers = new GraphicsSamplers(device);
   if (failure) throw new Error(failure);
   post({ type: "ready", configurationSize: shaders.configurationSize,
     configurationSchema: shaders.configurationSchema });
@@ -62,12 +65,17 @@ worker.onmessage = (event: MessageEvent<GraphicsRequest>): undefined => {
       if (closed) throw new Error("The graphics worker is closed");
       if (failure) throw new Error(failure);
       if (request.type === "initialize") return await initialize(request.fence);
-      if (!device || !shaders || !textures || !control) throw new Error("WebGPU is unavailable");
+      if (!device || !shaders || !textures || !samplers || !control) throw new Error("WebGPU is unavailable");
       switch (request.type) {
+        case "sampler-create": samplers.create(request.handle, request.params); break;
+        case "sampler-destroy": samplers.destroy(request.handle); break;
         case "texture-create":
           textures.create(request.handle, request.width, request.height, request.levels, request.layers, request.format);
           break;
         case "texture-destroy": textures.destroy(request.handle); break;
+        case "texture-copy": await textures.copy(request.source, request.dest, request.src, request.dst); break;
+        case "texture-blit": await textures.blit(request.source, request.dest, request.src, request.dst); break;
+        case "texture-mipmaps": await textures.mipmaps(request.handle); break;
         case "texture-clear": await textures.clear(request.handle, request.region, request.value, request.stencil); break;
         case "texture-upload": await textures.upload(request.handle, request.region, request.bytes); break;
         case "texture-download": {
@@ -102,6 +110,7 @@ worker.onmessage = (event: MessageEvent<GraphicsRequest>): undefined => {
           presenter?.close();
           shaders.close();
           textures.close();
+          samplers.close();
           device.destroy();
           post({ type: "reply", id: request.id });
           worker.close();
@@ -113,6 +122,7 @@ worker.onmessage = (event: MessageEvent<GraphicsRequest>): undefined => {
         closed = true;
         shaders?.close();
         textures?.close();
+        samplers?.close();
         device?.destroy();
         worker.close();
       }
