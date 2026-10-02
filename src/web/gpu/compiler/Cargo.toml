@@ -11,7 +11,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-naga = { path = "../../../../externals/wgpu/naga", features = ["glsl-in", "wgsl-in", "wgsl-out"] }
+naga = { path = "../../../../externals/wgpu/naga", features = ["glsl-in", "spv-in", "wgsl-in", "wgsl-out"] }
 
 [profile.release]
 lto = true

@@ -8,6 +8,7 @@ interface CompilerExports {
   azahar_shader_alloc(length: number): number;
   azahar_shader_free(pointer: number, length: number): undefined;
   azahar_shader_compile(handle: number, pointer: number, length: number, stage: number): number;
+  azahar_shader_compile_spirv(handle: number, pointer: number, length: number): number;
   azahar_shader_output(handle: number): number;
   azahar_shader_output_length(handle: number): number;
 }
@@ -48,16 +49,25 @@ export class ShaderCompiler {
   }
 
   compile(source: string, stage: "vertex" | "fragment" | "compute"): string {
+    return this.translate(this.#encoder.encode(source), (pointer, length) =>
+      this.exports.azahar_shader_compile(this.#handle, pointer, length,
+        stage === "vertex" ? 0 : stage === "fragment" ? 1 : 2));
+  }
+
+  compileSpirv(bytes: Uint8Array<ArrayBufferLike>): string {
+    return this.translate(bytes, (pointer, length) =>
+      this.exports.azahar_shader_compile_spirv(this.#handle, pointer, length));
+  }
+
+  private translate(bytes: Uint8Array<ArrayBufferLike>, compile: (pointer: number, length: number) => number): string {
     if (!this.#handle) throw new Error("The shader compiler is closed");
-    const bytes = this.#encoder.encode(source);
     const pointer = this.exports.azahar_shader_alloc(bytes.length);
     if (!pointer) throw new Error("Shader source allocation failed");
     try {
       new Uint8Array(this.exports.memory.buffer, pointer, bytes.length).set(bytes);
       let result: number;
       try {
-        result = this.exports.azahar_shader_compile(this.#handle, pointer, bytes.length,
-          stage === "vertex" ? 0 : stage === "fragment" ? 1 : 2);
+        result = compile(pointer, bytes.length);
       } catch (error) {
         // A native trap can leave Rust's stack and compiler state unusable.
         this.#handle = 0;

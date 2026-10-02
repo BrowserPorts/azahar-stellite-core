@@ -23,18 +23,32 @@ impl Compiler {
             2 => ShaderStage::Compute,
             _ => return Err("Invalid shader stage".into()),
         };
-        let mut module = self
+        let module = self
             .frontend
             .parse(&Options::from(stage), source)
             .map_err(|error| error.emit_to_string(source))?;
+        Self::write_wgsl(module, Some(source))
+    }
+
+    fn translate_spirv(&mut self, bytes: &[u8]) -> Result<String, String> {
+        let options = naga::front::spv::Options {
+            adjust_coordinate_space: false,
+            ..Default::default()
+        };
+        let module =
+            naga::front::spv::parse_u8_slice(bytes, &options).map_err(|error| error.to_string())?;
+        Self::write_wgsl(module, None)
+    }
+
+    fn write_wgsl(mut module: naga::Module, source: Option<&str>) -> Result<String, String> {
+        let diagnostic = |error: naga::WithSpan<naga::valid::ValidationError>| match source {
+            Some(source) => error.emit_to_string(source),
+            None => format!("{error:?}"),
+        };
         let mut validator = Validator::new(ValidationFlags::all(), Capabilities::default());
-        validator
-            .validate(&module)
-            .map_err(|error| error.emit_to_string(source))?;
+        validator.validate(&module).map_err(diagnostic)?;
         naga::compact::compact(&mut module, naga::compact::KeepUnused::No);
-        let info = validator
-            .validate(&module)
-            .map_err(|error| error.emit_to_string(source))?;
+        let info = validator.validate(&module).map_err(diagnostic)?;
         let wgsl =
             naga::back::wgsl::write_string(&module, &info, naga::back::wgsl::WriterFlags::empty())
                 .map_err(|error| error.to_string())?;
@@ -45,6 +59,19 @@ impl Compiler {
             .validate(&output)
             .map_err(|error| error.emit_to_string(&wgsl))?;
         Ok(wgsl)
+    }
+
+    fn store(&mut self, result: Result<String, String>) -> u32 {
+        match result {
+            Ok(output) => {
+                self.output = output.into_bytes();
+                1
+            }
+            Err(error) => {
+                self.output = error.into_bytes();
+                0
+            }
+        }
     }
 }
 
@@ -101,16 +128,22 @@ pub unsafe extern "C" fn azahar_shader_compile(
     let result = std::str::from_utf8(bytes)
         .map_err(|error| error.to_string())
         .and_then(|source| compiler.translate(source, stage));
-    match result {
-        Ok(output) => {
-            compiler.output = output.into_bytes();
-            1
-        }
-        Err(error) => {
-            compiler.output = error.into_bytes();
-            0
-        }
-    }
+    compiler.store(result)
+}
+
+/// Returns one for WGSL output, zero for a diagnostic in the output buffer.
+/// # Safety
+/// Input bytes and the compiler handle must remain live for the call.
+#[no_mangle]
+pub unsafe extern "C" fn azahar_shader_compile_spirv(
+    compiler: *mut Compiler,
+    pointer: *const u8,
+    length: usize,
+) -> u32 {
+    let compiler = unsafe { &mut *compiler };
+    let bytes = unsafe { std::slice::from_raw_parts(pointer, length) };
+    let result = compiler.translate_spirv(bytes);
+    compiler.store(result)
 }
 
 /// Output lives until the next compile call or destruction of this handle.
