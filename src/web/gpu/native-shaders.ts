@@ -24,7 +24,7 @@ export class NativeShaders {
   readonly vertexLayout: GPUVertexBufferLayout;
 
   private constructor(module: NativeShaderModule) {
-    if (module._azahar_pica_shader_abi() !== 2) throw new Error("Unsupported PICA shader ABI");
+    if (module._azahar_pica_shader_abi() !== 3) throw new Error("Unsupported PICA shader ABI");
     const pointer = module._azahar_pica_vertex_layout();
     if (!pointer || pointer % 4) throw new Error("Invalid PICA vertex layout");
     const words = new Uint32Array(module.HEAPU8.buffer, pointer, 25);
@@ -58,7 +58,7 @@ export class NativeShaders {
   fragment(configuration: Uint8Array<ArrayBufferLike>, userFlags = 0): string {
     const module = this.getModule();
     if (configuration.byteLength !== this.configurationSize ||
-      !Number.isInteger(userFlags) || userFlags < 0 || userFlags > 1) {
+      !Number.isInteger(userFlags) || userFlags < 0 || userFlags > 9) {
       throw new Error("Invalid PICA shader configuration");
     }
     module.HEAPU8.set(configuration, this.#input);

@@ -15,7 +15,7 @@ constexpr Pica::Shader::Profile profile{
 } // namespace
 
 extern "C" EMSCRIPTEN_KEEPALIVE unsigned azahar_pica_shader_abi() {
-    return 2;
+    return 3;
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE const u32* azahar_pica_vertex_layout() {
@@ -33,14 +33,14 @@ extern "C" EMSCRIPTEN_KEEPALIVE u64 azahar_pica_fs_config_schema() {
 
 extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_pica_fragment_source(
     const Pica::Shader::FSConfig* config, u32 user_flags) {
-    if (!config || (user_flags & ~1U)) {
+    if (!config || user_flags > 9) {
         return nullptr;
     }
     Pica::Shader::UserConfig user{};
-    user.raw = user_flags;
+    user.raw = user_flags & 1;
     source = "#version 450\n" + Pica::Shader::Generator::GLSL::GenerateFragmentShader(
                                    *config, user, profile,
-                                   Pica::Shader::Generator::GLSL::BindingLayout::WebGPU);
+                                   Pica::Shader::Generator::GLSL::BindingLayout::WebGPU, user_flags >> 1);
     return source.c_str();
 }
 

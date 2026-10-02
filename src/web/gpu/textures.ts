@@ -223,6 +223,7 @@ export class GraphicsTextures {
       region.width === Math.max(1, surface.texture.width >> region.level) &&
       region.height === Math.max(1, surface.texture.height >> region.level);
     if (source.texture !== dest.texture && source.format === dest.format &&
+      (source.nativeFormat === dest.nativeFormat || dest.nativeFormat === 0) &&
       (source.nativeFormat <= 13 || (full(source, src) && full(dest, dst)))) {
       const encoder = this.device.createCommandEncoder({ label: "Azahar surface copy" });
       encoder.copyTextureToTexture({ texture: source.texture, mipLevel: src.level, origin: [src.x, src.y, src.layer] },

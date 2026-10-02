@@ -12,7 +12,7 @@ export interface TextureRect {
 }
 
 const commonShader = `
-struct Params { source: vec4f, dest: vec4f }
+struct Params { source: vec4f, dest: vec4f, format: vec4u }
 @group(0) @binding(2) var<uniform> params: Params;
 @vertex fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
   let positions = array(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
@@ -31,7 +31,22 @@ const colorShader = commonShader + `
 @group(0) @binding(1) var image_sampler: sampler;
 @fragment fn color(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let uv = source_coord(position.xy) / vec2f(textureDimensions(image));
-  return textureSampleLevel(image, image_sampler, uv, 0.0);
+  let color = textureSampleLevel(image, image_sampler, uv, 0.0);
+  let format = params.format.x;
+  if (format == 1u) { return vec4f(color.rgb, 1.0); }
+  if (format < 2u || format > 4u) { return color; }
+  var bits = vec4u(round(clamp(color, vec4f(0.0), vec4f(1.0)) * 255.0));
+  if (format == 2u) {
+    bits = bits >> vec4u(3u, 3u, 3u, 7u);
+    bits = vec4u((bits.rgb << vec3u(3u)) | (bits.rgb >> vec3u(2u)), bits.a * 255u);
+  } else if (format == 3u) {
+    bits = bits >> vec4u(3u, 2u, 3u, 0u);
+    bits = vec4u((bits.rgb << vec3u(3u, 2u, 3u)) | (bits.rgb >> vec3u(2u, 4u, 2u)), 255u);
+  } else {
+    bits = bits >> vec4u(4u);
+    bits = (bits << vec4u(4u)) | bits;
+  }
+  return vec4f(bits) / 255.0;
 }
 `;
 
@@ -105,12 +120,14 @@ export class TextureBlitter {
       input = snapshot;
       inputRect = { ...src, level: 0, layer: 0 };
     }
-    const params = this.device.createBuffer({ label: "Azahar blit rectangles", size: 32,
+    const params = this.device.createBuffer({ label: "Azahar blit rectangles", size: 48,
       usage: GPUBufferUsage.UNIFORM, mappedAtCreation: true });
-    new Float32Array(params.getMappedRange()).set([
+    const mapped = params.getMappedRange();
+    new Float32Array(mapped).set([
       src.left, src.bottom, src.right - src.left, src.top - src.bottom,
       dst.left, dst.bottom, dst.right - dst.left, dst.top - dst.bottom,
     ]);
+    new Uint32Array(mapped)[8] = dest.nativeFormat;
     params.unmap();
     try {
       const binding = this.device.createBindGroup({ layout: pipelines[0]!.getBindGroupLayout(0), entries: [

@@ -54,7 +54,9 @@ export class GraphicsDraws {
     if (draw.vertexUniforms.byteLength !== 32 || draw.fragmentUniforms.byteLength !== 0x530 ||
       !draw.vertices.byteLength || draw.vertices.byteLength % (stride * 3)) throw new Error("Invalid native triangle batch");
     if (!state.color && !state.depth) throw new Error("The native draw has no framebuffer");
-    const color = state.color ? this.textures.get(state.color).texture : undefined;
+    const colorSurface = state.color ? this.textures.get(state.color) : undefined;
+    const color = colorSurface?.texture;
+    const colorFormat = state.shadow ? 0 : colorSurface?.nativeFormat ?? 0;
     const depth = state.depth ? this.textures.get(state.depth).texture : undefined;
     if (state.shadow && (!color || depth)) throw new Error("Invalid native shadow framebuffer");
     const originalWidth = color ? Math.max(1, color.width >> state.colorLevel) : Math.max(1, depth!.width >> state.depthLevel);
@@ -67,7 +69,7 @@ export class GraphicsDraws {
       !state.viewport.every(Number.isFinite) || state.viewport[2] <= 0 || state.viewport[3] <= 0) {
       throw new Error("Invalid native draw rectangle");
     }
-    const compiled = await this.pipeline(draw, color?.format, depth?.format);
+    const compiled = await this.pipeline(draw, colorFormat, color?.format, depth?.format);
     this.checkOpen();
     const encoder = this.device.createCommandEncoder({ label: "Azahar PICA draw" });
     const temporary: (GPUTexture | GPUBuffer)[] = [];
@@ -116,7 +118,7 @@ export class GraphicsDraws {
           { binding: i + 3, resource: this.samplers.get(state.samplers[i]!) });
       }
       const textureGroup = this.device.createBindGroup({ layout: compiled.groups[1]!, entries: textureEntries });
-      const destRead = !!attachment && !state.shadow && this.readsDestination(state);
+      const destRead = !!attachment && !state.shadow && this.readsDestination(state, colorFormat);
       let dest = this.#empty;
       if (destRead) {
         dest = this.device.createTexture({ label: "Azahar destination snapshot", size: [width, height],
@@ -159,26 +161,26 @@ export class GraphicsDraws {
     return undefined;
   }
 
-  private readsDestination(state: NativeDrawState): boolean {
-    return state.blend ? this.rgbEmulated(state) || state.alphaEquation >= 3 :
+  private readsDestination(state: NativeDrawState, colorFormat: number): boolean {
+    return state.blend ? this.rgbEmulated(state, colorFormat) || state.alphaEquation >= 3 :
       ![0, 3, 4, 5, 6].includes(state.logicOp);
   }
 
-  private rgbEmulated(state: NativeDrawState): boolean {
+  private rgbEmulated(state: NativeDrawState, colorFormat: number): boolean {
     const factors = [state.rgbSource, state.rgbDest];
-    return state.rgbEquation >= 3 || factors.some(factor => factor === 12 || factor === 13) ||
+    return colorFormat !== 0 || state.rgbEquation >= 3 || factors.some(factor => factor === 12 || factor === 13) ||
       (state.alphaEquation >= 3 && factors.some(factor => factor === 6 || factor === 7 || factor === 14));
   }
 
-  private pipeline(draw: NativeDraw, color?: GPUTextureFormat, depth?: GPUTextureFormat): Promise<DrawPipeline> {
+  private pipeline(draw: NativeDraw, colorFormat: number, color?: GPUTextureFormat, depth?: GPUTextureFormat): Promise<DrawPipeline> {
     const s = draw.state;
-    const key = String.fromCharCode(...draw.configuration) + JSON.stringify([color, depth, s.cull, s.flipped,
+    const key = String.fromCharCode(...draw.configuration) + JSON.stringify([colorFormat, color, depth, s.cull, s.flipped,
       s.colorMask, s.depthWrite, s.depthCompare, s.stencil, s.stencilCompare, s.stencilFail, s.stencilDepthFail,
       s.stencilPass, s.stencilReadMask, s.stencilWriteMask, s.blend, s.rgbEquation, s.alphaEquation,
       s.rgbSource, s.rgbDest, s.alphaSource, s.alphaDest, s.logicOp, s.texture0Type, !!s.normal, s.shadow]);
     const cached = this.#pipelines.get(key);
     if (cached) { this.#pipelines.delete(key); this.#pipelines.set(key, cached); return cached; }
-    const pending = this.createPipeline(draw, color, depth).catch(error => {
+    const pending = this.createPipeline(draw, colorFormat, color, depth).catch(error => {
       if (this.#pipelines.get(key) === pending) this.#pipelines.delete(key);
       throw error;
     });
@@ -186,9 +188,9 @@ export class GraphicsDraws {
     this.#pipelines.set(key, pending); return pending;
   }
 
-  private async createPipeline(draw: NativeDraw, color?: GPUTextureFormat, depth?: GPUTextureFormat): Promise<DrawPipeline> {
+  private async createPipeline(draw: NativeDraw, colorFormat: number, color?: GPUTextureFormat, depth?: GPUTextureFormat): Promise<DrawPipeline> {
     const s = draw.state;
-    const fragment = await this.shaders.fragment(draw.configuration, Number(!!s.normal));
+    const fragment = await this.shaders.fragment(draw.configuration, Number(!!s.normal) | (colorFormat << 1));
     const groups = [
       this.device.createBindGroupLayout({ entries: [
         { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform", minBindingSize: 32 } },
@@ -224,8 +226,8 @@ export class GraphicsDraws {
       vertex: { module: this.shaders.vertex, entryPoint: "main", buffers: [this.shaders.vertexLayout] },
       fragment: { module: fragment, entryPoint: "main", targets: color ? [{ format: color,
         writeMask: s.shadow || (!s.blend && s.logicOp === 6) ? 0 : s.colorMask,
-        ...(s.blend && !s.shadow ? { blend: { color: blend(s.rgbEquation, s.rgbSource, s.rgbDest, this.rgbEmulated(s)),
-          alpha: blend(s.alphaEquation, s.alphaSource, s.alphaDest, s.alphaEquation >= 3) } } : {}),
+        ...(s.blend && !s.shadow ? { blend: { color: blend(s.rgbEquation, s.rgbSource, s.rgbDest, this.rgbEmulated(s, colorFormat)),
+          alpha: blend(s.alphaEquation, s.alphaSource, s.alphaDest, colorFormat !== 0 || s.alphaEquation >= 3) } } : {}),
       }] : [] },
       primitive: { topology: "triangle-list", frontFace: s.cull === 2 ? "cw" : "ccw",
         cullMode: s.cull === 0 || s.cull === 3 ? "none" : s.flipped ? "front" : "back" },

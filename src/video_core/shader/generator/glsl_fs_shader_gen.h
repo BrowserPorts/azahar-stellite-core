@@ -16,7 +16,7 @@ enum class BindingLayout {
 class FragmentModule {
 public:
     explicit FragmentModule(const FSConfig& config, const UserConfig& user, const Profile& profile,
-                            BindingLayout bindings = BindingLayout::Native);
+                            BindingLayout bindings = BindingLayout::Native, u32 color_format = 0);
     ~FragmentModule();
 
     /// Emits GLSL source corresponding to the provided pica fragment configuration
@@ -47,6 +47,7 @@ private:
 
     /// Writes the code to emulate PICA min/max blending factors
     void WriteBlending();
+    void WriteFramebufferPrecision();
 
     /// Returns the specified TEV stage source component(s)
     std::string GetSource(Pica::TexturingRegs::TevStageConfig::Source source, u32 tev_index);
@@ -96,9 +97,11 @@ private:
     const UserConfig& user;
     const Profile& profile;
     const BindingLayout bindings;
+    const u32 color_format;
     std::string out;
     bool use_blend_fallback{};
     bool emulate_rgb_blend{};
+    bool emulate_alpha_blend{};
     bool use_fragment_shader_interlock{};
     bool use_fragment_shader_barycentric{};
 };
@@ -111,6 +114,6 @@ private:
  */
 std::string GenerateFragmentShader(const FSConfig& config, const UserConfig& user,
                                    const Profile& profile,
-                                   BindingLayout bindings = BindingLayout::Native);
+                                   BindingLayout bindings = BindingLayout::Native, u32 color_format = 0);
 
 } // namespace Pica::Shader::Generator::GLSL

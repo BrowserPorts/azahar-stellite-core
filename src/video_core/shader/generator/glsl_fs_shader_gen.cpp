@@ -102,8 +102,9 @@ layout (binding = 2, std140) uniform fs_data {
 )";
 
 FragmentModule::FragmentModule(const FSConfig& config_, const UserConfig& user_,
-                               const Profile& profile_, BindingLayout bindings_)
-    : config{config_}, user{user_}, profile{profile_}, bindings{bindings_} {
+                               const Profile& profile_, BindingLayout bindings_, u32 color_format_)
+    : config{config_}, user{user_}, profile{profile_}, bindings{bindings_},
+      color_format{bindings_ == BindingLayout::WebGPU ? color_format_ : 0} {
     config.ApplyProfile(profile_);
     if (bindings == BindingLayout::WebGPU && config.framebuffer.alphablend_enable) {
         using BlendFactor = FramebufferRegs::BlendFactor;
@@ -111,7 +112,8 @@ FragmentModule::FragmentModule(const FSConfig& config_, const UserConfig& user_,
             return factor == BlendFactor::ConstantAlpha || factor == BlendFactor::OneMinusConstantAlpha;
         };
         const auto& blend = config.framebuffer.requested_rgb_blend;
-        emulate_rgb_blend = alpha_factor(blend.src_factor) || alpha_factor(blend.dst_factor);
+        emulate_alpha_blend = color_format != 0;
+        emulate_rgb_blend = color_format != 0 || alpha_factor(blend.src_factor) || alpha_factor(blend.dst_factor);
         if (config.framebuffer.requested_alpha_blend.RequiresMinMaxEmulation()) {
             const auto source_alpha = [](BlendFactor factor) {
                 return factor == BlendFactor::SourceAlpha || factor == BlendFactor::OneMinusSourceAlpha ||
@@ -209,6 +211,7 @@ vec4 secondary_fragment_color = vec4(0.0);
     }
 
     WriteLogicOp();
+    if (!config.framebuffer.shadow_rendering) WriteFramebufferPrecision();
 
     out += '}';
     return out;
@@ -983,7 +986,7 @@ void FragmentModule::WriteBlending() {
     bool requires_rgb_minmax_emulation =
         config.framebuffer.requested_rgb_blend.RequiresMinMaxEmulation() || emulate_rgb_blend;
     bool requires_alpha_minmax_emulation =
-        config.framebuffer.requested_alpha_blend.RequiresMinMaxEmulation();
+        config.framebuffer.requested_alpha_blend.RequiresMinMaxEmulation() || emulate_alpha_blend;
     if (!requires_rgb_minmax_emulation && !requires_alpha_minmax_emulation) [[likely]] {
         return;
     }
@@ -1032,45 +1035,62 @@ void FragmentModule::WriteBlending() {
         }
     };
 
-    // At this point, the blend equation can only be min or max.
+    // Native min/max emulation also retains PICA's blend factors.
     const auto get_func = [](Pica::FramebufferRegs::BlendEquation eq) {
         return eq == Pica::FramebufferRegs::BlendEquation::Min ? "min" : "max";
     };
 
-    if (requires_rgb_minmax_emulation) {
-        const auto& blend = config.framebuffer.requested_rgb_blend;
-        if (emulate_rgb_blend && blend.eq != FramebufferRegs::BlendEquation::Min &&
+    const auto write_component = [&](std::string_view component, const BlendConfig& blend, bool emulate) {
+        if (emulate && blend.eq != FramebufferRegs::BlendEquation::Min &&
             blend.eq != FramebufferRegs::BlendEquation::Max) {
-            const auto source = fmt::format("source_color.rgb * ({}).rgb", get_factor(blend.src_factor));
-            const auto dest = fmt::format("dest_color.rgb * ({}).rgb", get_factor(blend.dst_factor));
+            const auto source = fmt::format("source_color.{0} * ({1}).{0}", component, get_factor(blend.src_factor));
+            const auto dest = fmt::format("dest_color.{0} * ({1}).{0}", component, get_factor(blend.dst_factor));
             switch (blend.eq) {
             case FramebufferRegs::BlendEquation::Add:
-                out += fmt::format("combiner_output.rgb = {} + {};\n", source, dest);
+                out += fmt::format("combiner_output.{} = {} + {};\n", component, source, dest);
                 break;
             case FramebufferRegs::BlendEquation::Subtract:
-                out += fmt::format("combiner_output.rgb = {} - {};\n", source, dest);
+                out += fmt::format("combiner_output.{} = {} - {};\n", component, source, dest);
                 break;
             case FramebufferRegs::BlendEquation::ReverseSubtract:
-                out += fmt::format("combiner_output.rgb = {} - {};\n", dest, source);
+                out += fmt::format("combiner_output.{} = {} - {};\n", component, dest, source);
                 break;
             default:
                 UNREACHABLE_MSG("Invalid WebGPU blend equation");
             }
         } else {
-            out += fmt::format(
-                "combiner_output.rgb = {}(source_color.rgb * ({}).rgb, dest_color.rgb * ({}).rgb);\n",
-                get_func(config.framebuffer.requested_rgb_blend.eq),
-                get_factor(config.framebuffer.requested_rgb_blend.src_factor),
-                get_factor(config.framebuffer.requested_rgb_blend.dst_factor));
+            out += fmt::format("combiner_output.{0} = {1}(source_color.{0} * ({2}).{0}, dest_color.{0} * ({3}).{0});\n",
+                               component, get_func(blend.eq), get_factor(blend.src_factor), get_factor(blend.dst_factor));
         }
+    };
+    if (requires_rgb_minmax_emulation) write_component("rgb", config.framebuffer.requested_rgb_blend, emulate_rgb_blend);
+    if (requires_alpha_minmax_emulation) write_component("a", config.framebuffer.requested_alpha_blend, emulate_alpha_blend);
+}
+
+void FragmentModule::WriteFramebufferPrecision() {
+    if (color_format == 0) return;
+    if (color_format == 1) { out += "color.a = 1.0;\n"; return; }
+    // Match Common::Color's native framebuffer encoders and bit expansion on sampling.
+    out += "uvec4 framebuffer_bits = uvec4(round(clamp(color, 0.0, 1.0) * 255.0));\n";
+    switch (color_format) {
+    case 2: // RGB5A1
+        out += "framebuffer_bits >>= uvec4(3u, 3u, 3u, 7u);\n"
+               "framebuffer_bits.rgb = (framebuffer_bits.rgb << 3u) | (framebuffer_bits.rgb >> 2u);\n"
+               "framebuffer_bits.a *= 255u;\n";
+        break;
+    case 3: // RGB565
+        out += "framebuffer_bits >>= uvec4(3u, 2u, 3u, 0u);\n"
+               "framebuffer_bits.rgb = (framebuffer_bits.rgb << uvec3(3u, 2u, 3u)) | (framebuffer_bits.rgb >> uvec3(2u, 4u, 2u));\n"
+               "framebuffer_bits.a = 255u;\n";
+        break;
+    case 4: // RGBA4
+        out += "framebuffer_bits >>= 4u;\n"
+               "framebuffer_bits = (framebuffer_bits << 4u) | framebuffer_bits;\n";
+        break;
+    default:
+        UNREACHABLE_MSG("Invalid WebGPU framebuffer format");
     }
-    if (requires_alpha_minmax_emulation) {
-        out +=
-            fmt::format("combiner_output.a = {}(source_color.a * ({}).a, dest_color.a * ({}).a);\n",
-                        get_func(config.framebuffer.requested_alpha_blend.eq),
-                        get_factor(config.framebuffer.requested_alpha_blend.src_factor),
-                        get_factor(config.framebuffer.requested_alpha_blend.dst_factor));
-    }
+    out += "color = vec4(framebuffer_bits) / 255.0;\n";
 }
 
 void FragmentModule::AppendProcTexShiftOffset(std::string_view v, ProcTexShift mode,
@@ -1355,7 +1375,7 @@ void FragmentModule::DefineExtensions() {
             use_fragment_shader_barycentric = false;
         }
     }
-    if (emulate_rgb_blend || config.framebuffer.requested_rgb_blend.RequiresMinMaxEmulation() ||
+    if (emulate_rgb_blend || emulate_alpha_blend || config.framebuffer.requested_rgb_blend.RequiresMinMaxEmulation() ||
         config.framebuffer.requested_alpha_blend.RequiresMinMaxEmulation()) [[unlikely]] {
         if (profile.has_gl_ext_framebuffer_fetch) {
             out += "#extension GL_EXT_shader_framebuffer_fetch : enable\n";
@@ -1959,8 +1979,8 @@ void FragmentModule::DefineTexUnitSampler(u32 texture_unit) {
 }
 
 std::string GenerateFragmentShader(const FSConfig& config, const UserConfig& user,
-                                   const Profile& profile, BindingLayout bindings) {
-    FragmentModule module{config, user, profile, bindings};
+                                   const Profile& profile, BindingLayout bindings, u32 color_format) {
+    FragmentModule module{config, user, profile, bindings, color_format};
     return module.Generate();
 }
 
