@@ -14,12 +14,15 @@ const replayPath = process.env.DYNARMIC_THUMB_IT_REPLAY;
 const replay = replayPath ? await readFile(replayPath) : undefined;
 let linkedBlocks: (() => bigint) | undefined;
 let budgetReuses: (() => bigint) | undefined;
+let fastDispatchHits: (() => bigint) | undefined;
 const armJit = new ArmJitHost();
 process.on("exit", () => {
   const count = linkedBlocks?.();
   if (count) console.log(`ARM JIT: ${count} blocks entered through direct Wasm links`);
   const reuses = budgetReuses?.();
   if (reuses) console.log(`ARM JIT: ${reuses} cached regions reused with a smaller tick budget`);
+  const fast = fastDispatchHits?.();
+  if (fast) console.log(`ARM JIT: ${fast} blocks entered through the Wasm fast dispatcher`);
   const stats = armJit.takeStatistics();
   if (stats.compiledBlocks) console.log(`ARM JIT: ${stats.compiledBlocks} regions, ${stats.generatedBytes} Wasm bytes, ${stats.compileMs.toFixed(2)} ms compilation`);
 });
@@ -27,9 +30,11 @@ await createModule({ arguments: args.filter((arg) => arg !== "--pica-dispatch"),
   azaharJitHost: armJit, azaharPicaJitHost: new PicaJitHost(dispatch),
   preRun: [(module: { FS: { writeFile(path: string, data: Uint8Array): undefined },
     ENV: Record<string, string>; _azahar_arm_jit_linked_blocks?: () => bigint;
-    _azahar_arm_jit_budget_reuses?: () => bigint }) => {
+    _azahar_arm_jit_budget_reuses?: () => bigint;
+    _azahar_arm_jit_fast_dispatch_hits?: () => bigint }) => {
     linkedBlocks = module._azahar_arm_jit_linked_blocks;
     budgetReuses = module._azahar_arm_jit_budget_reuses;
+    fastDispatchHits = module._azahar_arm_jit_fast_dispatch_hits;
     if (replay) {
       module.FS.writeFile("/thumb-it.case", replay);
       module.ENV.DYNARMIC_THUMB_IT_REPLAY = "/thumb-it.case";

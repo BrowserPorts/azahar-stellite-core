@@ -28,7 +28,9 @@ const char* OpcodeName(Dynarmic::IR::Opcode opcode) {
 
 struct TerminalWriter final : boost::static_visitor<std::string> {
     const std::function<uint32_t(uint64_t)>& link;
-    explicit TerminalWriter(const std::function<uint32_t(uint64_t)>& link_) : link(link_) {}
+    const bool fast_dispatch;
+    TerminalWriter(const std::function<uint32_t(uint64_t)>& link_, bool fast_dispatch_)
+        : link(link_), fast_dispatch(fast_dispatch_) {}
     std::string operator()(const Dynarmic::IR::Term::Invalid&) const {
         throw std::runtime_error("Invalid ARM translation terminal");
     }
@@ -42,7 +44,7 @@ struct TerminalWriter final : boost::static_visitor<std::string> {
         return "{\"kind\":\"dispatch\"}";
     }
     std::string operator()(const Dynarmic::IR::Term::FastDispatchHint&) const {
-        return "{\"kind\":\"dispatch\"}";
+        return fast_dispatch ? "{\"kind\":\"fast-dispatch\"}" : "{\"kind\":\"dispatch\"}";
     }
     template <class T>
     std::string Link(const T& terminal) const {
@@ -89,7 +91,7 @@ std::string EncodeJsonString(const std::string& text) {
 std::string SerializeArmBlock(const Dynarmic::IR::Block& block,
     const std::function<std::string(const Dynarmic::IR::Inst&)>& binding,
     bool always_little_endian, uint32_t source_cell,
-    const std::function<uint32_t(uint64_t)>& link) {
+    const std::function<uint32_t(uint64_t)>& link, bool fast_dispatch) {
     std::unordered_map<const Dynarmic::IR::Inst*, unsigned> names;
     unsigned index = 0;
     for (const auto& instruction : block) names.emplace(&instruction, index++);
@@ -108,7 +110,7 @@ std::string SerializeArmBlock(const Dynarmic::IR::Block& block,
                    << ",\"conditionFailedFpscr\":" << failed.FPSCR().Value();
         }
     }
-    stream << ",\"terminal\":" << boost::apply_visitor(TerminalWriter{link}, block.GetTerminal()) << ",\"nodes\":[";
+    stream << ",\"terminal\":" << boost::apply_visitor(TerminalWriter{link, fast_dispatch}, block.GetTerminal()) << ",\"nodes\":[";
     bool first = true;
     for (const auto& instruction : block) {
         if (!first) stream << ',';

@@ -54,9 +54,19 @@ struct LinkCell {
 };
 static_assert(offsetof(LinkCell, slot) == 0);
 static_assert(offsetof(LinkCell, minimum_budget) == 16);
+constexpr size_t fast_dispatch_size = 4096;
+struct FastDispatchEntry {
+    uint64_t location = 0;
+    uint32_t slot = 0;
+    uint32_t minimum_budget = 0;
+};
+size_t FastDispatchIndex(uint64_t location) {
+    return ((location >> 1) ^ (location >> 32)) & (fast_dispatch_size - 1);
+}
 #ifdef AZAHAR_ARM_JIT_STATISTICS
 std::atomic<uint64_t> native_dispatches{0}, completed_blocks{0};
 std::atomic<uint64_t> budget_reuses{0};
+std::atomic<uint64_t> fast_dispatch_hits{0};
 #endif
 struct alignas(8) ArmState {
     std::array<uint32_t, 16> registers{};
@@ -72,6 +82,7 @@ struct alignas(8) ArmState {
     uint64_t* clock{};
     uint64_t next_budget{};
     bool budget_valid = false;
+    FastDispatchEntry* fast_dispatch{};
 };
 
 EM_JS(uint32_t, CompileArmRegion, (const char* json, const uint32_t* layout, const uint32_t* memory_config, uint32_t* bytes), {
@@ -499,6 +510,18 @@ extern "C" EMSCRIPTEN_KEEPALIVE int64_t WasmNextBudget(ArmState* state, uint64_t
     state->budget_valid = true;
     return state->next_budget >= minimum ? state->next_budget : 0;
 }
+extern "C" EMSCRIPTEN_KEEPALIVE uint32_t WasmFastDispatch(ArmState* state, uint64_t budget) {
+    if (!budget || state->halt->load()) return 0;
+    const Dynarmic::A32::LocationDescriptor location(state->registers[15],
+        Dynarmic::A32::PSR{state->cpsr}, Dynarmic::A32::FPSCR{state->fpscr});
+    const auto hash = location.UniqueHash();
+    const auto& entry = state->fast_dispatch[FastDispatchIndex(hash)];
+    if (entry.location != hash || !entry.slot || budget < entry.minimum_budget) return 0;
+#ifdef AZAHAR_ARM_JIT_STATISTICS
+    fast_dispatch_hits.fetch_add(1, std::memory_order_relaxed);
+#endif
+    return entry.slot;
+}
 extern "C" EMSCRIPTEN_KEEPALIVE uint64_t azahar_arm_jit_linked_blocks() {
 #ifdef AZAHAR_ARM_JIT_STATISTICS
     const auto blocks = completed_blocks.load(std::memory_order_relaxed);
@@ -511,6 +534,13 @@ extern "C" EMSCRIPTEN_KEEPALIVE uint64_t azahar_arm_jit_linked_blocks() {
 extern "C" EMSCRIPTEN_KEEPALIVE uint64_t azahar_arm_jit_budget_reuses() {
 #ifdef AZAHAR_ARM_JIT_STATISTICS
     return budget_reuses.load(std::memory_order_relaxed);
+#else
+    return 0;
+#endif
+}
+extern "C" EMSCRIPTEN_KEEPALIVE uint64_t azahar_arm_jit_fast_dispatch_hits() {
+#ifdef AZAHAR_ARM_JIT_STATISTICS
+    return fast_dispatch_hits.load(std::memory_order_relaxed);
 #else
     return 0;
 #endif
@@ -948,6 +978,7 @@ struct Jit::Impl {
     std::map<RegionKey, Region> regions;
     std::map<RegionKey, LinkCell> links;
     std::vector<Region> retired;
+    std::array<FastDispatchEntry, fast_dispatch_size> fast_dispatch{};
     uint64_t generated_bytes = 0;
     uint64_t clock = 0;
     bool executing = false;
@@ -965,6 +996,7 @@ struct Jit::Impl {
         state.config = &config;
         state.halt = &halt;
         state.clock = &clock;
+        state.fast_dispatch = fast_dispatch.data();
     }
     ~Impl() { Clear(); ReleaseRetired(); }
     void ReleaseRetired() {
@@ -991,6 +1023,10 @@ struct Jit::Impl {
     auto Retire(decltype(regions)::iterator item) {
         retired.push_back(std::move(item->second));
         const auto& region = retired.back();
+        auto& fast = fast_dispatch[FastDispatchIndex(item->first.first)];
+        if (fast.location == item->first.first && fast.slot == reinterpret_cast<uintptr_t>(region.entry)) {
+            fast.slot = 0;
+        }
         generated_bytes -= region.bytes;
         // Disconnect incoming branches before retiring code or recycling its table slot.
         region.source->slot = 0;
@@ -999,16 +1035,21 @@ struct Jit::Impl {
         }
         return regions.erase(item);
     }
-    void Publish(const Region& region) {
+    void Publish(uint64_t location, const Region& region) {
         auto& destination = *region.destination;
         if (!destination.slot || region.maximum_instructions >= destination.maximum_instructions) {
             destination.minimum_budget = region.minimum_budget;
             destination.maximum_instructions = region.maximum_instructions;
             destination.slot = reinterpret_cast<uintptr_t>(region.entry);
         }
+        if (config.HasOptimization(OptimizationFlag::FastDispatch)) {
+            fast_dispatch[FastDispatchIndex(location)] = {
+                location, destination.slot, destination.minimum_budget};
+        }
     }
     void Clear() {
         while (!regions.empty()) Retire(regions.begin());
+        fast_dispatch.fill({});
         if (!executing) ReleaseRetired();
     }
     Entry GetEntry(uint32_t limit, bool step) {
@@ -1031,7 +1072,7 @@ struct Jit::Impl {
             if (cached->first != key) budget_reuses.fetch_add(1, std::memory_order_relaxed);
 #endif
             cached->second.source->used = ++clock;
-            Publish(cached->second);
+            Publish(key.first, cached->second);
             return cached->second.entry;
         }
         CodeReader reader{*config.callbacks, limit};
@@ -1055,7 +1096,8 @@ struct Jit::Impl {
                     }} : std::function<uint32_t(uint64_t)>{};
             const auto json = Azahar::Wasm::SerializeArmBlock(block, [this](const auto& instruction) {
                 return CoprocessorBinding(instruction, config);
-            }, config.always_little_endian, reinterpret_cast<uintptr_t>(&source), link);
+            }, config.always_little_endian, reinterpret_cast<uintptr_t>(&source), link,
+                config.HasOptimization(OptimizationFlag::FastDispatch) && !step);
             const uint32_t layout[] = {offsetof(ArmState, registers), offsetof(ArmState, cpsr),
                 offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit), 2};
             const uint32_t memory_config[] = {static_cast<uint32_t>(reinterpret_cast<uintptr_t>(config.page_table)),
@@ -1088,7 +1130,7 @@ struct Jit::Impl {
             generated_bytes += bytes;
             source.slot = slot;
             source.used = ++clock;
-            Publish(region->second);
+            Publish(key.first, region->second);
             return entry;
         } catch (...) {
             if (entry) ReleaseArmRegion(reinterpret_cast<uintptr_t>(entry));
@@ -1159,6 +1201,7 @@ void Jit::Reset() {
     impl->state.config = &impl->config;
     impl->state.halt = &impl->halt;
     impl->state.clock = &impl->clock;
+    impl->state.fast_dispatch = impl->fast_dispatch.data();
 }
 void Jit::HaltExecution(HaltReason reason) { impl->halt.fetch_or(static_cast<uint32_t>(reason)); }
 void Jit::ClearHalt(HaltReason reason) { impl->halt.fetch_and(~static_cast<uint32_t>(reason)); }

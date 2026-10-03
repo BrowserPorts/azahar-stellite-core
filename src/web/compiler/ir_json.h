@@ -14,6 +14,6 @@ namespace Azahar::Wasm {
 std::string SerializeArmBlock(const Dynarmic::IR::Block& block,
     const std::function<std::string(const Dynarmic::IR::Inst&)>& binding = {},
     bool always_little_endian = false, uint32_t source_cell = 0,
-    const std::function<uint32_t(uint64_t)>& link = {});
+    const std::function<uint32_t(uint64_t)>& link = {}, bool fast_dispatch = false);
 std::string EncodeJsonString(const std::string& text);
 }

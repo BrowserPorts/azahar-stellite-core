@@ -9,7 +9,7 @@ export interface Node {
     { kind: "callback"; function: number; userArgument: number };
 }
 export type Terminal =
-  | { kind: "dispatch" }
+  | { kind: "dispatch" | "fast-dispatch" }
   | { kind: "link"; pc: number; cpsr: number; cell?: number; fpscr?: number }
   | { kind: "if"; condition: number; then: Terminal; else: Terminal }
   | { kind: "check-bit"; then: Terminal; else: Terminal }
