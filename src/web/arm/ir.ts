@@ -10,18 +10,21 @@ export interface Node {
 }
 export type Terminal =
   | { kind: "dispatch" }
-  | { kind: "link"; pc: number; cpsr: number }
+  | { kind: "link"; pc: number; cpsr: number; cell?: number; fpscr?: number }
   | { kind: "if"; condition: number; then: Terminal; else: Terminal }
   | { kind: "check-bit"; then: Terminal; else: Terminal }
   | { kind: "check-halt"; else: Terminal };
 
 export interface ArmBlock {
+  sourceCell?: number;
   cycles: number;
   condition: number;
   endCpsr: number;
   conditionFailedPc?: number;
   conditionFailedCpsr?: number;
   conditionFailedCycles?: number;
+  conditionFailedCell?: number;
+  conditionFailedFpscr?: number;
   terminal: Terminal;
   nodes: Node[];
 }

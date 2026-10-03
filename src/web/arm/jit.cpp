@@ -44,6 +44,19 @@
 #include "dynarmic/ir/opcodes.h"
 
 namespace {
+using RegionKey = std::pair<uint64_t, uint32_t>;
+struct LinkCell {
+    uint32_t slot = 0;
+    uint32_t references = 0;
+    uint64_t used = 0;
+    uint32_t minimum_budget = 0;
+    uint32_t maximum_instructions = 0;
+};
+static_assert(offsetof(LinkCell, slot) == 0);
+static_assert(offsetof(LinkCell, minimum_budget) == 16);
+#ifdef AZAHAR_ARM_JIT_STATISTICS
+std::atomic<uint64_t> native_dispatches{0}, completed_blocks{0};
+#endif
 struct alignas(8) ArmState {
     std::array<uint32_t, 16> registers{};
     uint32_t cpsr{};
@@ -55,6 +68,9 @@ struct alignas(8) ArmState {
     uint64_t exclusive_value{};
     Dynarmic::A32::UserConfig* config{};
     std::atomic<uint32_t>* halt{};
+    uint64_t* clock{};
+    uint64_t next_budget{};
+    bool budget_valid = false;
 };
 
 EM_JS(uint32_t, CompileArmRegion, (const char* json, const uint32_t* layout, const uint32_t* memory_config, uint32_t* bytes), {
@@ -67,7 +83,7 @@ EM_JS(uint32_t, CompileArmRegion, (const char* json, const uint32_t* layout, con
         }
         const memory = HEAPU32.slice(memory_config >> 2, (memory_config >> 2) + 7);
         const result = Module["azaharJitHost"].compile(UTF8ToString(json),
-            HEAPU32.slice(layout >> 2, (layout >> 2) + 5), wasmMemory,
+            HEAPU32.slice(layout >> 2, (layout >> 2) + 6), wasmMemory,
             wasmExports["__indirect_function_table"], Module["azaharJitHelpers"], {
                 pageTable: memory[0], ...(memory[2] ? { fastmem: memory[1] } : {}),
                 pointerMaskBits: memory[3], absoluteOffset: Boolean(memory[4]),
@@ -90,6 +106,7 @@ EM_JS(void, ReleaseArmRegion, (uint32_t slot), {
 struct CodeReader final : Dynarmic::A32::TranslateCallbacks {
     Dynarmic::A32::UserCallbacks& callbacks;
     uint32_t remaining;
+    uint32_t instructions = 0;
     uint32_t first = 0;
     uint32_t last = 0;
     bool read = false;
@@ -107,6 +124,7 @@ struct CodeReader final : Dynarmic::A32::TranslateCallbacks {
             ir.SetTerm(Dynarmic::IR::Term::LinkBlock{ir.current_location});
             return false;
         }
+        ++instructions;
         return callbacks.PreCodeReadHook(thumb, pc, ir);
     }
     void PreCodeTranslationHook(bool thumb, uint32_t pc, Dynarmic::A32::IREmitter& ir) override {
@@ -461,6 +479,33 @@ template <class Type> v128_t SaturatingUnsignedVectorShift(ArmState* state, v128
 // Generated code imports these raw Wasm functions, avoiding JavaScript on memory access.
 extern "C" EMSCRIPTEN_KEEPALIVE uint32_t WasmCheckHalt(ArmState* state) {
     return state->halt->load();
+}
+extern "C" EMSCRIPTEN_KEEPALIVE void WasmAddTicks(ArmState* state, uint64_t cycles,
+                                                LinkCell* source) {
+    source->used = ++*state->clock;
+    state->budget_valid = false;
+#ifdef AZAHAR_ARM_JIT_STATISTICS
+    completed_blocks.fetch_add(1, std::memory_order_relaxed);
+#endif
+    state->config->callbacks->AddTicks(cycles);
+}
+// The signature also supplies the type used by generated return_call_indirect instructions.
+extern "C" EMSCRIPTEN_KEEPALIVE int64_t WasmNextBudget(ArmState* state, uint64_t minimum) {
+    state->next_budget = state->halt->load() ? 0 :
+        std::min<uint64_t>(state->config->callbacks->GetTicksRemaining(),
+                           std::numeric_limits<int64_t>::max());
+    if (state->halt->load()) state->next_budget = 0;
+    state->budget_valid = true;
+    return state->next_budget >= minimum ? state->next_budget : 0;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE uint64_t azahar_arm_jit_linked_blocks() {
+#ifdef AZAHAR_ARM_JIT_STATISTICS
+    const auto blocks = completed_blocks.load(std::memory_order_relaxed);
+    const auto dispatches = native_dispatches.load(std::memory_order_relaxed);
+    return blocks > dispatches ? blocks - dispatches : 0;
+#else
+    return 0;
+#endif
 }
 extern "C" {
 #define READ_MEMORY(bits, type) \
@@ -883,13 +928,18 @@ struct Jit::Impl {
         uint32_t bytes;
         uint32_t first;
         uint64_t length;
-        uint64_t used;
+        LinkCell* source;
+        LinkCell* destination;
+        uint32_t minimum_budget;
+        uint32_t maximum_instructions;
+        std::vector<RegionKey> links;
     };
     UserConfig config;
     ArmState state;
     std::atomic<uint32_t> halt{0};
-    std::map<std::pair<uint64_t, uint32_t>, Region> regions;
-    std::vector<Entry> retired;
+    std::map<RegionKey, Region> regions;
+    std::map<RegionKey, LinkCell> links;
+    std::vector<Region> retired;
     uint64_t generated_bytes = 0;
     uint64_t clock = 0;
     bool executing = false;
@@ -906,16 +956,48 @@ struct Jit::Impl {
         }
         state.config = &config;
         state.halt = &halt;
+        state.clock = &clock;
     }
     ~Impl() { Clear(); ReleaseRetired(); }
     void ReleaseRetired() {
-        for (auto entry : retired) ReleaseArmRegion(reinterpret_cast<uintptr_t>(entry));
+        for (auto& region : retired) {
+            ReleaseArmRegion(reinterpret_cast<uintptr_t>(region.entry));
+            ReleaseLinks(region.links);
+        }
         retired.clear();
     }
+    LinkCell& AcquireLink(RegionKey key, std::vector<RegionKey>& references) {
+        const auto [item, inserted] = links.try_emplace(key);
+        try { references.push_back(key); }
+        catch (...) { if (inserted) links.erase(item); throw; }
+        auto& cell = item->second;
+        ++cell.references;
+        return cell;
+    }
+    void ReleaseLinks(const std::vector<RegionKey>& references) {
+        for (const auto& key : references) {
+            const auto cell = links.find(key);
+            if (--cell->second.references == 0 && cell->second.slot == 0) links.erase(cell);
+        }
+    }
     auto Retire(decltype(regions)::iterator item) {
-        generated_bytes -= item->second.bytes;
-        retired.push_back(item->second.entry);
+        retired.push_back(std::move(item->second));
+        const auto& region = retired.back();
+        generated_bytes -= region.bytes;
+        // Disconnect incoming branches before retiring code or recycling its table slot.
+        region.source->slot = 0;
+        if (region.destination->slot == reinterpret_cast<uintptr_t>(region.entry)) {
+            region.destination->slot = 0;
+        }
         return regions.erase(item);
+    }
+    void Publish(const Region& region) {
+        auto& destination = *region.destination;
+        if (!destination.slot || region.maximum_instructions >= destination.maximum_instructions) {
+            destination.minimum_budget = region.minimum_budget;
+            destination.maximum_instructions = region.maximum_instructions;
+            destination.slot = reinterpret_cast<uintptr_t>(region.entry);
+        }
     }
     void Clear() {
         while (!regions.empty()) Retire(regions.begin());
@@ -925,7 +1007,8 @@ struct Jit::Impl {
         const LocationDescriptor location(state.registers[15], PSR{state.cpsr}, FPSCR{state.fpscr}, step);
         const auto key = std::pair{location.UniqueHash(), limit};
         if (auto found = regions.find(key); found != regions.end()) {
-            found->second.used = ++clock;
+            found->second.source->used = ++clock;
+            Publish(found->second);
             return found->second.entry;
         }
         CodeReader reader{*config.callbacks, limit};
@@ -936,53 +1019,79 @@ struct Jit::Impl {
         Azahar::Wasm::OptimizeArmBlock(block,
             config.HasOptimization(OptimizationFlag::GetSetElimination) && !config.check_halt_on_memory_access,
             config.HasOptimization(OptimizationFlag::ConstProp), config.callbacks);
-        const auto json = Azahar::Wasm::SerializeArmBlock(block, [this](const auto& instruction) {
-            return CoprocessorBinding(instruction, config);
-        }, config.always_little_endian);
-        const uint32_t layout[] = {offsetof(ArmState, registers), offsetof(ArmState, cpsr),
-            offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit)};
-        const uint32_t memory_config[] = {static_cast<uint32_t>(reinterpret_cast<uintptr_t>(config.page_table)),
-            static_cast<uint32_t>(config.fastmem_pointer.value_or(0)), config.fastmem_pointer.has_value(),
-            static_cast<uint32_t>(config.page_table_pointer_mask_bits), config.absolute_offset_page_table,
-            config.detect_misaligned_access_via_page_table, config.only_detect_misalignment_via_page_table_on_page_boundary};
-        uint32_t bytes = 0;
-        const auto slot = CompileArmRegion(json.c_str(), layout, memory_config, &bytes);
-        if (!slot) {
-            char* error = ArmCompileError();
-            std::string message(error);
-            std::free(error);
-            throw std::runtime_error(message);
+        std::vector<RegionKey> references;
+        Entry entry = nullptr;
+        try {
+            auto& source = AcquireLink(key, references);
+            auto& destination = AcquireLink({location.UniqueHash(), 0}, references);
+            const std::function<uint32_t(uint64_t)> link =
+                config.HasOptimization(OptimizationFlag::BlockLinking) && !step ?
+                    std::function<uint32_t(uint64_t)>{[&](uint64_t destination) {
+                        return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(
+                            &AcquireLink({destination, 0}, references)));
+                    }} : std::function<uint32_t(uint64_t)>{};
+            const auto json = Azahar::Wasm::SerializeArmBlock(block, [this](const auto& instruction) {
+                return CoprocessorBinding(instruction, config);
+            }, config.always_little_endian, reinterpret_cast<uintptr_t>(&source), link);
+            const uint32_t layout[] = {offsetof(ArmState, registers), offsetof(ArmState, cpsr),
+                offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit), 2};
+            const uint32_t memory_config[] = {static_cast<uint32_t>(reinterpret_cast<uintptr_t>(config.page_table)),
+                static_cast<uint32_t>(config.fastmem_pointer.value_or(0)), config.fastmem_pointer.has_value(),
+                static_cast<uint32_t>(config.page_table_pointer_mask_bits), config.absolute_offset_page_table,
+                config.detect_misaligned_access_via_page_table, config.only_detect_misalignment_via_page_table_on_page_boundary};
+            uint32_t bytes = 0;
+            const auto slot = CompileArmRegion(json.c_str(), layout, memory_config, &bytes);
+            if (!slot) {
+                char* error = ArmCompileError();
+                std::string message(error);
+                std::free(error);
+                throw std::runtime_error(message);
+            }
+            entry = reinterpret_cast<Entry>(slot);
+            if (bytes > config.code_cache_size) {
+                throw std::runtime_error("ARM region exceeds the code cache budget");
+            }
+            while (generated_bytes + bytes > config.code_cache_size || regions.size() >= 65536) {
+                auto oldest = std::min_element(regions.begin(), regions.end(), [](auto& a, auto& b) {
+                    return a.second.source->used < b.second.source->used;
+                });
+                Retire(oldest);
+            }
+            ReleaseRetired();
+            auto region = regions.emplace(key, Region{entry, bytes, reader.first,
+                uint64_t(uint32_t(reader.last - reader.first)) + 4, &source, &destination,
+                std::max(1u, std::min(reader.instructions, limit)), limit, {}}).first;
+            region->second.links = std::move(references);
+            generated_bytes += bytes;
+            source.slot = slot;
+            source.used = ++clock;
+            Publish(region->second);
+            return entry;
+        } catch (...) {
+            if (entry) ReleaseArmRegion(reinterpret_cast<uintptr_t>(entry));
+            ReleaseLinks(references);
+            throw;
         }
-        const auto entry = reinterpret_cast<Entry>(slot);
-        if (bytes > config.code_cache_size) {
-            ReleaseArmRegion(slot);
-            throw std::runtime_error("ARM region exceeds the code cache budget");
-        }
-        while (generated_bytes + bytes > config.code_cache_size || regions.size() >= 65536) {
-            auto oldest = std::min_element(regions.begin(), regions.end(), [](auto& a, auto& b) {
-                return a.second.used < b.second.used;
-            });
-            Retire(oldest);
-        }
-        ReleaseRetired();
-        generated_bytes += bytes;
-        regions.emplace(key, Region{entry, bytes, reader.first, uint64_t(uint32_t(reader.last - reader.first)) + 4, ++clock});
-        return entry;
     }
     HaltReason Execute(bool step) {
         if (executing) throw std::logic_error("Recursive ARM JIT execution");
         halt.fetch_and(~static_cast<uint32_t>(HaltReason::CacheInvalidation));
         executing = true;
+        state.budget_valid = false;
         try {
             do {
                 if (halt.load()) break;
-                const uint64_t budget = config.callbacks->GetTicksRemaining();
+                const uint64_t budget = state.budget_valid ? state.next_budget :
+                    config.callbacks->GetTicksRemaining();
+                state.budget_valid = false;
                 if (!budget) break;
                 const auto limit = step ? 1u : uint32_t(std::min<uint64_t>(budget, 32));
                 const auto entry = GetEntry(limit, step);
                 const auto bounded_budget = std::min<uint64_t>(budget, std::numeric_limits<int64_t>::max());
-                const auto remaining = entry(&state, bounded_budget);
-                config.callbacks->AddTicks(bounded_budget - remaining);
+#ifdef AZAHAR_ARM_JIT_STATISTICS
+                native_dispatches.fetch_add(1, std::memory_order_relaxed);
+#endif
+                entry(&state, bounded_budget);
                 ReleaseRetired();
             } while (!step);
         } catch (...) {
@@ -1026,6 +1135,7 @@ void Jit::Reset() {
     impl->state = {};
     impl->state.config = &impl->config;
     impl->state.halt = &impl->halt;
+    impl->state.clock = &impl->clock;
 }
 void Jit::HaltExecution(HaltReason reason) { impl->halt.fetch_or(static_cast<uint32_t>(reason)); }
 void Jit::ClearHalt(HaltReason reason) { impl->halt.fetch_and(~static_cast<uint32_t>(reason)); }

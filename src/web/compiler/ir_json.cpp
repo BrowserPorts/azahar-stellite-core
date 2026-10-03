@@ -27,7 +27,8 @@ const char* OpcodeName(Dynarmic::IR::Opcode opcode) {
 }
 
 struct TerminalWriter final : boost::static_visitor<std::string> {
-    TerminalWriter() = default;
+    const std::function<uint32_t(uint64_t)>& link;
+    explicit TerminalWriter(const std::function<uint32_t(uint64_t)>& link_) : link(link_) {}
     std::string operator()(const Dynarmic::IR::Term::Invalid&) const {
         throw std::runtime_error("Invalid ARM translation terminal");
     }
@@ -46,8 +47,13 @@ struct TerminalWriter final : boost::static_visitor<std::string> {
     template <class T>
     std::string Link(const T& terminal) const {
         const Dynarmic::A32::LocationDescriptor location(terminal.next);
-        return "{\"kind\":\"link\",\"pc\":" + std::to_string(location.PC()) +
-            ",\"cpsr\":" + std::to_string(location.CPSR().Value()) + "}";
+        std::string result = "{\"kind\":\"link\",\"pc\":" + std::to_string(location.PC()) +
+            ",\"cpsr\":" + std::to_string(location.CPSR().Value());
+        if (link) {
+            result += ",\"cell\":" + std::to_string(link(location.UniqueHash())) +
+                      ",\"fpscr\":" + std::to_string(location.FPSCR().Value());
+        }
+        return result + "}";
     }
     std::string operator()(const Dynarmic::IR::Term::LinkBlock& terminal) const { return Link(terminal); }
     std::string operator()(const Dynarmic::IR::Term::LinkBlockFast& terminal) const { return Link(terminal); }
@@ -82,7 +88,8 @@ std::string EncodeJsonString(const std::string& text) {
 
 std::string SerializeArmBlock(const Dynarmic::IR::Block& block,
     const std::function<std::string(const Dynarmic::IR::Inst&)>& binding,
-    bool always_little_endian) {
+    bool always_little_endian, uint32_t source_cell,
+    const std::function<uint32_t(uint64_t)>& link) {
     std::unordered_map<const Dynarmic::IR::Inst*, unsigned> names;
     unsigned index = 0;
     for (const auto& instruction : block) names.emplace(&instruction, index++);
@@ -90,13 +97,18 @@ std::string SerializeArmBlock(const Dynarmic::IR::Block& block,
     const auto end_cpsr = Dynarmic::A32::LocationDescriptor(block.EndLocation()).CPSR().Value();
     stream << "{\"cycles\":" << block.CycleCount() << ",\"condition\":" << static_cast<int>(block.GetCondition())
            << ",\"endCpsr\":" << (end_cpsr & ~(always_little_endian ? 0x200u : 0u));
+    if (source_cell) stream << ",\"sourceCell\":" << source_cell;
     if (block.HasConditionFailedLocation()) {
         const auto failed = Dynarmic::A32::LocationDescriptor(block.ConditionFailedLocation());
         stream << ",\"conditionFailedPc\":" << failed.PC()
                << ",\"conditionFailedCpsr\":" << failed.CPSR().Value()
                << ",\"conditionFailedCycles\":" << block.ConditionFailedCycleCount();
+        if (link) {
+            stream << ",\"conditionFailedCell\":" << link(failed.UniqueHash())
+                   << ",\"conditionFailedFpscr\":" << failed.FPSCR().Value();
+        }
     }
-    stream << ",\"terminal\":" << boost::apply_visitor(TerminalWriter{}, block.GetTerminal()) << ",\"nodes\":[";
+    stream << ",\"terminal\":" << boost::apply_visitor(TerminalWriter{link}, block.GetTerminal()) << ",\"nodes\":[";
     bool first = true;
     for (const auto& instruction : block) {
         if (!first) stream << ',';

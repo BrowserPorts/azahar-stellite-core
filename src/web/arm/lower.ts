@@ -90,6 +90,8 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     locals.push("v128", "v128", "v128", "v128", "v128");
     if (block.nodes.some((node) => /^VectorRoundingShiftLeft(S|U)(8|16)$/.test(node.op))) locals.push("v128");
   }
+  const linkSlot = locals.length + 2;
+  if (block.sourceCell) locals.push("i32");
   const constant = (value: number): Bytes => body.byte(0x41).signed(BigInt(value), 32);
   const get = (index: number): Bytes => body.byte(0x20).u32(index);
   const set = (index: number): Bytes => body.byte(0x21).u32(index);
@@ -152,6 +154,34 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     return undefined;
   };
   const consume = (cycles: number): Bytes => get(1).byte(0x42).signed(BigInt(cycles), 64).byte(0x7d);
+  const finishBlock = (cycles: number, destination?: Extract<Terminal, { kind: "link" }>): undefined => {
+    if (!block.sourceCell) {
+      consume(cycles).byte(0x0f);
+      return undefined;
+    }
+    helper("WasmAddTicks", ["i64", "i32"], [], () => {
+      body.byte(0x42).signed(BigInt(cycles), 64); constant(block.sourceCell!);
+    });
+    if (destination?.cell && destination.fpscr !== undefined) {
+      helper("WasmNextBudget", ["i64"], ["i64"], () =>
+        constant(destination.cell!).byte(0x28).u32(2).u32(16).byte(0xad));
+      set(1);
+      get(1).byte(0x42).signed(0n, 64).byte(0x55).byte(0x04).byte(0x40);
+      // Tick callbacks may change the translation mode or invalidate an incoming link.
+      load(options.layout.registers + 60); constant(destination.pc).byte(0x46);
+      load(options.layout.cpsr); constant(0x0600fe20).byte(0x71);
+      constant(destination.cpsr & 0x0600fe20).byte(0x46).byte(0x71);
+      load(options.layout.fpscr); constant(0x07f70000).byte(0x71);
+      constant(destination.fpscr & 0x07f70000).byte(0x46).byte(0x71);
+      constant(destination.cell).byte(0x28).u32(2).u32(0).byte(0x22).u32(linkSlot);
+      body.byte(0x45).byte(0x45).byte(0x71).byte(0x04).byte(0x40);
+      get(0); get(1); get(linkSlot);
+      const signature = imports.findIndex((item) => item.name === "WasmNextBudget");
+      body.byte(0x13).u32(signature).byte(0).byte(0x0b).byte(0x0b);
+    }
+    body.byte(0x42).signed(0n, 64).byte(0x0f);
+    return undefined;
+  };
   const mergeFlags = (mask: number, value: () => unknown): undefined => store(options.layout.cpsr, () => {
     load(options.layout.cpsr); constant(~mask).byte(0x71);
     value(); constant(mask).byte(0x71).byte(0x72);
@@ -319,8 +349,9 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       case "link":
         store(options.layout.registers + 60, () => constant(term.pc));
         mergeFlags(0x0600fe20, () => constant(term.cpsr));
+        finishBlock(block.cycles, term);
         break;
-      case "dispatch": break;
+      case "dispatch": finishBlock(block.cycles); break;
       case "if":
         condition(term.condition); body.byte(0x04).byte(0x40);
         terminal(term.then); body.byte(0x05); terminal(term.else); body.byte(0x0b);
@@ -333,6 +364,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         helper("WasmCheckHalt", [], ["i32"], () => undefined);
         body.byte(0x45).byte(0x04).byte(0x40);
         terminal(term.else); body.byte(0x0b);
+        finishBlock(block.cycles);
         break;
     }
     return undefined;
@@ -347,7 +379,12 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     condition(block.condition); body.byte(0x45).byte(0x04).byte(0x40);
     store(options.layout.registers + 60, () => constant(block.conditionFailedPc!));
     mergeFlags(0x0600fe20, () => constant(block.conditionFailedCpsr!));
-    consume(block.conditionFailedCycles).byte(0x0f).byte(0x0b);
+    finishBlock(block.conditionFailedCycles, {
+      kind: "link", pc: block.conditionFailedPc, cpsr: block.conditionFailedCpsr,
+      ...(block.conditionFailedCell ? { cell: block.conditionFailedCell } : {}),
+      ...(block.conditionFailedFpscr !== undefined ? { fpscr: block.conditionFailedFpscr } : {}),
+    });
+    body.byte(0x0b);
   }
   block.nodes.forEach((node, index) => {
     const arg = (position: number): undefined => argument(node.args[position]!);
@@ -1060,7 +1097,8 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     if (result) set(index + 2);
   });
   terminal(block.terminal);
-  consume(block.cycles);
+  finishBlock(block.cycles);
   return regionModule({ imports, shared: options.shared, maximumPages: options.maximumPages,
-    signature: { params: ["i32", "i64"], results: ["i64"] }, locals, body });
+    signature: { params: ["i32", "i64"], results: ["i64"] }, locals, body,
+    table: Boolean(block.sourceCell) });
 }

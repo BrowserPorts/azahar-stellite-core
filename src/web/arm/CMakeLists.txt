@@ -32,6 +32,10 @@ add_library(azahar_arm_jit STATIC
     "${DYNARMIC_ROOT}/src/dynarmic/common/fp/unpacked.cpp")
 target_link_libraries(azahar_arm_jit PUBLIC azahar_arm_frontend)
 target_compile_features(azahar_arm_jit PUBLIC cxx_std_20)
+option(AZAHAR_ARM_JIT_STATISTICS "Count native dispatches and directly linked Wasm blocks" OFF)
+if(AZAHAR_ARM_JIT_STATISTICS)
+    target_compile_definitions(azahar_arm_jit PRIVATE AZAHAR_ARM_JIT_STATISTICS)
+endif()
 target_compile_options(azahar_arm_jit PRIVATE -O3 PUBLIC -msimd128 -fwasm-exceptions)
 target_link_options(azahar_arm_jit INTERFACE
     -fwasm-exceptions -sALLOW_TABLE_GROWTH=1 -Wl,--export-table

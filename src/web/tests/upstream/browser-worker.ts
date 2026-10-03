@@ -31,11 +31,16 @@ worker.onmessage = async (event: MessageEvent<FixtureRequest>): Promise<undefine
       dspHost = await DspJitHost.create(templates, families);
     }
     const { default: createModule } = await import(event.data.url);
+    let linkedBlocks: (() => bigint) | undefined;
     await createModule({
       ...(dspHost ? { azaharDspJitHost: dspHost } : {}),
       azaharJitHost: new ArmJitHost(),
       azaharPicaJitHost: new PicaJitHost(event.data.dispatch),
       arguments: event.data.args,
+      preRun: [(module: { _azahar_arm_jit_linked_blocks?: () => bigint }): undefined => {
+        linkedBlocks = module._azahar_arm_jit_linked_blocks;
+        return undefined;
+      }],
       print: append,
       printErr: append,
       onAbort: (message: string): undefined => {
@@ -44,6 +49,8 @@ worker.onmessage = async (event: MessageEvent<FixtureRequest>): Promise<undefine
         return undefined;
       },
       onExit: (exit: number): undefined => {
+        const count = linkedBlocks?.();
+        if (count) append(`ARM JIT: ${count} blocks entered through direct Wasm links`);
         worker.postMessage({ exit } satisfies FixtureReply);
         return undefined;
       },
