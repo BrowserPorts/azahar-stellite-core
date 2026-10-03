@@ -12,7 +12,30 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "ENABLE_LTO": true,
-        "AZAHAR_BUILD_UPSTREAM_FUZZ": true
+        "AZAHAR_BUILD_UPSTREAM_FUZZ": true,
+        "TEAKRA_TEST_ASSETS_DIR": "${sourceDir}/../../../../build/upstream-teakra"
+      }
+    },
+    {
+      "name": "web-dsp-jit",
+      "displayName": "Teakra native fixtures in the Wasm DSP JIT",
+      "inherits": "web-native-fixtures",
+      "binaryDir": "${sourceDir}/../../../../build/web-dsp-jit",
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "-msimd128",
+        "AZAHAR_TEAKRA_JIT": true,
+        "AZAHAR_TEAKRA_JIT_THREADS": false,
+        "AZAHAR_DSP_JIT_OPTIMIZE_AFTER": "128"
+      }
+    },
+    {
+      "name": "web-dsp-jit-hot",
+      "displayName": "Teakra native fixtures in the threaded hot Wasm DSP JIT",
+      "inherits": "web-dsp-jit",
+      "binaryDir": "${sourceDir}/../../../../build/web-dsp-jit-hot",
+      "cacheVariables": {
+        "AZAHAR_TEAKRA_JIT_THREADS": true,
+        "AZAHAR_DSP_JIT_OPTIMIZE_AFTER": "1"
       }
     }
   ],
@@ -21,12 +44,36 @@
       "name": "web-native-fixtures",
       "configurePreset": "web-native-fixtures",
       "targets": ["upstream_fixtures"]
+    },
+    {
+      "name": "web-dsp-jit",
+      "configurePreset": "web-dsp-jit",
+      "targets": ["teakra_reference_fixtures", "test_verifier"]
+    },
+    {
+      "name": "web-dsp-jit-hot",
+      "configurePreset": "web-dsp-jit-hot",
+      "targets": ["teakra_reference_fixtures", "test_verifier"]
     }
   ],
   "testPresets": [
     {
       "name": "web-native-fixtures",
       "configurePreset": "web-native-fixtures",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "web-dsp-jit",
+      "configurePreset": "web-dsp-jit",
+      "filter": { "include": { "name": "^(teakra_reference_fixtures|tests)$" } },
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "web-dsp-jit-hot",
+      "configurePreset": "web-dsp-jit-hot",
+      "filter": { "include": { "name": "^(teakra_reference_fixtures|tests)$" } },
       "output": { "outputOnFailure": true },
       "execution": { "noTestsAction": "error" }
     }
