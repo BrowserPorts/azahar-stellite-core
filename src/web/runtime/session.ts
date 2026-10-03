@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { ArmJitHost } from "../arm/jit-host";
+import type { ArmJitStatistics } from "../arm/jit-host";
 import { PicaJitHost } from "../pica/jit-host";
-import type { GraphicsClient } from "../gpu/client";
+import type { GraphicsClient, GraphicsStatistics } from "../gpu/client";
 import type { AzaharModule, AzaharModuleFactory } from "./module";
 import { OpfsSaveStates } from "./save-states";
 import { UserStorageLock } from "./storage-lock";
@@ -24,7 +25,7 @@ export interface InputState {
   touchPressed: boolean;
 }
 
-/** Azahar's native counters since the previous read, including frame pacing time. */
+/** Native frame averages and browser interval totals, including frame pacing time. */
 export interface PerformanceStats {
   systemFps: number;
   gameFps: number;
@@ -36,6 +37,10 @@ export interface PerformanceStats {
   gpuCommandMs: number;
   swapMs: number;
   otherMs: number;
+  /** Totals since the previous snapshot; excludes native IR translation. */
+  armJit: ArmJitStatistics;
+  /** Totals since the previous snapshot, rather than per-frame averages. */
+  graphics: GraphicsStatistics;
 }
 
 /** All native entry points are called between frames on the emulation worker. */
@@ -45,7 +50,8 @@ export class BrowserSession {
   #closed = false;
   #gamePath = 0;
 
-  private constructor(readonly core: AzaharModule, private readonly storage: UserStorageLock) {}
+  private constructor(readonly core: AzaharModule, private readonly storage: UserStorageLock,
+    private readonly armJit: ArmJitHost, private readonly graphics: GraphicsClient) {}
 
   static async create(factory: AzaharModuleFactory, output: SessionOutput,
     graphics: GraphicsClient): Promise<BrowserSession> {
@@ -53,9 +59,10 @@ export class BrowserSession {
       throw new Error("Azahar requires Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy headers");
     }
     const storage = await UserStorageLock.acquire();
+    const armJit = new ArmJitHost();
     try {
       const core = await factory({
-        azaharJitHost: new ArmJitHost(),
+        azaharJitHost: armJit,
         azaharPicaJitHost: new PicaJitHost(),
         azaharGraphicsHost: graphics,
         print: output.log,
@@ -71,7 +78,7 @@ export class BrowserSession {
       if (core._azahar_web_abi() !== 2) throw new Error("Unsupported Azahar browser ABI");
       if (!core._azahar_mount_storage()) throw new Error("Azahar could not mount OPFS user storage");
       if (!core._azahar_initialize()) throw new Error("Azahar initialization failed");
-      return new BrowserSession(core, storage);
+      return new BrowserSession(core, storage, armJit, graphics);
     } catch (error) { storage.close(); throw error; }
   }
 
@@ -121,6 +128,7 @@ export class BrowserSession {
       vblankMs: values[3]! * 1000, hleSvcMs: values[4]! * 1000,
       hleIpcMs: values[5]! * 1000, gpuCommandMs: values[6]! * 1000,
       swapMs: values[7]! * 1000, otherMs: values[8]! * 1000,
+      armJit: this.armJit.takeStatistics(), graphics: this.graphics.takeStatistics(),
     };
   }
 

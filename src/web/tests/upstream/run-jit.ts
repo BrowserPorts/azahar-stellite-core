@@ -13,12 +13,15 @@ const dispatch = args.includes("--pica-dispatch");
 const replayPath = process.env.DYNARMIC_THUMB_IT_REPLAY;
 const replay = replayPath ? await readFile(replayPath) : undefined;
 let linkedBlocks: (() => bigint) | undefined;
+const armJit = new ArmJitHost();
 process.on("exit", () => {
   const count = linkedBlocks?.();
   if (count) console.log(`ARM JIT: ${count} blocks entered through direct Wasm links`);
+  const stats = armJit.takeStatistics();
+  if (stats.compiledBlocks) console.log(`ARM JIT: ${stats.compiledBlocks} regions, ${stats.generatedBytes} Wasm bytes, ${stats.compileMs.toFixed(2)} ms compilation`);
 });
 await createModule({ arguments: args.filter((arg) => arg !== "--pica-dispatch"),
-  azaharJitHost: new ArmJitHost(), azaharPicaJitHost: new PicaJitHost(dispatch),
+  azaharJitHost: armJit, azaharPicaJitHost: new PicaJitHost(dispatch),
   preRun: [(module: { FS: { writeFile(path: string, data: Uint8Array): undefined },
     ENV: Record<string, string>; _azahar_arm_jit_linked_blocks?: () => bigint }) => {
     linkedBlocks = module._azahar_arm_jit_linked_blocks;

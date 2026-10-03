@@ -60,8 +60,12 @@ async function initialize(fence: SharedArrayBuffer): Promise<undefined> {
   draws = await GraphicsDraws.create(device, shaders, textures, samplers);
   screens = await GraphicsScreens.create(device, textures);
   if (failure) throw new Error(failure);
+  const info = adapter.info;
   post({ type: "ready", configurationSize: shaders.configurationSize,
-    configurationSchema: shaders.configurationSchema });
+    configurationSchema: shaders.configurationSchema, adapter: {
+      vendor: info.vendor, architecture: info.architecture, device: info.device,
+      description: info.description, isFallbackAdapter: info.isFallbackAdapter,
+    } });
   return undefined;
 }
 

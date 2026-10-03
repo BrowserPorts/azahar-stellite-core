@@ -85,7 +85,7 @@ export class AzaharClient {
     await this.request({ type: "input", state }); return undefined;
   }
 
-  /** Read and reset the native performance interval at an emulation frame boundary. */
+  /** Read and reset performance counters at an emulation frame boundary. */
   async performance(): Promise<PerformanceStats> {
     const result = await this.request({ type: "performance" });
     if (!result || typeof result !== "object") throw new Error("Invalid performance snapshot returned by Azahar");

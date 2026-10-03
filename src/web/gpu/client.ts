@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { GraphicsEvent, GraphicsRequest } from "./messages";
+import type { GraphicsAdapterInfo, GraphicsEvent, GraphicsRequest } from "./messages";
 import { fenceByteLength, fenceErrorOffset } from "./messages";
 import type { TextureRegion } from "./textures";
 import type { TextureRect } from "./blits";
@@ -9,6 +9,13 @@ import type { NativeDrawState } from "./draw-types";
 import type { ScreenFrame } from "./screens";
 
 type Pending = { resolve(): unknown; reject(error: Error): unknown };
+
+export interface GraphicsStatistics {
+  adapter: GraphicsAdapterInfo;
+  /** Emulation worker wall time waiting for readbacks and native graphics fences. */
+  fenceWaitMs: number;
+  fenceCount: number;
+}
 
 /** Owns the GPU worker and the synchronous fence used by native cache readbacks. */
 export class GraphicsClient {
@@ -24,6 +31,9 @@ export class GraphicsClient {
   #failure: Error | undefined;
   #reported = false;
   #ready: Promise<undefined>;
+  #adapter: GraphicsAdapterInfo | undefined;
+  #fenceWaitMs = 0;
+  #fenceCount = 0;
   configurationSize = 0;
   configurationSchema = 0n;
 
@@ -32,6 +42,7 @@ export class GraphicsClient {
       worker.onmessage = (event: MessageEvent<GraphicsEvent>): undefined => {
         const response = event.data;
         if (response.type === "ready") {
+          this.#adapter = response.adapter;
           this.configurationSize = response.configurationSize;
           this.configurationSchema = response.configurationSchema;
           resolve(undefined);
@@ -79,6 +90,16 @@ export class GraphicsClient {
 
   finish(): undefined {
     return this.synchronize((sequence) => ({ type: "finish", sequence }));
+  }
+
+  takeStatistics(): GraphicsStatistics {
+    this.checkOpen();
+    if (!this.#adapter) throw new Error("WebGPU adapter information is unavailable");
+    const stats = { adapter: { ...this.#adapter }, fenceWaitMs: this.#fenceWaitMs,
+      fenceCount: this.#fenceCount };
+    this.#fenceWaitMs = 0;
+    this.#fenceCount = 0;
+    return stats;
   }
 
   screens(frame: ScreenFrame): boolean {
@@ -159,7 +180,8 @@ export class GraphicsClient {
     const previous = this.#sequence;
     this.#sequence = (previous + 1) | 0;
     this.post(build(this.#sequence));
-    const deadline = performance.now() + 60000;
+    const started = performance.now();
+    const deadline = started + 60000;
     while (Atomics.load(this.#control, 0) !== this.#sequence) {
       this.checkOpen();
       const remaining = deadline - performance.now();
@@ -170,6 +192,8 @@ export class GraphicsClient {
       Atomics.wait(this.#control, 0, previous, remaining);
     }
     this.checkOpen();
+    this.#fenceWaitMs += performance.now() - started;
+    this.#fenceCount++;
     this.#queuedBytes = 0;
     return undefined;
   }

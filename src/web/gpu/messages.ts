@@ -6,6 +6,14 @@ import type { NativeSampler } from "./samplers";
 import type { NativeDraw } from "./draw-types";
 import type { ScreenFrame } from "./screens";
 
+export interface GraphicsAdapterInfo {
+  vendor: string;
+  architecture: string;
+  device: string;
+  description: string;
+  isFallbackAdapter: boolean;
+}
+
 export type GraphicsRequest =
   { type: "initialize"; fence: SharedArrayBuffer } |
   { type: "surface"; id: number; canvas: OffscreenCanvas } |
@@ -28,7 +36,7 @@ export type GraphicsRequest =
   { type: "close"; id: number };
 
 export type GraphicsEvent =
-  { type: "ready"; configurationSize: number; configurationSchema: bigint } |
+  { type: "ready"; configurationSize: number; configurationSchema: bigint; adapter: GraphicsAdapterInfo } |
   { type: "presented" } |
   { type: "reply"; id: number } |
   { type: "error"; message: string; id?: number };
