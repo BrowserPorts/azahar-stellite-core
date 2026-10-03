@@ -21,3 +21,12 @@ set_target_properties(azahar_dsp_templates PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     OUTPUT_NAME "azahar-dsp-templates" SUFFIX ".wasm"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
+
+find_program(BUN_EXECUTABLE NAMES bun REQUIRED)
+set(DSP_HOST_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-dsp-jit.js")
+add_custom_command(OUTPUT "${DSP_HOST_OUTPUT}"
+    COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/jit-host.ts"
+        --target browser --outfile "${DSP_HOST_OUTPUT}"
+    DEPENDS jit-host.ts ../package.json ../bun.lock
+    VERBATIM)
+add_custom_target(azahar_dsp_jit_host DEPENDS "${DSP_HOST_OUTPUT}")

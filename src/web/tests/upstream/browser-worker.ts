@@ -7,6 +7,7 @@ export interface FixtureRequest {
   url: string;
   args: string[];
   dispatch: boolean;
+  dsp?: boolean;
 }
 export type FixtureReply = { line: string } | { exit: number };
 
@@ -17,8 +18,16 @@ worker.onmessage = async (event: MessageEvent<FixtureRequest>): Promise<undefine
     return undefined;
   };
   try {
+    let dspHost;
+    if (event.data.dsp) {
+      const { DspJitHost } = await import(new URL("azahar-dsp-jit.js", event.data.url).href);
+      const response = await fetch(new URL("azahar-dsp-templates.wasm", event.data.url));
+      if (!response.ok) throw new Error("Could not load the DSP opcode templates");
+      dspHost = new DspJitHost(new Uint8Array(await response.arrayBuffer()));
+    }
     const { default: createModule } = await import(event.data.url);
     await createModule({
+      ...(dspHost ? { azaharDspJitHost: dspHost } : {}),
       azaharJitHost: new ArmJitHost(),
       azaharPicaJitHost: new PicaJitHost(event.data.dispatch),
       arguments: event.data.args,

@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(CTest)
 get_filename_component(AZAHAR_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." ABSOLUTE)
+option(AZAHAR_TEAKRA_JIT "Run original Teakra fixtures through the Wasm JIT" OFF)
 set(DYNARMIC_ROOT "${AZAHAR_ROOT}/externals/dynarmic")
 
 if(EMSCRIPTEN)
@@ -14,6 +15,10 @@ if(EMSCRIPTEN)
     add_link_options(-fwasm-exceptions -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=4194304
         -sENVIRONMENT=node -sEXIT_RUNTIME=1 -sDYNAMIC_EXECUTION=0)
     find_program(NODE_EXECUTABLE NAMES node REQUIRED)
+    if(AZAHAR_TEAKRA_JIT)
+        add_compile_options(-pthread)
+        add_link_options(-pthread)
+    endif()
 endif()
 
 set(CATCH_BUILD_TESTING OFF CACHE BOOL "" FORCE)
@@ -64,8 +69,38 @@ target_include_directories(dynarmic_fp_fixtures PRIVATE "${DYNARMIC_ROOT}/src")
 target_link_libraries(dynarmic_fp_fixtures PRIVATE Catch2::Catch2WithMain fmt::fmt merry::mcl)
 register_fixture(dynarmic_fp_fixtures)
 
-# Teakra's reference interpreter is confined to this standalone test build.
-# These fixtures establish the DSP oracle and do not validate a DSP JIT yet.
+# The same upstream cases can select either execution backend at link time.
+if(AZAHAR_TEAKRA_JIT)
+    if(NOT EMSCRIPTEN)
+        message(FATAL_ERROR "The Teakra Wasm JIT requires Emscripten")
+    endif()
+    set(TEAKRA_NATIVE_EXECUTION_BACKEND OFF CACHE BOOL "" FORCE)
+    find_program(BUN_EXECUTABLE NAMES bun REQUIRED)
+    add_subdirectory("${AZAHAR_ROOT}/src/web/dsp" "${CMAKE_CURRENT_BINARY_DIR}/dsp-templates")
+    set(DSP_JIT_RUNNER "${CMAKE_CURRENT_BINARY_DIR}/run-dsp-jit.mjs")
+    add_custom_command(OUTPUT "${DSP_JIT_RUNNER}"
+        COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/run-dsp-jit.ts"
+            --target node --outfile "${DSP_JIT_RUNNER}"
+        DEPENDS run-dsp-jit.ts "${AZAHAR_ROOT}/src/web/dsp/jit-host.ts"
+            "${AZAHAR_ROOT}/src/web/package.json" "${AZAHAR_ROOT}/src/web/bun.lock"
+        VERBATIM)
+    add_custom_target(dsp_jit_fixture_runner DEPENDS "${DSP_JIT_RUNNER}")
+else()
+    set(TEAKRA_NATIVE_EXECUTION_BACKEND ON CACHE BOOL "" FORCE)
+endif()
+function(link_dsp_jit target)
+    target_sources(${target} PRIVATE "${AZAHAR_ROOT}/src/web/dsp/jit.cpp")
+    target_include_directories(${target} PRIVATE "${AZAHAR_ROOT}/externals/teakra/src"
+        "${AZAHAR_ROOT}/externals/teakra/include/teakra/impl")
+    target_link_libraries(${target} PRIVATE "$<TARGET_FILE:azahar_dsp_templates>")
+    add_dependencies(${target} azahar_dsp_templates dsp_jit_fixture_runner)
+    target_link_options(${target} PRIVATE -sMAIN_MODULE=2 -sMODULARIZE=1 -sEXPORT_ES6=1
+        -Wl,--export=__stack_pointer "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free']"
+        "-sEXPORTED_RUNTIME_METHODS=['callMain','getExceptionMessage']")
+    set_target_properties(${target} PROPERTIES SUFFIX ".mjs"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+        CROSSCOMPILING_EMULATOR "${NODE_EXECUTABLE};${DSP_JIT_RUNNER}")
+endfunction()
 set(TEAKRA_BUILD_UNIT_TESTS OFF CACHE BOOL "" FORCE)
 set(TEAKRA_BUILD_TOOLS ON CACHE BOOL "" FORCE)
 set(TEAKRA_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
@@ -97,7 +132,29 @@ target_include_directories(teakra_reference_fixtures PRIVATE
     "${AZAHAR_ROOT}/externals/teakra/externals/catch")
 target_link_libraries(teakra_reference_fixtures PRIVATE teakra)
 target_compile_definitions(teakra_reference_fixtures PRIVATE CATCH_CONFIG_NO_POSIX_SIGNALS)
-register_fixture(teakra_reference_fixtures)
+if(AZAHAR_TEAKRA_JIT)
+    link_dsp_jit(test_verifier)
+    link_dsp_jit(teakra_reference_fixtures)
+    target_link_options(teakra_reference_fixtures PRIVATE -sENVIRONMENT=web,worker,node)
+    set(DSP_WEB_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
+    file(GENERATE OUTPUT "${DSP_WEB_DIRECTORY}/browser-jit.html" INPUT
+        "${CMAKE_CURRENT_SOURCE_DIR}/browser-jit.html")
+    add_custom_command(OUTPUT "${DSP_WEB_DIRECTORY}/browser-jit.js" "${DSP_WEB_DIRECTORY}/browser-worker.js"
+        COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/browser-jit.ts"
+            "${CMAKE_CURRENT_SOURCE_DIR}/browser-worker.ts" --target browser --outdir "${DSP_WEB_DIRECTORY}"
+        DEPENDS browser-jit.ts browser-worker.ts "${AZAHAR_ROOT}/src/web/arm/jit-host.ts"
+            "${AZAHAR_ROOT}/src/web/arm/lower.ts" "${AZAHAR_ROOT}/src/web/arm/ir.ts"
+            "${AZAHAR_ROOT}/src/web/pica/jit-host.ts" "${AZAHAR_ROOT}/src/web/pica/lower.ts"
+            "${AZAHAR_ROOT}/src/web/pica/control-flow.ts" "${AZAHAR_ROOT}/src/web/pica/instruction.ts"
+            "${AZAHAR_ROOT}/src/web/wasm/binary.ts" "${AZAHAR_ROOT}/src/web/protocol.ts"
+        VERBATIM)
+    add_custom_target(browser_dsp_fixtures DEPENDS teakra_reference_fixtures azahar_dsp_jit_host
+        "${DSP_WEB_DIRECTORY}/browser-jit.js" "${DSP_WEB_DIRECTORY}/browser-worker.js")
+    add_test(NAME teakra_reference_fixtures COMMAND "${NODE_EXECUTABLE}"
+        "${DSP_JIT_RUNNER}" "$<TARGET_FILE:teakra_reference_fixtures>")
+else()
+    register_fixture(teakra_reference_fixtures)
+endif()
 add_custom_target(upstream_fixtures DEPENDS azahar_portable_fixtures dynarmic_fp_fixtures
     teakra_reference_fixtures test_verifier)
 

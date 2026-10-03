@@ -8,7 +8,51 @@
 #include "decoder.h"
 #include "templates.h"
 
+extern "C" {
+EMSCRIPTEN_KEEPALIVE extern const uint8_t azahar_dsp_template_anchor = 0;
+EMSCRIPTEN_KEEPALIVE void azahar_dsp_template_table_anchor() {}
+}
+
 namespace {
+
+struct ReadOnlyTable {
+    uintptr_t address;
+    size_t size;
+};
+
+template <typename T, typename = std::void_t<>>
+struct OperandSource {
+    using type = typename T::FilterResult;
+};
+
+template <typename T>
+struct OperandSource<T, std::void_t<typename T::BaseType>> {
+    using type = typename T::BaseType::FilterResult;
+};
+
+template <typename T, typename = std::void_t<>>
+struct OperandTable {
+    static void Append(std::vector<ReadOnlyTable>&) {}
+};
+
+template <typename T>
+struct OperandTable<T, std::void_t<decltype(T::values)>> {
+    static void Append(std::vector<ReadOnlyTable>& tables) {
+        tables.push_back({reinterpret_cast<uintptr_t>(T::values), sizeof(T::values)});
+    }
+};
+
+template <typename List>
+struct OperandTables;
+
+template <typename... Operands>
+struct OperandTables<OperandList<Operands...>> {
+    static std::vector<ReadOnlyTable> Get() {
+        std::vector<ReadOnlyTable> result;
+        (OperandTable<typename OperandSource<Operands>::type>::Append(result), ...);
+        return result;
+    }
+};
 
 struct OpcodeTemplate {
     using Entry = void (*)(Web::Dsp::Semantics&, u16, u16);
@@ -18,6 +62,7 @@ struct OpcodeTemplate {
     bool expanded;
     Entry entry;
     std::vector<Rejector> rejectors;
+    std::vector<ReadOnlyTable> tables;
 
     OpcodeTemplate Except(Rejector rejector) const {
         OpcodeTemplate result(*this);
@@ -44,7 +89,8 @@ struct TemplateCreator {
         static_assert(NoOverlap<u16, expected, Operands::Mask...>, "Overlapping DSP operands");
         constexpr u16 mask = (~Operands::Mask & ... & 0xffff);
         constexpr bool expanded = (Operands::NeedExpansion || ...);
-        return {name, mask, expected, expanded, &Invoke<func>, {}};
+        return {name, mask, expected, expanded, &Invoke<func>, {},
+                OperandTables<typename FilterOperand<Operands...>::result>::Get()};
     }
 };
 
@@ -53,7 +99,11 @@ const std::string& Metadata() {
     // Each entry points to a compiled body with a fixed member function, without dispatch.
     static const auto templates = GetDecodeTable<Web::Dsp::Semantics, TemplateCreator>();
     static const std::string metadata = [] {
-        std::string result = "{\"abi\":1,\"registerSize\":";
+        std::string result = "{\"abi\":2,\"anchor\":";
+        result += std::to_string(reinterpret_cast<uintptr_t>(&azahar_dsp_template_anchor));
+        result += ",\"tableAnchor\":";
+        result += std::to_string(reinterpret_cast<uintptr_t>(&azahar_dsp_template_table_anchor));
+        result += ",\"registerSize\":";
         result += std::to_string(sizeof(Teakra::RegisterState));
         result += ",\"semanticsSize\":" + std::to_string(sizeof(Web::Dsp::Semantics));
         result += ",\"memorySize\":" + std::to_string(sizeof(Web::Dsp::MemoryAccess));
@@ -75,6 +125,14 @@ const std::string& Metadata() {
                 first_rejector = false;
                 result += '[' + std::to_string(rejector.mask);
                 result += ',' + std::to_string(rejector.unexpected) + ']';
+            }
+            result += "],[";
+            bool first_table = true;
+            for (const auto& table : instruction.tables) {
+                if (!first_table) result += ',';
+                first_table = false;
+                result += '[' + std::to_string(table.address);
+                result += ',' + std::to_string(table.size) + ']';
             }
             result += "]]";
         }
