@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import binaryen from "binaryen";
+import { foldReadOnlyLoads } from "./fold-readonly-loads.js";
 
 const features = binaryen.Features.MutableGlobals | binaryen.Features.SignExt |
   binaryen.Features.BulkMemory | binaryen.Features.ExceptionHandling |
@@ -34,6 +35,7 @@ export class DspJitHost {
   readonly #tableAnchorOffset: number;
   compilations = 0;
   emittedBytes = 0;
+  foldedLoads = 0;
 
   constructor(readonly templates: Uint8Array<ArrayBuffer>, readonly onCompile?: (count: number) => unknown) {
     const module = binaryen.readBinary(templates);
@@ -128,7 +130,7 @@ export class DspJitHost {
   }
 
   compile(opcode: number, expansion: number): number {
-    if (!this.#imports || !this.#table) throw new Error("DSP compiler is not bound to the core");
+    if (!this.#imports || !this.#table || !this.#memory) throw new Error("DSP compiler is not bound to the core");
     const pattern = this.#patterns[opcode];
     if (!pattern) throw new Error(`Unimplemented DSP opcode ${opcode.toString(16)}`);
     const key = (opcode * 65536 + (pattern[3] ? expansion : 0)) >>> 0;
@@ -145,6 +147,16 @@ export class DspJitHost {
       module.addFunctionExport("run", "run");
       module.runPasses(["inlining", "precompute-propagate", "dce", "vacuum",
         "remove-unused-module-elements"]);
+      if (pattern[6].length) {
+        let folded;
+        do {
+          folded = foldReadOnlyLoads(module, new Uint8Array(this.#memory.buffer), pattern[6]);
+          this.foldedLoads += folded;
+          if (folded) module.runPasses(["precompute-propagate", "dce", "vacuum"]);
+        } while (folded);
+      }
+      module.runPasses(["simplify-locals-nostructure", "precompute-propagate", "merge-blocks",
+        "remove-unused-brs", "vacuum", "coalesce-locals", "remove-unused-module-elements"]);
       const bytes = module.emitBinary() as Uint8Array<ArrayBuffer>;
       const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes), this.#imports);
       const run = instance.exports.run;

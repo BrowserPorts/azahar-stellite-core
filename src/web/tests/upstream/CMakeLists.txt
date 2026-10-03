@@ -83,6 +83,8 @@ if(AZAHAR_TEAKRA_JIT)
         COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/run-dsp-jit.ts"
             --target node --outfile "${DSP_JIT_RUNNER}"
         DEPENDS run-dsp-jit.ts "${AZAHAR_ROOT}/src/web/dsp/jit-host.ts"
+            "${AZAHAR_ROOT}/src/web/dsp/fold-readonly-loads.js"
+            "${AZAHAR_ROOT}/src/web/dsp/fold-readonly-loads.d.ts"
             "${AZAHAR_ROOT}/src/web/package.json" "${AZAHAR_ROOT}/src/web/bun.lock"
         VERBATIM)
     add_custom_target(dsp_jit_fixture_runner DEPENDS "${DSP_JIT_RUNNER}")

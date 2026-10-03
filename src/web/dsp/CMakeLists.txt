@@ -27,7 +27,7 @@ set(DSP_HOST_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-dsp-jit.js")
 add_custom_command(OUTPUT "${DSP_HOST_OUTPUT}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/jit-host.ts"
         --target browser --outfile "${DSP_HOST_OUTPUT}"
-    DEPENDS jit-host.ts ../package.json ../bun.lock
+    DEPENDS jit-host.ts fold-readonly-loads.js fold-readonly-loads.d.ts ../package.json ../bun.lock
     VERBATIM)
 add_custom_target(azahar_dsp_jit_host DEPENDS "${DSP_HOST_OUTPUT}")
 
