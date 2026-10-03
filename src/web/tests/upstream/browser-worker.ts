@@ -24,6 +24,11 @@ worker.onmessage = async (event: MessageEvent<FixtureRequest>): Promise<undefine
       arguments: event.data.args,
       print: append,
       printErr: append,
+      onAbort: (message: string): undefined => {
+        append(message);
+        worker.postMessage({ exit: 1 } satisfies FixtureReply);
+        return undefined;
+      },
       onExit: (exit: number): undefined => {
         worker.postMessage({ exit } satisfies FixtureReply);
         return undefined;

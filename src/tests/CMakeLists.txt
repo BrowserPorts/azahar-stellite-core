@@ -68,6 +68,20 @@ if(EMSCRIPTEN)
             "${PROJECT_SOURCE_DIR}/src/web/protocol.ts")
     add_custom_target(browser_core_fixtures DEPENDS tests "${TEST_WEB_DIRECTORY}/browser-jit.js"
         "${TEST_WEB_DIRECTORY}/browser-worker.js")
+
+    # Compile the SDK's original OPFS cases, including its cross-session persistence checks.
+    foreach(mode IN ITEMS setup resume)
+        add_executable(wasmfs_opfs_${mode} "${EMSCRIPTEN_ROOT_PATH}/test/wasmfs/wasmfs_opfs.c")
+        string(TOUPPER "${mode}" mode_define)
+        target_compile_definitions(wasmfs_opfs_${mode} PRIVATE WASMFS_${mode_define})
+        target_compile_options(wasmfs_opfs_${mode} PRIVATE -UNDEBUG)
+        target_link_options(wasmfs_opfs_${mode} PRIVATE
+            -sWASMFS=1 -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker
+            -sPTHREAD_POOL_SIZE=1 -sEXIT_RUNTIME=1 -sDYNAMIC_EXECUTION=0)
+        set_target_properties(wasmfs_opfs_${mode} PROPERTIES SUFFIX ".mjs")
+    endforeach()
+    add_custom_target(browser_storage_fixtures DEPENDS wasmfs_opfs_setup wasmfs_opfs_resume
+        "${TEST_WEB_DIRECTORY}/browser-jit.js" "${TEST_WEB_DIRECTORY}/browser-worker.js")
 else()
     add_test(NAME tests COMMAND tests)
 endif()

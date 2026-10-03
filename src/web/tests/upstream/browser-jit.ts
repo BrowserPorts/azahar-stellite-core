@@ -14,7 +14,9 @@ const dispatch = new URL(location.href).searchParams.has("pica-dispatch");
 const fuzz = new URL(location.href).searchParams.has("fuzz");
 const filter = new URL(location.href).searchParams.get("filter");
 const seed = new URL(location.href).searchParams.get("seed");
-const fixtureUrl = new URL(core ? "./tests.mjs" : fuzz ? "./dynarmic_arm_fuzz_fixtures.mjs" : recordings ? "./dynarmic_vfp_recordings.mjs" :
+const storage = new URL(location.href).searchParams.get("storage");
+if (storage !== null && storage !== "setup" && storage !== "resume") throw new Error("Invalid OPFS fixture mode");
+const fixtureUrl = new URL(storage ? `./wasmfs_opfs_${storage}.mjs` : core ? "./tests.mjs" : fuzz ? "./dynarmic_arm_fuzz_fixtures.mjs" : recordings ? "./dynarmic_vfp_recordings.mjs" :
   "./dynarmic_arm_jit_fixtures.mjs", import.meta.url);
 const worker = new Worker(new URL("./browser-worker.js", import.meta.url), { type: "module" });
 worker.onmessage = (event: MessageEvent<FixtureReply>): undefined => {
@@ -32,6 +34,6 @@ worker.onerror = (event: ErrorEvent): undefined => {
   return undefined;
 };
 worker.postMessage({ url: fixtureUrl.href,
-  args: recordings ? [] : ["--reporter", "compact", ...(filter ? [filter] : []),
+  args: recordings || storage ? [] : ["--reporter", "compact", ...(filter ? [filter] : []),
     ...(seed ? ["--rng-seed", seed] : [])],
   dispatch } satisfies FixtureRequest);
