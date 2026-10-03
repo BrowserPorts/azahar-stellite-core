@@ -25,6 +25,8 @@ target_link_options(azahar_dsp_templates PRIVATE
     -O3 -fwasm-exceptions -sSIDE_MODULE=2 --no-entry --profiling-funcs)
 set_target_properties(azahar_dsp_templates PROPERTIES
     POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
     OUTPUT_NAME "azahar-dsp-templates" SUFFIX ".wasm"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
 
