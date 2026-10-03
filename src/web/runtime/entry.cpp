@@ -145,6 +145,16 @@ extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_run_frame() {
     return LibRetro::RunFrame();
 }
 
+extern "C" EMSCRIPTEN_KEEPALIVE const double* azahar_performance_stats() {
+    if (!initialized || !loaded) return nullptr;
+    const auto stats = Core::System::GetInstance().GetAndResetPerfStats();
+    static std::array<double, 9> values{};
+    values = {stats.system_fps, stats.game_fps, stats.emulation_speed,
+              stats.time_vblank_interval, stats.time_hle_svc, stats.time_hle_ipc,
+              stats.time_gpu, stats.time_swap, stats.time_remaining};
+    return values.data();
+}
+
 extern "C" EMSCRIPTEN_KEEPALIVE void azahar_set_input(unsigned mask, int lx, int ly,
                                                      int rx, int ry, int x, int y, bool touch) {
     for (unsigned i = 0; i < buttons.size(); ++i) buttons[i] = (mask >> i) & 1;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { SessionEvent, SessionRequest } from "./messages";
-import type { InputState } from "./session";
+import type { SessionEvent, SessionRequest, SessionResult } from "./messages";
+import type { InputState, PerformanceStats } from "./session";
 
 export interface ClientOutput {
   video(frame: Extract<SessionEvent, { type: "video" }>): unknown;
@@ -11,7 +11,7 @@ export interface ClientOutput {
 }
 
 interface Pending {
-  resolve: (value: string | number | undefined) => unknown;
+  resolve: (value: SessionResult) => unknown;
   reject: (error: Error) => unknown;
 }
 
@@ -85,6 +85,13 @@ export class AzaharClient {
     await this.request({ type: "input", state }); return undefined;
   }
 
+  /** Read and reset the native performance interval at an emulation frame boundary. */
+  async performance(): Promise<PerformanceStats> {
+    const result = await this.request({ type: "performance" });
+    if (!result || typeof result !== "object") throw new Error("Invalid performance snapshot returned by Azahar");
+    return result;
+  }
+
   async save(slot: number): Promise<number> {
     const result = await this.request({ type: "save", slot });
     if (typeof result !== "number") throw new Error("Invalid save-state size returned by Azahar");
@@ -106,7 +113,7 @@ export class AzaharClient {
   }
 
   private async request(request: SessionCommand,
-    transfer: Transferable[] = []): Promise<string | number | undefined> {
+    transfer: Transferable[] = []): Promise<SessionResult> {
     if (this.#closing) throw new Error("The Azahar session is closing");
     await this.ready;
     if (this.#disposed) throw new Error("The Azahar session is closed");

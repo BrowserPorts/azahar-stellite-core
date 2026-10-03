@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { AzaharModuleFactory } from "./module";
-import type { SessionEvent, SessionRequest } from "./messages";
+import type { SessionEvent, SessionRequest, SessionResult } from "./messages";
 import { BrowserSession } from "./session";
 import { GraphicsClient } from "../gpu/client";
 
@@ -83,7 +83,7 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
     if (!Number.isSafeInteger(request.id) || request.id < 0) throw new Error("Invalid session request ID");
     try {
       if (!session) throw new Error("Azahar is unavailable");
-      let result: string | number | undefined;
+      let result: SessionResult;
       switch (request.type) {
         case "load": pause(); result = await session.load(request.file); break;
         case "surface": {
@@ -95,6 +95,7 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
         case "start": start(); break;
         case "pause": pause(); break;
         case "input": session.input(request.state); break;
+        case "performance": result = session.performance(); break;
         case "save":
         case "restore": {
           const resume = running;

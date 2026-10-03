@@ -24,6 +24,20 @@ export interface InputState {
   touchPressed: boolean;
 }
 
+/** Azahar's native counters since the previous read, including frame pacing time. */
+export interface PerformanceStats {
+  systemFps: number;
+  gameFps: number;
+  emulationSpeed: number;
+  vblankMs: number;
+  hleSvcMs: number;
+  hleIpcMs: number;
+  /** Time in native GPU command processing. */
+  gpuCommandMs: number;
+  swapMs: number;
+  otherMs: number;
+}
+
 /** All native entry points are called between frames on the emulation worker. */
 export class BrowserSession {
   #states: OpfsSaveStates | undefined;
@@ -92,6 +106,22 @@ export class BrowserSession {
     this.checkLoaded();
     if (!this.core._azahar_run_frame()) throw new Error("Azahar stopped running");
     return undefined;
+  }
+
+  performance(): PerformanceStats {
+    this.checkLoaded();
+    const pointer = this.core._azahar_performance_stats();
+    if (!pointer || pointer % 8 || pointer + 72 > this.core.HEAPU8.byteLength) {
+      throw new Error("Invalid native performance snapshot");
+    }
+    const values = new Float64Array(this.core.HEAPU8.buffer, pointer, 9);
+    if (!values.every(Number.isFinite)) throw new Error("Invalid native performance counters");
+    return {
+      systemFps: values[0]!, gameFps: values[1]!, emulationSpeed: values[2]!,
+      vblankMs: values[3]! * 1000, hleSvcMs: values[4]! * 1000,
+      hleIpcMs: values[5]! * 1000, gpuCommandMs: values[6]! * 1000,
+      swapMs: values[7]! * 1000, otherMs: values[8]! * 1000,
+    };
   }
 
   input(value: InputState): undefined {
