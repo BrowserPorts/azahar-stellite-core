@@ -43,6 +43,7 @@ if(EMSCRIPTEN)
     set_target_properties(tests PROPERTIES SUFFIX ".mjs")
     target_compile_definitions(tests PRIVATE CATCH_CONFIG_NO_POSIX_SIGNALS)
     target_link_options(tests PRIVATE
+        -sWASMFS=1
         -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker,node
         -sINITIAL_MEMORY=536870912 -sMAXIMUM_MEMORY=2147483648 -sALLOW_MEMORY_GROWTH=1
         -sSTACK_SIZE=4194304 -sPTHREAD_POOL_SIZE=4 -sEXIT_RUNTIME=1 -sDYNAMIC_EXECUTION=0)
@@ -71,12 +72,13 @@ if(EMSCRIPTEN)
 
     # Compile the SDK's original OPFS cases, including its cross-session persistence checks.
     foreach(mode IN ITEMS setup resume)
-        add_executable(wasmfs_opfs_${mode} "${EMSCRIPTEN_ROOT_PATH}/test/wasmfs/wasmfs_opfs.c")
+        add_executable(wasmfs_opfs_${mode} "${PROJECT_SOURCE_DIR}/externals/emscripten/test/wasmfs/wasmfs_opfs.c")
+        target_link_libraries(wasmfs_opfs_${mode} PRIVATE emscripten_opfs)
         string(TOUPPER "${mode}" mode_define)
         target_compile_definitions(wasmfs_opfs_${mode} PRIVATE WASMFS_${mode_define})
         target_compile_options(wasmfs_opfs_${mode} PRIVATE -UNDEBUG)
         target_link_options(wasmfs_opfs_${mode} PRIVATE
-            -sWASMFS=1 -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker
+            -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker
             -sPTHREAD_POOL_SIZE=1 -sEXIT_RUNTIME=1 -sDYNAMIC_EXECUTION=0)
         set_target_properties(wasmfs_opfs_${mode} PROPERTIES SUFFIX ".mjs")
     endforeach()

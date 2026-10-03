@@ -4,26 +4,21 @@ import type { ArmJitHost } from "../arm/jit-host";
 import type { PicaJitHost } from "../pica/jit-host";
 import type { GraphicsClient } from "../gpu/client";
 
-export interface CoreFileSystem {
-  mkdirTree(path: string): unknown;
-  writeFile(path: string, bytes: Uint8Array): unknown;
-  unlink(path: string): unknown;
-  mount(filesystem: unknown, options: { files: File[] }, path: string): unknown;
-  unmount(path: string): unknown;
-}
-
 /** Exported by the azahar_browser Emscripten target. */
 export interface AzaharModule {
   HEAPU8: Uint8Array<SharedArrayBuffer>;
   HEAPU32: Uint32Array<SharedArrayBuffer>;
   HEAP16: Int16Array<SharedArrayBuffer>;
-  FS: CoreFileSystem;
-  WORKERFS: unknown;
+  azaharGameFile: File | undefined;
   UTF8ToString(pointer: number): string;
   stringToNewUTF8(text: string): number;
   addFunction(callback: (...args: number[]) => unknown, signature: string): number;
   removeFunction(pointer: number): unknown;
   _azahar_web_abi(): number;
+  _azahar_mount_storage(): number;
+  _azahar_mount_game_file(path: number, size: bigint): number;
+  _azahar_unmount_game_file(path: number): number;
+  _azahar_content_id(path: number): number;
   _azahar_initialize(): number;
   _azahar_load_game(path: number): number;
   _azahar_program_id(): number;

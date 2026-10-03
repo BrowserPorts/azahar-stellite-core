@@ -5,6 +5,7 @@ import { PicaJitHost } from "../pica/jit-host";
 import type { GraphicsClient } from "../gpu/client";
 import type { AzaharModule, AzaharModuleFactory } from "./module";
 import { OpfsSaveStates } from "./save-states";
+import { UserStorageLock } from "./storage-lock";
 
 export interface SessionOutput {
   video(bytes: Uint8Array<SharedArrayBuffer>, width: number, height: number, pitch: number): unknown;
@@ -28,51 +29,55 @@ export class BrowserSession {
   #states: OpfsSaveStates | undefined;
   #loaded = false;
   #closed = false;
-  #mounted = false;
+  #gamePath = 0;
 
-  private constructor(readonly core: AzaharModule) {}
+  private constructor(readonly core: AzaharModule, private readonly storage: UserStorageLock) {}
 
   static async create(factory: AzaharModuleFactory, output: SessionOutput,
     graphics: GraphicsClient): Promise<BrowserSession> {
     if (!globalThis.crossOriginIsolated) {
       throw new Error("Azahar requires Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy headers");
     }
-    const core = await factory({
-      azaharJitHost: new ArmJitHost(),
-      azaharPicaJitHost: new PicaJitHost(),
-      azaharGraphicsHost: graphics,
-      print: output.log,
-      printErr: output.log,
-      azaharVideo: (pointer, width, height, pitch) => {
-        if (pointer > 0 && pointer !== 0xffffffff) {
-          output.video(core.HEAPU8.subarray(pointer, pointer + pitch * height), width, height, pitch);
-        }
-      },
-      azaharAudio: (pointer, frames) => output.audio(core.HEAP16.subarray(pointer >>> 1,
-        (pointer >>> 1) + frames * 2)),
-    });
-    if (core._azahar_web_abi() !== 1) throw new Error("Unsupported Azahar browser ABI");
-    core.FS.mkdirTree("/user");
-    core.FS.mkdirTree("/rom");
-    if (!core._azahar_initialize()) throw new Error("Azahar initialization failed");
-    return new BrowserSession(core);
+    const storage = await UserStorageLock.acquire();
+    try {
+      const core = await factory({
+        azaharJitHost: new ArmJitHost(),
+        azaharPicaJitHost: new PicaJitHost(),
+        azaharGraphicsHost: graphics,
+        print: output.log,
+        printErr: output.log,
+        azaharVideo: (pointer, width, height, pitch) => {
+          if (pointer > 0 && pointer !== 0xffffffff) {
+            output.video(core.HEAPU8.subarray(pointer, pointer + pitch * height), width, height, pitch);
+          }
+        },
+        azaharAudio: (pointer, frames) => output.audio(core.HEAP16.subarray(pointer >>> 1,
+          (pointer >>> 1) + frames * 2)),
+      });
+      if (core._azahar_web_abi() !== 2) throw new Error("Unsupported Azahar browser ABI");
+      if (!core._azahar_mount_storage()) throw new Error("Azahar could not mount OPFS user storage");
+      if (!core._azahar_initialize()) throw new Error("Azahar initialization failed");
+      return new BrowserSession(core, storage);
+    } catch (error) { storage.close(); throw error; }
   }
 
   async load(file: File): Promise<string> {
     this.checkOpen();
     if (this.#loaded) throw new Error("Close the current session before loading another game");
-    if (!file.size || /[/\\\0]/.test(file.name)) throw new Error("Invalid game file");
-    this.core.FS.mount(this.core.WORKERFS, { files: [file] }, "/rom");
-    this.#mounted = true;
+    if (!file.size || !Number.isSafeInteger(file.size) || /[/\\\0]/.test(file.name)) throw new Error("Invalid game file");
     const path = this.core.stringToNewUTF8(`/rom/${file.name}`);
+    this.#gamePath = path;
     try {
+      this.core.azaharGameFile = file;
+      if (!this.core._azahar_mount_game_file(path, BigInt(file.size))) throw new Error("Azahar could not mount this game");
       if (!this.core._azahar_load_game(path)) throw new Error("Azahar could not load this game");
       this.#loaded = true;
       let game = this.core.UTF8ToString(this.core._azahar_program_id());
       if (game === "0000000000000000") {
         // Homebrew loaders may have no title ID; use the file's content identity.
-        const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer()));
-        game = Array.from(hash, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        const identity = this.core._azahar_content_id(path);
+        if (!identity) throw new Error("Azahar could not read this game's content identity");
+        game = this.core.UTF8ToString(identity);
       }
       this.#states = await OpfsSaveStates.open(game);
       return game;
@@ -80,8 +85,6 @@ export class BrowserSession {
       // A partially loaded kernel must not receive another load request.
       this.close();
       throw error;
-    } finally {
-      this.core._free(path);
     }
   }
 
@@ -117,9 +120,15 @@ export class BrowserSession {
   close(): undefined {
     if (this.#closed) return undefined;
     this.#closed = true;
-    this.core._azahar_shutdown();
-    if (this.#mounted) this.core.FS.unmount("/rom");
-    this.#mounted = false;
+    try {
+      this.core._azahar_shutdown();
+      if (this.#gamePath) this.core._azahar_unmount_game_file(this.#gamePath);
+    } finally {
+      if (this.#gamePath) this.core._free(this.#gamePath);
+      this.#gamePath = 0;
+      this.core.azaharGameFile = undefined;
+      this.storage.close();
+    }
     this.#loaded = false;
     this.#states = undefined;
     return undefined;

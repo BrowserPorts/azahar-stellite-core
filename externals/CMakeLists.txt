@@ -19,6 +19,21 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR}/CMakeModules)
 include(DownloadExternals)
 include(ExternalProject)
 
+if(EMSCRIPTEN)
+    # Compile the OPFS library from the pinned SDK fork with the matching native WasmFS ABI.
+    file(READ "${EMSCRIPTEN_ROOT_PATH}/emscripten-version.txt" installed_emscripten_version)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/emscripten/emscripten-version.txt" opfs_emscripten_version)
+    string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" installed_emscripten_version "${installed_emscripten_version}")
+    string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" opfs_emscripten_version "${opfs_emscripten_version}")
+    if(NOT installed_emscripten_version STREQUAL opfs_emscripten_version)
+        message(FATAL_ERROR "The pinned OPFS library requires Emscripten ${opfs_emscripten_version}")
+    endif()
+    set(OPFS_LIBRARY "${CMAKE_CURRENT_SOURCE_DIR}/emscripten/src/lib/libwasmfs_opfs.js")
+    add_library(emscripten_opfs INTERFACE)
+    target_link_options(emscripten_opfs INTERFACE -sWASMFS=1 "SHELL:--js-library \"${OPFS_LIBRARY}\"")
+    set_property(TARGET emscripten_opfs PROPERTY INTERFACE_LINK_DEPENDS "${OPFS_LIBRARY}")
+endif()
+
 # Boost
 if (USE_SYSTEM_BOOST)
     unset(BOOST_ROOT CACHE)
