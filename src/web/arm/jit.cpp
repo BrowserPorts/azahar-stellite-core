@@ -56,6 +56,7 @@ static_assert(offsetof(LinkCell, slot) == 0);
 static_assert(offsetof(LinkCell, minimum_budget) == 16);
 #ifdef AZAHAR_ARM_JIT_STATISTICS
 std::atomic<uint64_t> native_dispatches{0}, completed_blocks{0};
+std::atomic<uint64_t> budget_reuses{0};
 #endif
 struct alignas(8) ArmState {
     std::array<uint32_t, 16> registers{};
@@ -503,6 +504,13 @@ extern "C" EMSCRIPTEN_KEEPALIVE uint64_t azahar_arm_jit_linked_blocks() {
     const auto blocks = completed_blocks.load(std::memory_order_relaxed);
     const auto dispatches = native_dispatches.load(std::memory_order_relaxed);
     return blocks > dispatches ? blocks - dispatches : 0;
+#else
+    return 0;
+#endif
+}
+extern "C" EMSCRIPTEN_KEEPALIVE uint64_t azahar_arm_jit_budget_reuses() {
+#ifdef AZAHAR_ARM_JIT_STATISTICS
+    return budget_reuses.load(std::memory_order_relaxed);
 #else
     return 0;
 #endif
@@ -1006,10 +1014,25 @@ struct Jit::Impl {
     Entry GetEntry(uint32_t limit, bool step) {
         const LocationDescriptor location(state.registers[15], PSR{state.cpsr}, FPSCR{state.fpscr}, step);
         const auto key = std::pair{location.UniqueHash(), limit};
-        if (auto found = regions.find(key); found != regions.end()) {
-            found->second.source->used = ++clock;
-            Publish(found->second);
-            return found->second.entry;
+        auto cached = regions.end();
+        const auto first = regions.lower_bound(key);
+        if (first != regions.end() && first->first == key) {
+            cached = first;
+        } else {
+            // A branch can end a block before its translation limit. Reuse that code
+            // when its actual instruction bound fits the smaller remaining budget.
+            for (auto candidate = first;
+                 candidate != regions.end() && candidate->first.first == key.first; ++candidate) {
+                if (candidate->second.minimum_budget <= limit) cached = candidate;
+            }
+        }
+        if (cached != regions.end()) {
+#ifdef AZAHAR_ARM_JIT_STATISTICS
+            if (cached->first != key) budget_reuses.fetch_add(1, std::memory_order_relaxed);
+#endif
+            cached->second.source->used = ++clock;
+            Publish(cached->second);
+            return cached->second.entry;
         }
         CodeReader reader{*config.callbacks, limit};
         const TranslationOptions options{config.arch_version, config.define_unpredictable_behaviour,
