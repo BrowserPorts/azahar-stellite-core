@@ -7,13 +7,8 @@ include(GenerateSettingKeys)
 set_property(DIRECTORY APPEND PROPERTY
     COMPILE_DEFINITIONS $<$<CONFIG:Debug>:_DEBUG> $<$<NOT:$<CONFIG:Debug>>:NDEBUG>)
 
-if (ENABLE_LTO)
-    if (EMSCRIPTEN)
-        add_compile_options(-flto)
-        add_link_options(-flto)
-    else()
-        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
-    endif()
+if (ENABLE_LTO AND NOT EMSCRIPTEN)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
 
 # Set compilation flags
