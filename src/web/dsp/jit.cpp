@@ -21,7 +21,7 @@ namespace {
 std::atomic<uint32_t> installed_entries{0};
 }
 
-EM_JS_DEPS(dsp_jit, "$GOT,$stringToNewUTF8");
+EM_JS_DEPS(dsp_jit, "$GOT,$stringToNewUTF8,$initializeDspRuntime");
 
 EM_JS(void, InitializeDspJit,
       (const char* json, u8* flags, u32 register_size, u32 semantics_size, u32 memory_size), {
