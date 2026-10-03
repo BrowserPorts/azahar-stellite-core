@@ -190,7 +190,9 @@ export class GraphicsDraws {
 
   private async createPipeline(draw: NativeDraw, colorFormat: number, color?: GPUTextureFormat, depth?: GPUTextureFormat): Promise<DrawPipeline> {
     const s = draw.state;
-    const fragment = await this.shaders.fragment(draw.configuration, Number(!!s.normal) | (colorFormat << 1));
+    const depthFormat = depth ? depth === "depth16unorm" ? 1 : 2 : 0;
+    const fragment = await this.shaders.fragment(draw.configuration,
+      Number(!!s.normal) | (colorFormat << 1) | (depthFormat << 4));
     const groups = [
       this.device.createBindGroupLayout({ entries: [
         { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform", minBindingSize: 32 } },

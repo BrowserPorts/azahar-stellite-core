@@ -102,9 +102,11 @@ layout (binding = 2, std140) uniform fs_data {
 )";
 
 FragmentModule::FragmentModule(const FSConfig& config_, const UserConfig& user_,
-                               const Profile& profile_, BindingLayout bindings_, u32 color_format_)
+                               const Profile& profile_, BindingLayout bindings_, u32 color_format_,
+                               u32 depth_bits_)
     : config{config_}, user{user_}, profile{profile_}, bindings{bindings_},
-      color_format{bindings_ == BindingLayout::WebGPU ? color_format_ : 0} {
+      color_format{bindings_ == BindingLayout::WebGPU ? color_format_ : 0},
+      depth_bits{bindings_ == BindingLayout::WebGPU ? depth_bits_ : 0} {
     config.ApplyProfile(profile_);
     if (bindings == BindingLayout::WebGPU && config.framebuffer.alphablend_enable) {
         using BlendFactor = FramebufferRegs::BlendFactor;
@@ -203,7 +205,15 @@ vec4 secondary_fragment_color = vec4(0.0);
     if (config.framebuffer.shadow_rendering) {
         WriteShadow();
     } else {
-        out += "gl_FragDepth = depth;\n";
+        if (depth_bits != 0) {
+            // Match the software rasterizer's integer depth conversion before the host test.
+            // WebGPU's depth24plus formats can store 32-bit floats on some adapters.
+            const u32 maximum = depth_bits == 16 ? 65535 : 16777215;
+            out += fmt::format("gl_FragDepth = floor(clamp(depth, 0.0, 1.0) * {0}.0) / {0}.0;\n",
+                               maximum);
+        } else {
+            out += "gl_FragDepth = depth;\n";
+        }
         // Round the final fragment color to maintain the PICA's 8 bits of precision
         out += "combiner_output = byteround(combiner_output);\n";
         WriteBlending();
@@ -1979,8 +1989,14 @@ void FragmentModule::DefineTexUnitSampler(u32 texture_unit) {
 }
 
 std::string GenerateFragmentShader(const FSConfig& config, const UserConfig& user,
-                                   const Profile& profile, BindingLayout bindings, u32 color_format) {
-    FragmentModule module{config, user, profile, bindings, color_format};
+                                   const Profile& profile) {
+    FragmentModule module{config, user, profile};
+    return module.Generate();
+}
+
+std::string GenerateFragmentShaderWebGPU(const FSConfig& config, const UserConfig& user,
+                                         const Profile& profile, u32 color_format, u32 depth_bits) {
+    FragmentModule module{config, user, profile, BindingLayout::WebGPU, color_format, depth_bits};
     return module.Generate();
 }
 

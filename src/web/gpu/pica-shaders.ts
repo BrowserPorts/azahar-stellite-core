@@ -47,7 +47,7 @@ export class PicaShaders {
   fragment(configuration: Uint8Array<ArrayBufferLike>, userFlags = 0): Promise<GPUShaderModule> {
     if (this.#closed) throw new Error("The PICA shader compiler is closed");
     if (configuration.byteLength !== this.configurationSize ||
-      !Number.isInteger(userFlags) || userFlags < 0 || userFlags > 9) {
+      !Number.isInteger(userFlags) || userFlags < 0 || userFlags > 41 || (userFlags & 15) > 9) {
       throw new Error("Invalid PICA shader configuration");
     }
     // The complete bytes are the key, so hash collisions cannot select another program.

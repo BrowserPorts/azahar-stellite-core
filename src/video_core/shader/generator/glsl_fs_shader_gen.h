@@ -16,7 +16,8 @@ enum class BindingLayout {
 class FragmentModule {
 public:
     explicit FragmentModule(const FSConfig& config, const UserConfig& user, const Profile& profile,
-                            BindingLayout bindings = BindingLayout::Native, u32 color_format = 0);
+                            BindingLayout bindings = BindingLayout::Native, u32 color_format = 0,
+                            u32 depth_bits = 0);
     ~FragmentModule();
 
     /// Emits GLSL source corresponding to the provided pica fragment configuration
@@ -98,6 +99,7 @@ private:
     const Profile& profile;
     const BindingLayout bindings;
     const u32 color_format;
+    const u32 depth_bits;
     std::string out;
     bool use_blend_fallback{};
     bool emulate_rgb_blend{};
@@ -113,7 +115,9 @@ private:
  * @returns String of the shader source code
  */
 std::string GenerateFragmentShader(const FSConfig& config, const UserConfig& user,
-                                   const Profile& profile,
-                                   BindingLayout bindings = BindingLayout::Native, u32 color_format = 0);
+                                   const Profile& profile);
+
+std::string GenerateFragmentShaderWebGPU(const FSConfig& config, const UserConfig& user,
+                                         const Profile& profile, u32 color_format, u32 depth_bits);
 
 } // namespace Pica::Shader::Generator::GLSL
