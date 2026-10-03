@@ -1,0 +1,34 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "web-native-fixtures",
+      "displayName": "Azahar native fixtures in Wasm",
+      "description": "Configure after activating Emscripten 5.0.7",
+      "generator": "Ninja",
+      "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+      "binaryDir": "${sourceDir}/../../../../build/web-fixtures",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_LTO": true,
+        "AZAHAR_BUILD_UPSTREAM_FUZZ": true
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "web-native-fixtures",
+      "configurePreset": "web-native-fixtures",
+      "targets": ["upstream_fixtures"]
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "web-native-fixtures",
+      "configurePreset": "web-native-fixtures",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    }
+  ]
+}

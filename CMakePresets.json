@@ -1,0 +1,47 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "web-release",
+      "displayName": "Azahar Web release",
+      "description": "Configure with cmake --preset web-release after activating Emscripten 5.0.7",
+      "generator": "Ninja",
+      "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+      "binaryDir": "${sourceDir}/build/web-core",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_LIBRETRO": true,
+        "ENABLE_LTO": true,
+        "ENABLE_TESTS": true,
+        "ENABLE_SOFTWARE_RENDERER": true,
+        "ENABLE_OPENGL": false,
+        "ENABLE_VULKAN": false,
+        "ENABLE_NATIVE_OPTIMIZATION": false,
+        "CITRA_USE_PRECOMPILED_HEADERS": false,
+        "CITRA_WARNINGS_AS_ERRORS": false,
+        "BUILD_TESTING": false
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "web-release",
+      "configurePreset": "web-release",
+      "targets": ["azahar_browser_runtime"]
+    },
+    {
+      "name": "web-native-fixtures",
+      "configurePreset": "web-release",
+      "targets": ["tests", "browser_core_fixtures"]
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "web-native-fixtures",
+      "configurePreset": "web-release",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    }
+  ]
+}
