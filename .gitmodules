@@ -41,8 +41,9 @@
 	path = externals/cpp-jwt
 	url = https://github.com/arun11299/cpp-jwt.git
 [submodule "teakra"]
-	path = externals/teakra
-	url = https://github.com/wwylele/teakra.git
+    path = externals/teakra
+    url = https://origin.cursor.com/mov/teakra-stellite-wasm.git
+    branch = main
 [submodule "lodepng"]
 	path = externals/lodepng/lodepng
 	url = https://github.com/lvandeve/lodepng.git
