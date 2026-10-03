@@ -46,6 +46,11 @@ add_executable(azahar_wasm_frontend frontend.cpp
     "${AZAHAR_ROOT}/src/core/arm/dynarmic/arm_tick_counts.cpp")
 target_link_libraries(azahar_wasm_frontend PRIVATE azahar_arm_frontend)
 if(EMSCRIPTEN)
+    if(ENABLE_LTO)
+        target_compile_options(azahar_arm_frontend PRIVATE -flto)
+        target_compile_options(azahar_wasm_frontend PRIVATE -flto)
+        target_link_options(azahar_arm_frontend INTERFACE -flto)
+    endif()
     target_compile_options(azahar_arm_frontend PRIVATE -O3 -fwasm-exceptions)
     target_compile_options(azahar_wasm_frontend PRIVATE -O3 -fwasm-exceptions)
     target_link_options(azahar_wasm_frontend PRIVATE

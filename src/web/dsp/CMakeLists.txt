@@ -20,6 +20,10 @@ add_executable(azahar_dsp_templates templates.cpp templates.h)
 target_compile_features(azahar_dsp_templates PRIVATE cxx_std_20)
 target_include_directories(azahar_dsp_templates PRIVATE
     "${TEAKRA_ROOT}/src" "${TEAKRA_ROOT}/include/teakra/impl")
+if(ENABLE_LTO)
+    target_compile_options(azahar_dsp_templates PRIVATE -flto)
+    target_link_options(azahar_dsp_templates PRIVATE -flto)
+endif()
 target_compile_options(azahar_dsp_templates PRIVATE -O3 -fwasm-exceptions)
 target_link_options(azahar_dsp_templates PRIVATE
     -O3 -fwasm-exceptions -sSIDE_MODULE=2 --no-entry --profiling-funcs)
