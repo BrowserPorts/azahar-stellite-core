@@ -7,8 +7,11 @@ import { DspJitHost } from "../../dsp/jit-host";
 
 const modulePath = process.argv[2];
 if (!modulePath) throw new Error("An upstream Teakra fixture module path is required");
-const data = await readFile(join(dirname(modulePath), "azahar-dsp-templates.wasm"));
-const host = new DspJitHost(Uint8Array.from(data), (count) => {
+const [templates, families] = await Promise.all([
+  readFile(join(dirname(modulePath), "azahar-dsp-templates.wasm")),
+  readFile(join(dirname(modulePath), "azahar-dsp-families.bin")),
+]);
+const host = await DspJitHost.create(Uint8Array.from(templates), Uint8Array.from(families), (count) => {
   if (count % 1000 === 0) console.log(`DSP JIT: ${count} specializations compiled`);
 });
 const { default: createModule } = await import(pathToFileURL(modulePath).href);

@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import binaryen from "binaryen";
+import { configureOptimizer, features, relocateFamily } from "./compiler";
+import { FamilyArchive } from "./family-archive";
 import { foldReadOnlyLoads } from "./fold-readonly-loads.js";
-
-const features = binaryen.Features.MutableGlobals | binaryen.Features.SignExt |
-  binaryen.Features.BulkMemory | binaryen.Features.ExceptionHandling |
-  binaryen.Features.ReferenceTypes | binaryen.Features.Atomics | binaryen.Features.SIMD128 |
-  binaryen.Features.NontrappingFPToInt | binaryen.Features.Multivalue;
 
 type Pattern = [string, number, number, boolean, number, [number, number][], [number, number][]];
 interface Metadata {
@@ -26,7 +23,6 @@ interface CompiledEntry {
 /** Specializes the upstream compiled opcode bodies into executable Wasm. */
 export class DspJitHost {
   readonly #patterns: (Pattern | undefined)[] = new Array(65536);
-  readonly #families = new Map<number, Uint8Array<ArrayBuffer>>();
   readonly #entries = new Map<number, CompiledEntry>();
   #imports: WebAssembly.Imports | undefined;
   #table: WebAssembly.Table | undefined;
@@ -34,9 +30,6 @@ export class DspJitHost {
   #metadata: Metadata | undefined;
   #memoryBase = 0;
   #tableBase = 0;
-  readonly #functions: string[];
-  readonly #anchorOffset: number;
-  readonly #tableAnchorOffset: number;
   compilations = 0;
   optimizations = 0;
   emittedBytes = 0;
@@ -44,25 +37,19 @@ export class DspJitHost {
   optimizedBytes = 0;
   foldedLoads = 0;
 
-  constructor(readonly templates: Uint8Array<ArrayBuffer>, readonly onCompile?: (count: number) => unknown) {
-    const module = binaryen.readBinary(templates);
-    try {
-      const anchor = binaryen.getExportInfo(module.getExport("azahar_dsp_template_anchor"));
-      const initializer = binaryen.getExpressionInfo(binaryen.getGlobalInfo(module.getGlobal(anchor.value)).init);
-      if (initializer.id !== binaryen.ConstId || initializer.type !== binaryen.i32) {
-        throw new Error("DSP template data anchor is not a constant");
-      }
-      this.#anchorOffset = (initializer as binaryen.ConstInfo).value as number;
-      const tableAnchor = binaryen.getExportInfo(module.getExport("azahar_dsp_template_table_anchor"));
-      if (module.getNumElementSegments() !== 1) throw new Error("DSP templates require one function segment");
-      const segment = binaryen.getElementSegmentInfo(module.getElementSegmentByIndex(0));
-      this.#functions = segment.data;
-      this.#tableAnchorOffset = segment.data.indexOf(tableAnchor.value);
-      if (this.#tableAnchorOffset < 0) throw new Error("DSP template table anchor is absent");
-      if (module.getMemoryInfo().base !== "memory") {
-        throw new Error("Unexpected DSP template memory import");
-      }
-    } finally { module.dispose(); }
+  private constructor(readonly archive: FamilyArchive, readonly onCompile?: (count: number) => unknown) {
+    configureOptimizer();
+  }
+
+  static async create(templates: Uint8Array<ArrayBuffer>, families: Uint8Array<ArrayBuffer>,
+    onCompile?: (count: number) => unknown): Promise<DspJitHost> {
+    const archive = new FamilyArchive(families);
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", templates));
+    const sourceHash = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+    if (sourceHash !== archive.metadata.sourceSha256) {
+      throw new Error("DSP family archive does not match the opcode templates");
+    }
+    return new DspJitHost(archive, onCompile);
   }
 
   bind(json: string, sizes: number[], memory: WebAssembly.Memory, table: WebAssembly.Table,
@@ -79,8 +66,11 @@ export class DspJitHost {
       throw new Error("DSP template ABI does not match the execution backend");
     }
     this.#metadata = metadata;
-    this.#memoryBase = metadata.anchor - this.#anchorOffset;
-    this.#tableBase = metadata.tableAnchor - this.#tableAnchorOffset;
+    this.#memoryBase = metadata.anchor - this.archive.metadata.anchorOffset;
+    this.#tableBase = metadata.tableAnchor - this.archive.metadata.tableAnchorOffset;
+    if (this.archive.metadata.shared !== (memory.buffer instanceof SharedArrayBuffer)) {
+      throw new Error("DSP template memory sharing mismatch");
+    }
     this.#memory = memory;
     this.#table = table;
     this.#imports = imports;
@@ -98,44 +88,6 @@ export class DspJitHost {
     return Uint8Array.from(this.#patterns, (pattern) => pattern ? (pattern[3] ? 2 : 1) : 0);
   }
 
-  private family(pattern: Pattern): Uint8Array<ArrayBuffer> {
-    const slot = pattern[4];
-    const cached = this.#families.get(slot);
-    if (cached) return cached;
-    const target = this.#functions[slot - this.#tableBase];
-    if (!target || !this.#memory) throw new Error("DSP opcode body is unavailable");
-    const module = binaryen.readBinary(this.templates);
-    try {
-      module.setFeatures(features);
-      while (module.getNumExports()) {
-        module.removeExport(binaryen.getExportInfo(module.getExportByIndex(0)).name);
-      }
-      while (module.getNumElementSegments()) {
-        module.removeElementSegment(binaryen.getElementSegmentInfo(module.getElementSegmentByIndex(0)).name);
-      }
-      const shared = this.#memory.buffer instanceof SharedArrayBuffer;
-      if (module.getMemoryInfo().shared !== shared) throw new Error("DSP template memory sharing mismatch");
-      // Donor data already resides in the core. New blocks must not initialize it again.
-      module.runPasses(["remove-memory-init"]);
-      for (let i = module.getNumGlobals() - 1; i >= 0; --i) {
-        const global = binaryen.getGlobalInfo(module.getGlobalByIndex(i));
-        const base = global.base === "__memory_base" ? this.#memoryBase :
-          global.base === "__table_base" ? this.#tableBase : undefined;
-        if (base === undefined) continue;
-        module.removeGlobal(global.name);
-        module.addGlobal(global.name, binaryen.i32, false, module.i32.const(base));
-      }
-      module.addFunctionExport(target, "template");
-      binaryen.setOptimizeLevel(3);
-      binaryen.setAlwaysInlineMaxSize(200000);
-      module.runPasses(["remove-unused-module-elements", "inlining-optimizing",
-        "simplify-globals", "remove-unused-module-elements"]);
-      const bytes = module.emitBinary() as Uint8Array<ArrayBuffer>;
-      this.#families.set(slot, bytes);
-      return bytes;
-    } finally { module.dispose(); }
-  }
-
   compile(opcode: number, expansion: number, optimized = false): number {
     if (!this.#imports || !this.#table || !this.#memory) throw new Error("DSP compiler is not bound to the core");
     const pattern = this.#patterns[opcode];
@@ -143,16 +95,17 @@ export class DspJitHost {
     const key = (opcode * 65536 + (pattern[3] ? expansion : 0)) >>> 0;
     const cached = this.#entries.get(key);
     if (cached && (!optimized || cached.optimized)) return cached.slot;
-    const module = binaryen.readBinary(this.family(pattern));
+    const module = binaryen.readBinary(this.archive.family(pattern[4] - this.#tableBase));
     try {
       module.setFeatures(features);
+      relocateFamily(module, this.#memoryBase, this.#tableBase);
       const target = binaryen.getExportInfo(module.getExport("template")).value;
       module.removeExport("template");
       module.addFunction("run", binaryen.i32, binaryen.none, [], module.call(target, [
         module.local.get(0, binaryen.i32), module.i32.const(opcode), module.i32.const(expansion),
       ], binaryen.none));
       module.addFunctionExport("run", "run");
-      module.runPasses(["inlining", "precompute-propagate", "dce", "vacuum",
+      module.runPasses(["simplify-globals", "inlining", "precompute-propagate", "dce", "vacuum",
         "remove-unused-module-elements"]);
       if (optimized && pattern[6].length) {
         let folded;

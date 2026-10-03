@@ -11,16 +11,16 @@ addToLibrary({
     `,
     $initializeDspRuntime: async () => {
         const { DspJitHost } = await import(new URL("azahar-dsp-jit.js", import.meta.url).href);
-        const url = new URL("azahar-dsp-templates.wasm", import.meta.url);
-        let bytes;
-        if (ENVIRONMENT_IS_NODE) {
-            const { readFile } = await import("node:fs/promises");
-            bytes = new Uint8Array(await readFile(url));
-        } else {
+        const assets = await Promise.all(["azahar-dsp-templates.wasm", "azahar-dsp-families.bin"].map(async (name) => {
+            const url = new URL(name, import.meta.url);
+            if (ENVIRONMENT_IS_NODE) {
+                const { readFile } = await import("node:fs/promises");
+                return new Uint8Array(await readFile(url));
+            }
             const response = await fetch(url);
-            if (!response.ok) throw new Error("Could not load the DSP opcode templates");
-            bytes = new Uint8Array(await response.arrayBuffer());
-        }
-        Module["azaharDspJitHost"] = new DspJitHost(bytes);
+            if (!response.ok) throw new Error("Could not load DSP compiler input " + name);
+            return new Uint8Array(await response.arrayBuffer());
+        }));
+        Module["azaharDspJitHost"] = await DspJitHost.create(assets[0], assets[1]);
     },
 });
