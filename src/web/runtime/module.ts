@@ -2,6 +2,7 @@
 
 import type { ArmJitHost } from "../arm/jit-host";
 import type { PicaJitHost } from "../pica/jit-host";
+import type { DspJitHost } from "../dsp/jit-host";
 import type { GraphicsClient } from "../gpu/client";
 
 /** Exported by the azahar_browser Emscripten target. */
@@ -15,6 +16,7 @@ export interface AzaharModule {
   addFunction(callback: (...args: number[]) => unknown, signature: string): number;
   removeFunction(pointer: number): unknown;
   _azahar_web_abi(): number;
+  _azahar_dsp_jit_entries(): number;
   _azahar_mount_storage(): number;
   _azahar_mount_game_file(path: number, size: bigint): number;
   _azahar_unmount_game_file(path: number): number;
@@ -44,6 +46,7 @@ export interface AzaharModule {
 }
 
 export interface AzaharModuleOptions {
+  azaharDspJitHost?: DspJitHost;
   azaharJitHost: ArmJitHost;
   azaharPicaJitHost: PicaJitHost;
   azaharGraphicsHost: GraphicsClient;

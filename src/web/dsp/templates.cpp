@@ -10,7 +10,8 @@
 
 extern "C" {
 EMSCRIPTEN_KEEPALIVE extern const uint8_t azahar_dsp_template_anchor = 0;
-EMSCRIPTEN_KEEPALIVE void azahar_dsp_template_table_anchor() {}
+// Function addresses used for relocation must refer to this module's own table segment.
+EMSCRIPTEN_KEEPALIVE __attribute__((visibility("hidden"))) void azahar_dsp_template_table_anchor() {}
 }
 
 namespace {

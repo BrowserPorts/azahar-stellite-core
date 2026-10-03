@@ -37,9 +37,23 @@ if (ENABLE_LIBRETRO)
 endif()
 
 if(EMSCRIPTEN)
+    azahar_enable_dsp_runtime(tests)
     # The native interpreter is an oracle for the original shader cases, never a core backend.
     target_sources(tests PRIVATE "${PROJECT_SOURCE_DIR}/src/video_core/shader/shader_interpreter.cpp")
     find_program(BUN_EXECUTABLE NAMES bun REQUIRED)
+    find_program(NODE_EXECUTABLE NAMES node REQUIRED)
+    set(CORE_JIT_RUNNER "${CMAKE_CURRENT_BINARY_DIR}/run-jit.mjs")
+    add_custom_command(OUTPUT "${CORE_JIT_RUNNER}"
+        COMMAND "${BUN_EXECUTABLE}" build "${PROJECT_SOURCE_DIR}/src/web/tests/upstream/run-jit.ts"
+            --target node --outfile "${CORE_JIT_RUNNER}"
+        DEPENDS "${PROJECT_SOURCE_DIR}/src/web/tests/upstream/run-jit.ts"
+            "${PROJECT_SOURCE_DIR}/src/web/arm/jit-host.ts" "${PROJECT_SOURCE_DIR}/src/web/arm/lower.ts"
+            "${PROJECT_SOURCE_DIR}/src/web/arm/ir.ts" "${PROJECT_SOURCE_DIR}/src/web/wasm/binary.ts"
+            "${PROJECT_SOURCE_DIR}/src/web/pica/jit-host.ts" "${PROJECT_SOURCE_DIR}/src/web/pica/lower.ts"
+            "${PROJECT_SOURCE_DIR}/src/web/pica/control-flow.ts" "${PROJECT_SOURCE_DIR}/src/web/pica/instruction.ts"
+        VERBATIM)
+    add_custom_target(core_jit_fixture_runner DEPENDS "${CORE_JIT_RUNNER}")
+    add_dependencies(tests core_jit_fixture_runner)
     set_target_properties(tests PROPERTIES SUFFIX ".mjs")
     target_compile_definitions(tests PRIVATE CATCH_CONFIG_NO_POSIX_SIGNALS)
     target_link_options(tests PRIVATE
@@ -47,10 +61,10 @@ if(EMSCRIPTEN)
         -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker,node
         -sINITIAL_MEMORY=536870912 -sMAXIMUM_MEMORY=2147483648 -sALLOW_MEMORY_GROWTH=1
         -sSTACK_SIZE=4194304 -sPTHREAD_POOL_SIZE=4 -sEXIT_RUNTIME=1 -sDYNAMIC_EXECUTION=0)
-    add_test(NAME tests COMMAND "${BUN_EXECUTABLE}"
-        "${PROJECT_SOURCE_DIR}/src/web/tests/upstream/run-jit.ts" "$<TARGET_FILE:tests>")
-    add_test(NAME pica_control_flow COMMAND "${BUN_EXECUTABLE}"
-        "${PROJECT_SOURCE_DIR}/src/web/tests/upstream/run-jit.ts" "$<TARGET_FILE:tests>"
+    add_test(NAME tests COMMAND "${NODE_EXECUTABLE}"
+        "${CORE_JIT_RUNNER}" "$<TARGET_FILE:tests>")
+    add_test(NAME pica_control_flow COMMAND "${NODE_EXECUTABLE}"
+        "${CORE_JIT_RUNNER}" "$<TARGET_FILE:tests>"
         "[shader]" --pica-dispatch)
     set(TEST_WEB_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
     file(GENERATE OUTPUT "${TEST_WEB_DIRECTORY}/browser-jit.html"

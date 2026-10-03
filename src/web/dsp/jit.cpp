@@ -17,6 +17,10 @@
 
 extern "C" const char* azahar_dsp_template_metadata();
 
+namespace {
+std::atomic<uint32_t> installed_entries{0};
+}
+
 EM_JS_DEPS(dsp_jit, "$GOT,$stringToNewUTF8");
 
 EM_JS(void, InitializeDspJit,
@@ -47,6 +51,9 @@ EM_JS(char*, DspCompileError, (), {
 });
 
 extern "C" {
+EMSCRIPTEN_KEEPALIVE uint32_t azahar_dsp_jit_entries() {
+    return installed_entries.load(std::memory_order_relaxed);
+}
 EMSCRIPTEN_KEEPALIVE uint16_t azahar_dsp_data_read(uint32_t context, uint16_t address) {
     return reinterpret_cast<Teakra::MemoryInterface*>(context)->DataRead(address);
 }
@@ -64,7 +71,7 @@ EMSCRIPTEN_KEEPALIVE void azahar_dsp_program_write(uint32_t context, uint32_t ad
 namespace {
 
 const std::array<u8, 65536>& OpcodeFlags() {
-    static const auto flags = [] {
+    static thread_local const auto flags = [] {
         std::array<u8, 65536> result{};
         InitializeDspJit(azahar_dsp_template_metadata(), result.data(),
                          sizeof(Teakra::RegisterState), sizeof(Web::Dsp::Semantics),
@@ -72,6 +79,14 @@ const std::array<u8, 65536>& OpcodeFlags() {
         return result;
     }();
     return flags;
+}
+
+using Entry = void (*)(Web::Dsp::Semantics*);
+
+std::unordered_map<u32, Entry>& ThreadEntries() {
+    // Each Wasm thread owns its function table; generated slots stay on that thread.
+    static thread_local std::unordered_map<u32, Entry> entries;
+    return entries;
 }
 
 // The original timing, repeat and interrupt scheduler drives generated Wasm entries.
@@ -85,6 +100,8 @@ public:
     }
 
     void Run(u64 cycles) override {
+        const auto& opcode_flags = OpcodeFlags();
+        auto& entries = ThreadEntries();
         idle = false;
         for (u64 i = 0; i < cycles; ++i) {
             if (idle) {
@@ -109,7 +126,7 @@ public:
             }
 
             u16 opcode = memory.ProgramRead((regs.pc++) | (regs.prpage << 18));
-            const auto flags = OpcodeFlags()[opcode];
+            const auto flags = opcode_flags[opcode];
             u16 expand_value = 0;
             if (flags == 2) {
                 expand_value = memory.ProgramRead((regs.pc++) | (regs.prpage << 18));
@@ -146,6 +163,7 @@ public:
                     throw std::runtime_error(message);
                 }
                 entry = entries.emplace(key, reinterpret_cast<Entry>(slot)).first;
+                installed_entries.fetch_add(1, std::memory_order_relaxed);
             }
             entry->second(static_cast<Web::Dsp::Semantics*>(this));
 
@@ -193,11 +211,9 @@ public:
     }
 
 private:
-    using Entry = void (*)(Web::Dsp::Semantics*);
     Teakra::CoreTiming& core_timing;
     Teakra::MemoryInterface& memory;
     Web::Dsp::MemoryAccess access;
-    std::unordered_map<u32, Entry> entries;
     std::array<std::atomic<bool>, 3> interrupt_pending{{false, false, false}};
     std::atomic<bool> vinterrupt_pending{false};
     std::atomic<bool> vinterrupt_context_switch;

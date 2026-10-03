@@ -30,3 +30,20 @@ add_custom_command(OUTPUT "${DSP_HOST_OUTPUT}"
     DEPENDS jit-host.ts ../package.json ../bun.lock
     VERBATIM)
 add_custom_target(azahar_dsp_jit_host DEPENDS "${DSP_HOST_OUTPUT}")
+
+function(azahar_add_dsp_execution target)
+    get_filename_component(dsp_root "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../.." ABSOLUTE)
+    target_sources(${target} PRIVATE "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/jit.cpp")
+    target_include_directories(${target} PRIVATE "${dsp_root}/externals/teakra/src"
+        "${dsp_root}/externals/teakra/include/teakra/impl")
+endfunction()
+
+function(azahar_enable_dsp_runtime target)
+    target_link_libraries(${target} PRIVATE "$<TARGET_FILE:azahar_dsp_templates>")
+    add_dependencies(${target} azahar_dsp_templates azahar_dsp_jit_host)
+    target_link_options(${target} PRIVATE -sMAIN_MODULE=2 -Wl,--export=__stack_pointer
+        -Wl,--export=malloc -Wl,--export=free
+        "SHELL:--pre-js \"${CMAKE_CURRENT_FUNCTION_LIST_DIR}/runtime.js\"")
+    set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS
+        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/runtime.js")
+endfunction()

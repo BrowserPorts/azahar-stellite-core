@@ -227,7 +227,14 @@ endif()
 
 # Teakra
 set(BUILD_TESTING OFF CACHE BOOL "")
+if(EMSCRIPTEN)
+    set(TEAKRA_NATIVE_EXECUTION_BACKEND OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${PROJECT_SOURCE_DIR}/src/web/dsp" "${CMAKE_CURRENT_BINARY_DIR}/dsp-jit")
+endif()
 add_subdirectory(teakra EXCLUDE_FROM_ALL)
+if(EMSCRIPTEN)
+    azahar_add_dsp_execution(teakra)
+endif()
 
 # SDL2
 if (ENABLE_SDL2 AND NOT USE_SYSTEM_SDL2)

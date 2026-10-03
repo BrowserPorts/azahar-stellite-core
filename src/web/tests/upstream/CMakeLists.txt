@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(CTest)
 get_filename_component(AZAHAR_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." ABSOLUTE)
 option(AZAHAR_TEAKRA_JIT "Run original Teakra fixtures through the Wasm JIT" OFF)
+option(AZAHAR_TEAKRA_JIT_THREADS "Execute original Teakra cases on a Wasm pthread" OFF)
 set(DYNARMIC_ROOT "${AZAHAR_ROOT}/externals/dynarmic")
 
 if(EMSCRIPTEN)
@@ -89,17 +90,18 @@ else()
     set(TEAKRA_NATIVE_EXECUTION_BACKEND ON CACHE BOOL "" FORCE)
 endif()
 function(link_dsp_jit target)
-    target_sources(${target} PRIVATE "${AZAHAR_ROOT}/src/web/dsp/jit.cpp")
-    target_include_directories(${target} PRIVATE "${AZAHAR_ROOT}/externals/teakra/src"
-        "${AZAHAR_ROOT}/externals/teakra/include/teakra/impl")
-    target_link_libraries(${target} PRIVATE "$<TARGET_FILE:azahar_dsp_templates>")
-    add_dependencies(${target} azahar_dsp_templates dsp_jit_fixture_runner)
-    target_link_options(${target} PRIVATE -sMAIN_MODULE=2 -sMODULARIZE=1 -sEXPORT_ES6=1
+    azahar_add_dsp_execution(${target})
+    azahar_enable_dsp_runtime(${target})
+    add_dependencies(${target} dsp_jit_fixture_runner)
+    target_link_options(${target} PRIVATE -sMODULARIZE=1 -sEXPORT_ES6=1
         -Wl,--export=__stack_pointer "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free']"
         "-sEXPORTED_RUNTIME_METHODS=['callMain','getExceptionMessage']")
     set_target_properties(${target} PROPERTIES SUFFIX ".mjs"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
         CROSSCOMPILING_EMULATOR "${NODE_EXECUTABLE};${DSP_JIT_RUNNER}")
+    if(AZAHAR_TEAKRA_JIT_THREADS)
+        target_link_options(${target} PRIVATE -sPROXY_TO_PTHREAD=1 -sPTHREAD_POOL_SIZE=1)
+    endif()
 endfunction()
 set(TEAKRA_BUILD_UNIT_TESTS OFF CACHE BOOL "" FORCE)
 set(TEAKRA_BUILD_TOOLS ON CACHE BOOL "" FORCE)

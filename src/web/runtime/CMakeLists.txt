@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 add_subdirectory(../gpu/compiler "${CMAKE_CURRENT_BINARY_DIR}/shader-compiler")
-add_subdirectory(../dsp "${CMAKE_CURRENT_BINARY_DIR}/dsp-templates")
 
 add_executable(azahar_pica_shader_generator ../gpu/native-shaders.cpp)
 target_link_libraries(azahar_pica_shader_generator PRIVATE video_core)
@@ -16,6 +15,7 @@ target_link_options(azahar_pica_shader_generator PRIVATE
     "-sEXPORTED_FUNCTIONS=['_malloc','_free']")
 
 add_executable(azahar_browser entry.cpp file-system.cpp)
+azahar_enable_dsp_runtime(azahar_browser)
 target_link_libraries(azahar_browser PRIVATE citra_libretro libretro Boost::boost fmt::fmt cryptopp emscripten_opfs)
 target_include_directories(azahar_browser PRIVATE "${PROJECT_BINARY_DIR}/src"
     "${EMSCRIPTEN_ROOT_PATH}/system/lib/wasmfs")
