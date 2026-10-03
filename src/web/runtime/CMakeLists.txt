@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 add_subdirectory(../gpu/compiler "${CMAKE_CURRENT_BINARY_DIR}/shader-compiler")
+add_subdirectory(../dsp "${CMAKE_CURRENT_BINARY_DIR}/dsp-templates")
 
 add_executable(azahar_pica_shader_generator ../gpu/native-shaders.cpp)
 target_link_libraries(azahar_pica_shader_generator PRIVATE video_core)
@@ -56,4 +57,5 @@ add_custom_command(OUTPUT "${CLIENT_OUTPUT}"
     DEPENDS client.ts messages.ts session.ts
     VERBATIM)
 add_custom_target(azahar_browser_runtime DEPENDS azahar_browser azahar_shader_compiler azahar_glslang
-    azahar_pica_shader_generator "${WORKER_OUTPUT}" "${GPU_WORKER_OUTPUT}" "${CLIENT_OUTPUT}")
+    azahar_pica_shader_generator azahar_dsp_templates
+    "${WORKER_OUTPUT}" "${GPU_WORKER_OUTPUT}" "${CLIENT_OUTPUT}")
