@@ -67,10 +67,25 @@ register_fixture(dynarmic_fp_fixtures)
 # Teakra's reference interpreter is confined to this standalone test build.
 # These fixtures establish the DSP oracle and do not validate a DSP JIT yet.
 set(TEAKRA_BUILD_UNIT_TESTS OFF CACHE BOOL "" FORCE)
-set(TEAKRA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(TEAKRA_BUILD_TOOLS ON CACHE BOOL "" FORCE)
 set(TEAKRA_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
-set(TEAKRA_RUN_TESTS OFF CACHE BOOL "" FORCE)
+set(TEAKRA_RUN_TESTS ON CACHE BOOL "" FORCE)
+set(TEAKRA_TEST_ASSETS_DIR "${CMAKE_CURRENT_BINARY_DIR}/teakra-assets" CACHE PATH
+    "Directory containing Teakra's original hardware-recorded test corpus")
+if(NOT EXISTS "${TEAKRA_TEST_ASSETS_DIR}/teaklite2_tests_result.bin")
+    file(MAKE_DIRECTORY "${TEAKRA_TEST_ASSETS_DIR}")
+    file(DOWNLOAD
+        "https://media.githubusercontent.com/media/wwylele/teakra/3d697a18df504f4677b65129d9ab14c7c597e3eb/src/test_verifier/data/teaklite2_tests_result.bin"
+        "${TEAKRA_TEST_ASSETS_DIR}/teaklite2_tests_result.bin"
+        EXPECTED_HASH SHA256=baffcd4f805a7480d969401792443a34aa39f813b4f0ae49c6365f1d1f3ce120)
+endif()
 add_subdirectory("${AZAHAR_ROOT}/externals/teakra" "${CMAKE_CURRENT_BINARY_DIR}/teakra" EXCLUDE_FROM_ALL)
+if(EMSCRIPTEN)
+    # The original verifier streams the corpus through native stdio without embedding it in Wasm.
+    set_target_properties(test_verifier PROPERTIES SUFFIX ".cjs"
+        CROSSCOMPILING_EMULATOR "${NODE_EXECUTABLE}")
+    target_link_options(test_verifier PRIVATE -sNODERAWFS=1)
+endif()
 add_executable(teakra_reference_fixtures
     "${AZAHAR_ROOT}/externals/teakra/tests/dma.cpp"
     "${AZAHAR_ROOT}/externals/teakra/tests/btdmp.cpp"
@@ -83,7 +98,8 @@ target_include_directories(teakra_reference_fixtures PRIVATE
 target_link_libraries(teakra_reference_fixtures PRIVATE teakra)
 target_compile_definitions(teakra_reference_fixtures PRIVATE CATCH_CONFIG_NO_POSIX_SIGNALS)
 register_fixture(teakra_reference_fixtures)
-add_custom_target(upstream_fixtures DEPENDS azahar_portable_fixtures dynarmic_fp_fixtures teakra_reference_fixtures)
+add_custom_target(upstream_fixtures DEPENDS azahar_portable_fixtures dynarmic_fp_fixtures
+    teakra_reference_fixtures test_verifier)
 
 if(EMSCRIPTEN)
     find_program(BUN_EXECUTABLE NAMES bun REQUIRED)
