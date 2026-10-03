@@ -55,7 +55,7 @@ export interface AzaharModuleOptions {
   print: (line: string) => unknown;
   printErr: (line: string) => unknown;
   azaharVideo: (pointer: number, width: number, height: number, pitch: number) => unknown;
-  azaharAudio: (pointer: number, frames: number) => unknown;
+  azaharAudio: (pointer: number, frames: number, sampleRate: number) => unknown;
 }
 
 export type AzaharModuleFactory = (options: AzaharModuleOptions) => Promise<AzaharModule>;

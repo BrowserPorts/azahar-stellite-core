@@ -5,7 +5,8 @@ import type { InputState, PerformanceStats } from "./session";
 
 export interface ClientOutput {
   video(frame: Extract<SessionEvent, { type: "video" }>): unknown;
-  audio(samples: Int16Array<ArrayBuffer>): unknown;
+  /** Interleaved stereo PCM at Azahar's native sample rate. */
+  audio(samples: Int16Array<ArrayBuffer>, sampleRate: number): unknown;
   log(line: string): unknown;
   error(message: string): unknown;
 }
@@ -50,7 +51,7 @@ export class AzaharClient {
             break;
           }
           case "video": output.video(value); break;
-          case "audio": output.audio(value.samples); break;
+          case "audio": output.audio(value.samples, value.sampleRate); break;
           case "log": output.log(value.line); break;
         }
         return undefined;

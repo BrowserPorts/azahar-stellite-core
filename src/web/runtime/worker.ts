@@ -66,9 +66,9 @@ async function initialize(): Promise<BrowserSession> {
         const bytes = view.slice();
         return post({ type: "video", bytes, width, height, pitch }, [bytes.buffer]);
       },
-      audio: (view) => {
+      audio: (view, sampleRate) => {
         const samples = view.slice();
-        return post({ type: "audio", samples }, [samples.buffer]);
+        return post({ type: "audio", samples, sampleRate }, [samples.buffer]);
       },
     }, graphics);
   } catch (error) {

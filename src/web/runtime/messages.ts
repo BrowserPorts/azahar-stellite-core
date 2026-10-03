@@ -18,4 +18,4 @@ export type SessionEvent =
   { type: "error"; id?: number; message: string } |
   { type: "log"; line: string } |
   { type: "video"; bytes: Uint8Array<ArrayBuffer>; width: number; height: number; pitch: number } |
-  { type: "audio"; samples: Int16Array<ArrayBuffer> };
+  { type: "audio"; samples: Int16Array<ArrayBuffer>; sampleRate: number };

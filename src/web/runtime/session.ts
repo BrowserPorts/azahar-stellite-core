@@ -10,7 +10,7 @@ import { UserStorageLock } from "./storage-lock";
 
 export interface SessionOutput {
   video(bytes: Uint8Array<SharedArrayBuffer>, width: number, height: number, pitch: number): unknown;
-  audio(samples: Int16Array<SharedArrayBuffer>): unknown;
+  audio(samples: Int16Array<SharedArrayBuffer>, sampleRate: number): unknown;
   log(line: string): unknown;
 }
 
@@ -72,10 +72,10 @@ export class BrowserSession {
             output.video(core.HEAPU8.subarray(pointer, pointer + pitch * height), width, height, pitch);
           }
         },
-        azaharAudio: (pointer, frames) => output.audio(core.HEAP16.subarray(pointer >>> 1,
-          (pointer >>> 1) + frames * 2)),
+        azaharAudio: (pointer, frames, sampleRate) => output.audio(core.HEAP16.subarray(pointer >>> 1,
+          (pointer >>> 1) + frames * 2), sampleRate),
       });
-      if (core._azahar_web_abi() !== 2) throw new Error("Unsupported Azahar browser ABI");
+      if (core._azahar_web_abi() !== 3) throw new Error("Unsupported Azahar browser ABI");
       if (!core._azahar_mount_storage()) throw new Error("Azahar could not mount OPFS user storage");
       if (!core._azahar_initialize()) throw new Error("Azahar initialization failed");
       return new BrowserSession(core, storage, armJit, graphics);

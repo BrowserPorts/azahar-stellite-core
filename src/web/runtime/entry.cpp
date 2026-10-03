@@ -8,6 +8,7 @@
 #include <string>
 #include <emscripten.h>
 #include <emscripten/console.h>
+#include "audio_core/audio_types.h"
 #include "citra_libretro/citra_libretro.h"
 #include "core/core.h"
 #include "core/loader/loader.h"
@@ -24,8 +25,8 @@ bool loaded = false;
 EM_JS(void, VideoFrame, (const void* data, unsigned width, unsigned height, size_t pitch), {
     Module["azaharVideo"]?.(data, width, height, pitch);
 });
-EM_JS(void, AudioFrames, (const int16_t* data, size_t frames), {
-    Module["azaharAudio"]?.(data, frames);
+EM_JS(void, AudioFrames, (const int16_t* data, size_t frames, unsigned sample_rate), {
+    Module["azaharAudio"]?.(data, frames, sample_rate);
 });
 EM_JS(void, DisplayMessage, (const char* text), {
     Module["printErr"]?.(UTF8ToString(text));
@@ -94,7 +95,7 @@ bool Environment(unsigned command, void* data) {
 }
 
 size_t Audio(const int16_t* data, size_t frames) {
-    AudioFrames(data, frames);
+    AudioFrames(data, frames, AudioCore::native_sample_rate);
     return frames;
 }
 void PollInput() {}
@@ -110,7 +111,7 @@ int16_t ReadInput(unsigned port, unsigned device, unsigned index, unsigned id) {
 } // namespace
 
 extern "C" EMSCRIPTEN_KEEPALIVE std::uint32_t azahar_web_abi() {
-    return 2;
+    return 3;
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_initialize() {
