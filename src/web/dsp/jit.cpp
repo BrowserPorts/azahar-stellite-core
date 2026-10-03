@@ -19,6 +19,8 @@ extern "C" const char* azahar_dsp_template_metadata();
 
 namespace {
 std::atomic<uint32_t> installed_entries{0};
+std::atomic<uint32_t> optimized_entries{0};
+constexpr uint32_t optimize_after = AZAHAR_DSP_JIT_OPTIMIZE_AFTER;
 }
 
 EM_JS_DEPS(dsp_jit, "$GOT,$stringToNewUTF8,$initializeDspRuntime");
@@ -38,8 +40,8 @@ EM_JS(void, InitializeDspJit,
     HEAPU8.set(result, flags);
 });
 
-EM_JS(u32, CompileDspInstruction, (u32 opcode, u32 expansion), {
-    try { return Module["azaharDspJitHost"].compile(opcode, expansion); }
+EM_JS(u32, CompileDspInstruction, (u32 opcode, u32 expansion, bool optimized), {
+    try { return Module["azaharDspJitHost"].compile(opcode, expansion, Boolean(optimized)); }
     catch (error) {
         Module["azaharDspCompileError"] = "DSP opcode " + opcode.toString(16) + ": " + String(error);
         err(Module["azaharDspCompileError"]);
@@ -53,6 +55,9 @@ EM_JS(char*, DspCompileError, (), {
 extern "C" {
 EMSCRIPTEN_KEEPALIVE uint32_t azahar_dsp_jit_entries() {
     return installed_entries.load(std::memory_order_relaxed);
+}
+EMSCRIPTEN_KEEPALIVE uint32_t azahar_dsp_jit_optimized_entries() {
+    return optimized_entries.load(std::memory_order_relaxed);
 }
 EMSCRIPTEN_KEEPALIVE uint16_t azahar_dsp_data_read(uint32_t context, uint16_t address) {
     return reinterpret_cast<Teakra::MemoryInterface*>(context)->DataRead(address);
@@ -83,10 +88,36 @@ const std::array<u8, 65536>& OpcodeFlags() {
 
 using Entry = void (*)(Web::Dsp::Semantics*);
 
-std::unordered_map<u32, Entry>& ThreadEntries() {
+struct CompiledEntry {
+    Entry function;
+    u32 executions = 0;
+    bool optimized = false;
+};
+
+struct CachedEntry {
+    CompiledEntry* compiled = nullptr;
+    u16 expansion = 0;
+};
+
+struct EntryCache {
+    std::array<CachedEntry, 65536> recent{};
+    // References to map entries remain valid when the map rehashes.
+    std::unordered_map<u32, CompiledEntry> specializations;
+};
+
+EntryCache& ThreadEntries() {
     // Each Wasm thread owns its function table; generated slots stay on that thread.
-    static thread_local std::unordered_map<u32, Entry> entries;
+    static thread_local EntryCache entries;
     return entries;
+}
+
+Entry Compile(u16 opcode, u16 expansion, bool optimized) {
+    const u32 slot = CompileDspInstruction(opcode, expansion, optimized);
+    if (slot) return reinterpret_cast<Entry>(slot);
+    char* error = DspCompileError();
+    const std::string message(error ? error : "DSP compilation failed");
+    std::free(error);
+    throw std::runtime_error(message);
 }
 
 // The original timing, repeat and interrupt scheduler drives generated Wasm entries.
@@ -152,20 +183,29 @@ public:
             }
 
             if (!flags) Teakra::ThrowUnimplemented();
-            const u32 key = (static_cast<u32>(opcode) << 16) | expand_value;
-            auto entry = entries.find(key);
-            if (entry == entries.end()) {
-                const u32 slot = CompileDspInstruction(opcode, expand_value);
-                if (!slot) {
-                    char* error = DspCompileError();
-                    const std::string message(error ? error : "DSP compilation failed");
-                    std::free(error);
-                    throw std::runtime_error(message);
+            auto& recent = entries.recent[opcode];
+            CompiledEntry* entry = recent.compiled;
+            if (!entry || recent.expansion != expand_value) {
+                const u32 key = (static_cast<u32>(opcode) << 16) | expand_value;
+                auto found = entries.specializations.find(key);
+                if (found == entries.specializations.end()) {
+                    constexpr bool optimized = optimize_after == 0;
+                    const auto function = Compile(opcode, expand_value, optimized);
+                    found = entries.specializations
+                                .emplace(key, CompiledEntry{function, 0, optimized})
+                                .first;
+                    installed_entries.fetch_add(1, std::memory_order_relaxed);
+                    if (optimized) optimized_entries.fetch_add(1, std::memory_order_relaxed);
                 }
-                entry = entries.emplace(key, reinterpret_cast<Entry>(slot)).first;
-                installed_entries.fetch_add(1, std::memory_order_relaxed);
+                entry = &found->second;
+                recent = {entry, expand_value};
             }
-            entry->second(static_cast<Web::Dsp::Semantics*>(this));
+            if (!entry->optimized && ++entry->executions >= optimize_after) {
+                entry->function = Compile(opcode, expand_value, true);
+                entry->optimized = true;
+                optimized_entries.fetch_add(1, std::memory_order_relaxed);
+            }
+            entry->function(static_cast<Web::Dsp::Semantics*>(this));
 
             // I am not sure if a single-instruction loop is interruptable and how it is handled,
             // so just disable interrupt for it for now.

@@ -7,6 +7,12 @@ if(NOT EMSCRIPTEN)
 endif()
 get_filename_component(AZAHAR_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
 set(TEAKRA_ROOT "${AZAHAR_ROOT}/externals/teakra")
+set(AZAHAR_DSP_JIT_OPTIMIZE_AFTER 128 CACHE STRING
+    "Executions before promoting DSP Wasm code; 0 compiles optimized code immediately")
+if(NOT AZAHAR_DSP_JIT_OPTIMIZE_AFTER MATCHES "^(0|[1-9][0-9]*)$" OR
+        AZAHAR_DSP_JIT_OPTIMIZE_AFTER GREATER 4294967295)
+    message(FATAL_ERROR "AZAHAR_DSP_JIT_OPTIMIZE_AFTER must be an unsigned 32-bit integer")
+endif()
 
 # This side module supplies compilation inputs, with the original opcode bodies.
 # These bodies are the inputs for block specialization, without a decoder loop.
@@ -34,6 +40,8 @@ add_custom_target(azahar_dsp_jit_host DEPENDS "${DSP_HOST_OUTPUT}")
 function(azahar_add_dsp_execution target)
     get_filename_component(dsp_root "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../.." ABSOLUTE)
     target_sources(${target} PRIVATE "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/jit.cpp")
+    target_compile_definitions(${target} PRIVATE
+        AZAHAR_DSP_JIT_OPTIMIZE_AFTER=${AZAHAR_DSP_JIT_OPTIMIZE_AFTER})
     target_include_directories(${target} PRIVATE "${dsp_root}/externals/teakra/src"
         "${dsp_root}/externals/teakra/include/teakra/impl")
 endfunction()

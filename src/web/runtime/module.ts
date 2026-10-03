@@ -17,6 +17,7 @@ export interface AzaharModule {
   removeFunction(pointer: number): unknown;
   _azahar_web_abi(): number;
   _azahar_dsp_jit_entries(): number;
+  _azahar_dsp_jit_optimized_entries(): number;
   _azahar_mount_storage(): number;
   _azahar_mount_game_file(path: number, size: bigint): number;
   _azahar_unmount_game_file(path: number): number;

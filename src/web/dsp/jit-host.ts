@@ -18,12 +18,16 @@ interface Metadata {
   memorySize: number;
   templates: Pattern[];
 }
+interface CompiledEntry {
+  slot: number;
+  optimized: boolean;
+}
 
 /** Specializes the upstream compiled opcode bodies into executable Wasm. */
 export class DspJitHost {
   readonly #patterns: (Pattern | undefined)[] = new Array(65536);
   readonly #families = new Map<number, Uint8Array<ArrayBuffer>>();
-  readonly #entries = new Map<number, number>();
+  readonly #entries = new Map<number, CompiledEntry>();
   #imports: WebAssembly.Imports | undefined;
   #table: WebAssembly.Table | undefined;
   #memory: WebAssembly.Memory | undefined;
@@ -34,7 +38,10 @@ export class DspJitHost {
   readonly #anchorOffset: number;
   readonly #tableAnchorOffset: number;
   compilations = 0;
+  optimizations = 0;
   emittedBytes = 0;
+  coldBytes = 0;
+  optimizedBytes = 0;
   foldedLoads = 0;
 
   constructor(readonly templates: Uint8Array<ArrayBuffer>, readonly onCompile?: (count: number) => unknown) {
@@ -129,13 +136,13 @@ export class DspJitHost {
     } finally { module.dispose(); }
   }
 
-  compile(opcode: number, expansion: number): number {
+  compile(opcode: number, expansion: number, optimized = false): number {
     if (!this.#imports || !this.#table || !this.#memory) throw new Error("DSP compiler is not bound to the core");
     const pattern = this.#patterns[opcode];
     if (!pattern) throw new Error(`Unimplemented DSP opcode ${opcode.toString(16)}`);
     const key = (opcode * 65536 + (pattern[3] ? expansion : 0)) >>> 0;
     const cached = this.#entries.get(key);
-    if (cached !== undefined) return cached;
+    if (cached && (!optimized || cached.optimized)) return cached.slot;
     const module = binaryen.readBinary(this.family(pattern));
     try {
       module.setFeatures(features);
@@ -147,7 +154,7 @@ export class DspJitHost {
       module.addFunctionExport("run", "run");
       module.runPasses(["inlining", "precompute-propagate", "dce", "vacuum",
         "remove-unused-module-elements"]);
-      if (pattern[6].length) {
+      if (optimized && pattern[6].length) {
         let folded;
         do {
           folded = foldReadOnlyLoads(module, new Uint8Array(this.#memory.buffer), pattern[6]);
@@ -155,18 +162,27 @@ export class DspJitHost {
           if (folded) module.runPasses(["precompute-propagate", "dce", "vacuum"]);
         } while (folded);
       }
-      module.runPasses(["simplify-locals-nostructure", "precompute-propagate", "merge-blocks",
-        "remove-unused-brs", "vacuum", "coalesce-locals", "remove-unused-module-elements"]);
+      if (optimized) {
+        module.runPasses(["simplify-locals-nostructure", "precompute-propagate", "merge-blocks",
+          "remove-unused-brs", "vacuum", "coalesce-locals", "remove-unused-module-elements"]);
+      }
       const bytes = module.emitBinary() as Uint8Array<ArrayBuffer>;
       const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes), this.#imports);
       const run = instance.exports.run;
       if (typeof run !== "function") throw new Error("DSP block is missing its Wasm entry");
-      const slot = this.#table.grow(1);
+      // Promotion replaces the existing slot so native cached function pointers stay valid.
+      const slot = cached?.slot ?? this.#table.grow(1);
       this.#table.set(slot, run);
-      this.#entries.set(key, slot);
-      ++this.compilations;
+      this.#entries.set(key, { slot, optimized });
       this.emittedBytes += bytes.byteLength;
-      this.onCompile?.(this.compilations);
+      if (optimized) {
+        ++this.optimizations;
+        this.optimizedBytes += bytes.byteLength;
+      } else this.coldBytes += bytes.byteLength;
+      if (!cached) {
+        ++this.compilations;
+        this.onCompile?.(this.compilations);
+      }
       return slot;
     } finally { module.dispose(); }
   }

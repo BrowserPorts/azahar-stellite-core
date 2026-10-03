@@ -15,8 +15,10 @@ const { default: createModule } = await import(pathToFileURL(modulePath).href);
 const module = await createModule({ noInitialRun: true, azaharDspJitHost: host });
 process.on("exit", () => {
   console.log(`DSP JIT: ${module._azahar_dsp_jit_entries()} entries installed across Wasm threads`);
+  console.log(`DSP JIT: ${module._azahar_dsp_jit_optimized_entries()} entries optimized across Wasm threads`);
   if (host.compilations) {
     console.log(`DSP JIT: ${host.compilations} specializations, ${host.emittedBytes} bytes, ${host.foldedLoads} immutable loads folded`);
+    console.log(`DSP JIT: ${host.coldBytes} cold bytes, ${host.optimizedBytes} optimized bytes`);
   }
 });
 try { module.callMain(process.argv.slice(3)); }
