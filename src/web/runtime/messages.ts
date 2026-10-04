@@ -6,6 +6,7 @@ export type SessionResult = string | number | PerformanceStats | undefined;
 
 export type SessionRequest = { id: number } & (
   { type: "load"; file: File } |
+  { type: "import-user-file"; file: File; path: string } |
   { type: "surface"; canvas: OffscreenCanvas } |
   { type: "start" | "pause" | "close" | "performance" } |
   { type: "save" | "restore"; slot: number } |

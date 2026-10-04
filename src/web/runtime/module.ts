@@ -11,6 +11,7 @@ export interface AzaharModule {
   HEAPU32: Uint32Array<SharedArrayBuffer>;
   HEAP16: Int16Array<SharedArrayBuffer>;
   azaharGameFile: File | undefined;
+  azaharImportFile: File | undefined;
   UTF8ToString(pointer: number): string;
   stringToNewUTF8(text: string): number;
   addFunction(callback: (...args: number[]) => unknown, signature: string): number;
@@ -26,6 +27,7 @@ export interface AzaharModule {
   _azahar_mount_storage(): number;
   _azahar_mount_game_file(path: number, size: bigint): number;
   _azahar_unmount_game_file(path: number): number;
+  _azahar_import_user_file(path: number, size: bigint): number;
   _azahar_content_id(path: number): number;
   _azahar_initialize(): number;
   _azahar_load_game(path: number): number;

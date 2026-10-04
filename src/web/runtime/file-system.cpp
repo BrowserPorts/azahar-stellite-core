@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
 #include <memory>
 #include <string>
@@ -17,6 +20,7 @@
 #include "wasmfs.h"
 
 extern "C" ssize_t azahar_read_browser_file(std::uint8_t* bytes, size_t length, off_t offset);
+extern "C" ssize_t azahar_read_import_file(std::uint8_t* bytes, size_t length, off_t offset);
 
 namespace {
 
@@ -62,6 +66,25 @@ bool MakeDirectory(const char* path) {
     return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
 }
 
+bool CopyImportFile(int fd, std::uint64_t size) {
+    std::array<std::uint8_t, 65536> bytes;
+    std::uint64_t offset = 0;
+    while (offset < size) {
+        const auto length = std::min<std::uint64_t>(bytes.size(), size - offset);
+        const auto read = azahar_read_import_file(bytes.data(), length, offset);
+        if (read <= 0 || static_cast<std::uint64_t>(read) > length) return false;
+        ssize_t written = 0;
+        while (written < read) {
+            const auto result = write(fd, bytes.data() + written, read - written);
+            if (result < 0 && errno == EINTR) continue;
+            if (result <= 0) return false;
+            written += result;
+        }
+        offset += read;
+    }
+    return fsync(fd) == 0;
+}
+
 } // namespace
 
 extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_mount_storage() {
@@ -84,6 +107,39 @@ extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_mount_game_file(const char* path, st
 
 extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_unmount_game_file(const char* path) {
     return path && unlink(path) == 0;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_import_user_file(const char* path, std::uint64_t size) {
+    if (!path || size > 9007199254740991ULL) return false;
+    const auto length = strnlen(path, 4096);
+    if (!length || length == 4096) return false;
+    const std::string relative{path, length};
+    if (relative.find('\\') != std::string::npos) return false;
+    size_t start = 0;
+    do {
+        const auto end = relative.find('/', start);
+        const auto part = relative.substr(start, end - start);
+        if (part.empty() || part == "." || part == "..") return false;
+        if (end == std::string::npos) break;
+        start = end + 1;
+    } while (true);
+
+    const std::string destination = "/opfs/azahar/user/" + relative;
+    for (size_t end = destination.find('/', 1); end != std::string::npos;
+         end = destination.find('/', end + 1)) {
+        const auto directory = destination.substr(0, end);
+        if (mkdir(directory.c_str(), 0777) != 0 && errno != EEXIST) return false;
+        struct stat info{};
+        if (lstat(directory.c_str(), &info) != 0 || !S_ISDIR(info.st_mode)) return false;
+    }
+    auto temporary = destination + ".tmp.XXXXXX";
+    const int fd = mkstemp(temporary.data());
+    if (fd < 0) return false;
+    const bool copied = CopyImportFile(fd, size);
+    const int closed = close(fd);
+    if (copied && closed == 0 && rename(temporary.c_str(), destination.c_str()) == 0) return true;
+    unlink(temporary.c_str());
+    return false;
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_content_id(const char* path) {

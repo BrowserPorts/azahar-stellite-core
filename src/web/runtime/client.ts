@@ -68,6 +68,13 @@ export class AzaharClient {
     });
   }
 
+  /** Copy a file to a relative user path, such as sdmc/3ds/dspfirm.cdc, before loading a game. */
+  async importUserFile(file: File, path: string): Promise<number> {
+    const result = await this.request({ type: "import-user-file", file, path });
+    if (typeof result !== "number") throw new Error("Invalid imported file size returned by Azahar");
+    return result;
+  }
+
   async load(file: File): Promise<string> {
     const result = await this.request({ type: "load", file });
     if (typeof result !== "string") throw new Error("Invalid game identity returned by Azahar");

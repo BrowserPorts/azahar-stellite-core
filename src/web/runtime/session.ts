@@ -79,11 +79,33 @@ export class BrowserSession {
         azaharAudio: (pointer, frames, sampleRate) => output.audio(core.HEAP16.subarray(pointer >>> 1,
           (pointer >>> 1) + frames * 2), sampleRate),
       });
-      if (core._azahar_web_abi() !== 9) throw new Error("Unsupported Azahar browser ABI");
+      if (core._azahar_web_abi() !== 10) throw new Error("Unsupported Azahar browser ABI");
       if (!core._azahar_mount_storage()) throw new Error("Azahar could not mount OPFS user storage");
       if (!core._azahar_initialize()) throw new Error("Azahar initialization failed");
       return new BrowserSession(core, storage, armJit, graphics);
     } catch (error) { storage.close(); throw error; }
+  }
+
+  importUserFile(file: File, path: string): number {
+    this.checkOpen();
+    if (this.#loaded) throw new Error("Import user files before loading a game");
+    if (!Number.isSafeInteger(file.size) || file.size < 0 || /[\\\0]/.test(path) ||
+      new TextEncoder().encode(path).length >= 4096 ||
+      path.split("/").some((part) => !part || part === "." || part === "..")) {
+      throw new Error("Invalid user file path or size");
+    }
+    const pointer = this.core.stringToNewUTF8(path);
+    if (!pointer) throw new Error("Azahar could not allocate the user file path");
+    try {
+      this.core.azaharImportFile = file;
+      if (!this.core._azahar_import_user_file(pointer, BigInt(file.size))) {
+        throw new Error(`Azahar could not import ${path} into OPFS`);
+      }
+      return file.size;
+    } finally {
+      this.core.azaharImportFile = undefined;
+      this.core._free(pointer);
+    }
   }
 
   async load(file: File): Promise<string> {

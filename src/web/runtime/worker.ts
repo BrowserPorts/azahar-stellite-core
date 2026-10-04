@@ -103,6 +103,7 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
       if (!session) throw new Error("Azahar is unavailable");
       let result: SessionResult;
       switch (request.type) {
+        case "import-user-file": result = session.importUserFile(request.file, request.path); break;
         case "load": pause(); result = await session.load(request.file); break;
         case "surface": {
           pause();
