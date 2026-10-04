@@ -49,7 +49,7 @@ export class ArmJitHost {
 
   compile(json: string, layout: Uint32Array, memory: WebAssembly.Memory,
     table: WebAssembly.Table, helpers: WebAssembly.ModuleImports,
-    memoryOptions?: MemoryOptions): { slot: number; bytes: number } {
+    memoryOptions?: MemoryOptions, fpStatusHelpers?: ReadonlySet<string>): { slot: number; bytes: number } {
     const started = performance.now();
     const block = JSON.parse(json) as ArmBlock;
     const [registers, cpsr, extendedRegisters, fpscr, checkBit, executionAbi] = layout;
@@ -73,6 +73,7 @@ export class ArmJitHost {
       shared: memory.buffer instanceof SharedArrayBuffer,
       maximumPages: 65536,
       helperNames: new Set(Object.keys(helpers)),
+      ...(fpStatusHelpers ? { fpStatusHelpers } : {}),
       ...(memoryOptions ? { memory: memoryOptions } : {}),
     };
     const bytes = this.#lowerBlock(block, options);
@@ -107,7 +108,8 @@ export class ArmJitHost {
     for (let index = 0; index < slots.length; index++) {
       const record = this.#live.get(slots[index]!);
       if (!record || record.memory !== root.memory || record.table !== root.table ||
-        record.helpers !== root.helpers || record.signature !== root.signature) return 0;
+        record.helpers !== root.helpers || record.options.fpStatusHelpers !== root.options.fpStatusHelpers ||
+        record.signature !== root.signature) return 0;
       const cell = links[index * 3]!;
       const minimumBudget = links[index * 3 + 2]!;
       if (!cell || links[index * 3 + 1] !== index || !minimumBudget) throw new Error("Invalid ARM hot region link");

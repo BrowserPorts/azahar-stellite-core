@@ -48,6 +48,8 @@ export interface LowerOptions {
   maximumPages: number;
   /** Explicit arithmetic/peripheral helpers exported as raw Wasm functions by the core. */
   helperNames?: ReadonlySet<string>;
+  /** Native helpers that only add FPSCR exception flags; registers and processor modes are preserved. */
+  fpStatusHelpers?: ReadonlySet<string>;
   memory?: MemoryOptions;
 }
 
@@ -250,14 +252,17 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       importIndex = imports.length;
       imports.push({ module: "core", name, type: { params: ["i32", ...params], results } });
     }
-    // Native helpers can call back into the core and change the processor mode.
-    knownCpsrMode = undefined;
-    knownFpscrMode = undefined;
+    const preservesRegisters = options.fpStatusHelpers?.has(name);
+    // Peripheral helpers can call back into the core and change the processor mode.
+    if (!preservesRegisters) {
+      knownCpsrMode = undefined;
+      knownFpscrMode = undefined;
+    }
     // Native callbacks and exception unwinding must see all ticks from prior linked blocks.
     if (options.execution) store(options.execution.pendingTicks, () => get(2), true);
     writeBackState();
     get(0); emit(); body.byte(0x10).u32(importIndex);
-    reloadState();
+    if (!preservesRegisters) reloadState();
     return undefined;
   };
   const bit = (mask: number): Bytes => load(options.layout.cpsr).byte(0x41)

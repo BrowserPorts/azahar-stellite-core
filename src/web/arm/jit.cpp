@@ -97,13 +97,14 @@ void RefreshBudget(ArmState* state) {
                                           std::numeric_limits<int64_t>::max());
 }
 
-EM_JS(uint32_t, CompileArmRegion, (const char* json, const uint32_t* layout, uint32_t layout_count, const uint32_t* memory_config, uint32_t* bytes), {
+EM_JS(uint32_t, CompileArmRegion, (const char* json, const uint32_t* layout, uint32_t layout_count, const uint32_t* memory_config, const char* fp_status_helpers, uint32_t* bytes), {
     try {
         if (!Module["azaharJitHelpers"]) {
             const rawExports = new Set(Object.values(wasmExports));
             Module["azaharJitHelpers"] = Object.fromEntries(Object.entries(Module)
                 .filter(([name, value]) => name.startsWith("_") && typeof value === "function" && rawExports.has(value))
                 .map(([name, value]) => [name.slice(1), value]));
+            Module["azaharFpStatusHelpers"] = new Set(UTF8ToString(fp_status_helpers).split(" ").filter(Boolean));
         }
         const memory = HEAPU32.slice(memory_config >> 2, (memory_config >> 2) + 7);
         const result = Module["azaharJitHost"].compile(UTF8ToString(json),
@@ -112,7 +113,7 @@ EM_JS(uint32_t, CompileArmRegion, (const char* json, const uint32_t* layout, uin
                 pageTable: memory[0], ...(memory[2] ? { fastmem: memory[1] } : {}),
                 pointerMaskBits: memory[3], absoluteOffset: Boolean(memory[4]),
                 detectMisaligned: memory[5], boundaryOnly: Boolean(memory[6])
-            });
+            }, Module["azaharFpStatusHelpers"]);
         HEAPU32[bytes >> 2] = result.bytes;
         return result.slot;
     } catch (error) {
@@ -957,51 +958,60 @@ FIXED_CONVERSION(FPDoubleToFixedU32, uint64_t, uint32_t, 32, true)
 FIXED_CONVERSION(FPDoubleToFixedS64, uint64_t, uint64_t, 64, false)
 FIXED_CONVERSION(FPDoubleToFixedU64, uint64_t, uint64_t, 64, true)
 #undef FIXED_CONVERSION
-#define FP_ARITHMETIC(bits, type) \
-    EMSCRIPTEN_KEEPALIVE type FPDiv##bits(ArmState* state, type lhs, type rhs) { \
+#define FP_ARITHMETIC(emit, bits, type) \
+    emit(type, FPDiv##bits, (ArmState* state, type lhs, type rhs), \
         return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
             return DivideFP(VfpInput(state, lhs, fpcr, fpsr), VfpInput(state, rhs, fpcr, fpsr), fpcr, fpsr); \
         }); \
-    } \
-    EMSCRIPTEN_KEEPALIVE type FPSqrt##bits(ArmState* state, type value) { \
+    ) \
+    emit(type, FPSqrt##bits, (ArmState* state, type value), \
         return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
             return SquareRootFP(VfpInput(state, value, fpcr, fpsr), fpcr, fpsr); \
         }); \
-    } \
-    EMSCRIPTEN_KEEPALIVE type FPAdd##bits(ArmState* state, type lhs, type rhs) { \
+    ) \
+    emit(type, FPAdd##bits, (ArmState* state, type lhs, type rhs), \
         return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
             lhs = VfpInput(state, lhs, fpcr, fpsr); \
             rhs = VfpInput(state, rhs, fpcr, fpsr); \
             return AddFP<type, false>(lhs, rhs, fpcr, fpsr); \
         }); \
-    } \
-    EMSCRIPTEN_KEEPALIVE type FPSub##bits(ArmState* state, type lhs, type rhs) { \
+    ) \
+    emit(type, FPSub##bits, (ArmState* state, type lhs, type rhs), \
         return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
             lhs = VfpInput(state, lhs, fpcr, fpsr); \
             rhs = VfpInput(state, rhs, fpcr, fpsr); \
             return AddFP<type, true>(lhs, rhs, fpcr, fpsr); \
         }); \
-    } \
-    EMSCRIPTEN_KEEPALIVE type FPMul##bits(ArmState* state, type lhs, type rhs) { \
+    ) \
+    emit(type, FPMul##bits, (ArmState* state, type lhs, type rhs), \
         return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
             lhs = VfpInput(state, lhs, fpcr, fpsr); \
             rhs = VfpInput(state, rhs, fpcr, fpsr); \
             return MultiplyFP(lhs, rhs, fpcr, fpsr); \
         }); \
-    } \
-    EMSCRIPTEN_KEEPALIVE type FPMulAdd##bits(ArmState* state, type addend, type lhs, type rhs) { \
+    ) \
+    emit(type, FPMulAdd##bits, (ArmState* state, type addend, type lhs, type rhs), \
         return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { return Dynarmic::FP::FPMulAdd(VfpInput(state, addend, fpcr, fpsr), VfpInput(state, lhs, fpcr, fpsr), VfpInput(state, rhs, fpcr, fpsr), fpcr, fpsr); }); \
-    } \
-    EMSCRIPTEN_KEEPALIVE type FPMulSub##bits(ArmState* state, type minuend, type lhs, type rhs) { \
+    ) \
+    emit(type, FPMulSub##bits, (ArmState* state, type minuend, type lhs, type rhs), \
         return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { return Dynarmic::FP::FPMulSub(VfpInput(state, minuend, fpcr, fpsr), VfpInput(state, lhs, fpcr, fpsr), VfpInput(state, rhs, fpcr, fpsr), fpcr, fpsr); }); \
-    } \
-    EMSCRIPTEN_KEEPALIVE type FPRoundInt##bits(ArmState* state, type value, uint32_t rounding, uint32_t exact) { \
+    ) \
+    emit(type, FPRoundInt##bits, (ArmState* state, type value, uint32_t rounding, uint32_t exact), \
         return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
             return static_cast<type>(Dynarmic::FP::FPRoundInt(VfpInput(state, value, fpcr, fpsr), fpcr, static_cast<Dynarmic::FP::RoundingMode>(rounding), exact, fpsr)); \
         }); \
-    }
-FP_ARITHMETIC(32, uint32_t)
-FP_ARITHMETIC(64, uint64_t)
+    )
+#define FP_HELPER_DEFINITION(result_type, name, parameters, ...) \
+    EMSCRIPTEN_KEEPALIVE result_type name parameters { __VA_ARGS__ }
+FP_ARITHMETIC(FP_HELPER_DEFINITION, 32, uint32_t)
+FP_ARITHMETIC(FP_HELPER_DEFINITION, 64, uint64_t)
+#undef FP_HELPER_DEFINITION
+// These helpers only add FPSCR exception flags; registers and processor modes are preserved.
+#define FP_HELPER_NAME(result_type, name, parameters, ...) #name " "
+constexpr char fp_status_helpers[] =
+    FP_ARITHMETIC(FP_HELPER_NAME, 32, uint32_t)
+    FP_ARITHMETIC(FP_HELPER_NAME, 64, uint64_t);
+#undef FP_HELPER_NAME
 #undef FP_ARITHMETIC
 #define FP_SELECT(name, type, maximum, numeric) \
     EMSCRIPTEN_KEEPALIVE type name(ArmState* state, type lhs, type rhs) { \
@@ -1319,7 +1329,8 @@ struct Jit::Impl {
                 static_cast<uint32_t>(config.page_table_pointer_mask_bits), config.absolute_offset_page_table,
                 config.detect_misaligned_access_via_page_table, config.only_detect_misalignment_via_page_table_on_page_boundary};
             uint32_t bytes = 0;
-            const auto slot = CompileArmRegion(json.c_str(), layout, std::size(layout), memory_config, &bytes);
+            const auto slot = CompileArmRegion(json.c_str(), layout, std::size(layout), memory_config,
+                                               fp_status_helpers, &bytes);
             if (!slot) {
                 char* error = ArmCompileError();
                 std::string message(error);
