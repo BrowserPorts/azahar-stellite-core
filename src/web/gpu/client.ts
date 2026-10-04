@@ -26,7 +26,8 @@ export class GraphicsClient {
   #sequence = 0;
   #closed = false;
   #hasSurface = false;
-  #queuedFrames = 0;
+  // Outstanding snapshot bytes through each submitted frame.
+  #queuedFrameBytes: number[] = [];
   #queuedBytes = 0;
   #failure: Error | undefined;
   #reported = false;
@@ -47,7 +48,13 @@ export class GraphicsClient {
           this.configurationSchema = response.configurationSchema;
           resolve(undefined);
         } else if (response.type === "presented") {
-          this.#queuedFrames--;
+          const completed = this.#queuedFrameBytes.shift();
+          if (completed === undefined) {
+            this.fail(new Error("Unexpected graphics presentation completion"), reject, onError);
+          } else {
+            this.#queuedBytes -= completed;
+            this.#queuedFrameBytes = this.#queuedFrameBytes.map(bytes => bytes - completed);
+          }
         } else if (response.type === "reply") {
           this.#pending.get(response.id)?.resolve();
           this.#pending.delete(response.id);
@@ -80,11 +87,11 @@ export class GraphicsClient {
     this.checkOpen();
     if (!this.#hasSurface) return false;
     // Presentation can drop old frames without dropping native rasterizer commands.
-    if (this.#queuedFrames >= 2) return true;
+    if (this.#queuedFrameBytes.length >= 2) return true;
     // The native framebuffer can change as soon as the callback returns.
     const bytes = view.slice();
     this.post({ type: "video", bytes, width, height, pitch }, [bytes.buffer]);
-    this.#queuedFrames++;
+    this.#queuedFrameBytes.push(this.#queuedBytes);
     return true;
   }
 
@@ -105,10 +112,10 @@ export class GraphicsClient {
   screens(frame: ScreenFrame): boolean {
     this.checkOpen();
     if (!this.#hasSurface) return false;
-    if (this.#queuedFrames >= 2) return true;
+    if (this.#queuedFrameBytes.length >= 2) return true;
     const quads = frame.quads.map(quad => ({ ...quad, vertices: quad.vertices.slice() }));
     this.post({ type: "screens", frame: { ...frame, quads } }, quads.map(quad => quad.vertices.buffer));
-    this.#queuedFrames++;
+    this.#queuedFrameBytes.push(this.#queuedBytes);
     return true;
   }
 
@@ -195,6 +202,8 @@ export class GraphicsClient {
     this.#fenceWaitMs += performance.now() - started;
     this.#fenceCount++;
     this.#queuedBytes = 0;
+    // Presentation replies queued during the synchronous wait cover these bytes too.
+    this.#queuedFrameBytes.fill(0);
     return undefined;
   }
 
