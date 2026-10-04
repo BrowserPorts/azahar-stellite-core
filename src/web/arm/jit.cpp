@@ -522,6 +522,27 @@ extern "C" EMSCRIPTEN_KEEPALIVE uint32_t WasmFastDispatch(ArmState* state, uint6
 #endif
     return entry.slot;
 }
+extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_arm_jit_statistics_enabled() {
+#ifdef AZAHAR_ARM_JIT_STATISTICS
+    return true;
+#else
+    return false;
+#endif
+}
+extern "C" EMSCRIPTEN_KEEPALIVE uint64_t azahar_arm_jit_native_dispatches() {
+#ifdef AZAHAR_ARM_JIT_STATISTICS
+    return native_dispatches.load(std::memory_order_relaxed);
+#else
+    return 0;
+#endif
+}
+extern "C" EMSCRIPTEN_KEEPALIVE uint64_t azahar_arm_jit_completed_blocks() {
+#ifdef AZAHAR_ARM_JIT_STATISTICS
+    return completed_blocks.load(std::memory_order_relaxed);
+#else
+    return 0;
+#endif
+}
 extern "C" EMSCRIPTEN_KEEPALIVE uint64_t azahar_arm_jit_linked_blocks() {
 #ifdef AZAHAR_ARM_JIT_STATISTICS
     const auto blocks = completed_blocks.load(std::memory_order_relaxed);

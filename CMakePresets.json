@@ -13,6 +13,7 @@
         "CMAKE_BUILD_TYPE": "Release",
         "ENABLE_LIBRETRO": true,
         "ENABLE_LTO": true,
+        "AZAHAR_ARM_JIT_STATISTICS": false,
         "ENABLE_TESTS": true,
         "ENABLE_SOFTWARE_RENDERER": true,
         "ENABLE_OPENGL": false,

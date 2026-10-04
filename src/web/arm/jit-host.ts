@@ -4,12 +4,24 @@ import { lowerArm } from "./lower";
 import type { MemoryOptions } from "./lower";
 import type { ArmBlock } from "./ir";
 
+/** Native execution totals since the previous snapshot, when counting is enabled. */
+export interface ArmExecutionStatistics {
+  nativeDispatches: number;
+  completedBlocks: number;
+  /** Completed blocks beyond native dispatches, including static and indirect Wasm links. */
+  linkedBlocks: number;
+  budgetReuses: number;
+  fastDispatchHits: number;
+}
+
 export interface ArmJitStatistics {
   compiledBlocks: number;
   generatedBytes: number;
   /** Wall time in IR decoding, Wasm lowering, compilation, and installation. */
   compileMs: number;
   liveBlocks: number;
+  /** Available in builds configured with AZAHAR_ARM_JIT_STATISTICS. */
+  execution?: ArmExecutionStatistics;
 }
 
 /** Synchronous baseline installation; execution stays within the shared Wasm table. */

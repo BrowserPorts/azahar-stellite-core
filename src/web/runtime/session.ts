@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { ArmJitHost } from "../arm/jit-host";
-import type { ArmJitStatistics } from "../arm/jit-host";
+import type { ArmExecutionStatistics, ArmJitStatistics } from "../arm/jit-host";
 import { PicaJitHost } from "../pica/jit-host";
 import type { GraphicsClient, GraphicsStatistics } from "../gpu/client";
 import type { AzaharModule, AzaharModuleFactory } from "./module";
@@ -49,6 +49,10 @@ export class BrowserSession {
   #loaded = false;
   #closed = false;
   #gamePath = 0;
+  #lastExecutionCounts = {
+    nativeDispatches: 0n, completedBlocks: 0n,
+    budgetReuses: 0n, fastDispatchHits: 0n,
+  };
 
   private constructor(readonly core: AzaharModule, private readonly storage: UserStorageLock,
     private readonly armJit: ArmJitHost, private readonly graphics: GraphicsClient) {}
@@ -75,7 +79,7 @@ export class BrowserSession {
         azaharAudio: (pointer, frames, sampleRate) => output.audio(core.HEAP16.subarray(pointer >>> 1,
           (pointer >>> 1) + frames * 2), sampleRate),
       });
-      if (core._azahar_web_abi() !== 3) throw new Error("Unsupported Azahar browser ABI");
+      if (core._azahar_web_abi() !== 4) throw new Error("Unsupported Azahar browser ABI");
       if (!core._azahar_mount_storage()) throw new Error("Azahar could not mount OPFS user storage");
       if (!core._azahar_initialize()) throw new Error("Azahar initialization failed");
       return new BrowserSession(core, storage, armJit, graphics);
@@ -128,8 +132,35 @@ export class BrowserSession {
       vblankMs: values[3]! * 1000, hleSvcMs: values[4]! * 1000,
       hleIpcMs: values[5]! * 1000, gpuCommandMs: values[6]! * 1000,
       swapMs: values[7]! * 1000, otherMs: values[8]! * 1000,
-      armJit: this.armJit.takeStatistics(), graphics: this.graphics.takeStatistics(),
+      armJit: { ...this.armJit.takeStatistics(), ...this.executionStatistics() },
+      graphics: this.graphics.takeStatistics(),
     };
+  }
+
+  private executionStatistics(): { execution?: ArmExecutionStatistics } {
+    if (!this.core._azahar_arm_jit_statistics_enabled()) return {};
+    const counts = {
+      nativeDispatches: this.core._azahar_arm_jit_native_dispatches(),
+      completedBlocks: this.core._azahar_arm_jit_completed_blocks(),
+      budgetReuses: this.core._azahar_arm_jit_budget_reuses(),
+      fastDispatchHits: this.core._azahar_arm_jit_fast_dispatch_hits(),
+    };
+    const delta = (current: bigint, previous: bigint): number => {
+      const value = Number(current - previous);
+      if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid ARM execution counter");
+      return value;
+    };
+    const previous = this.#lastExecutionCounts;
+    const nativeDispatches = delta(counts.nativeDispatches, previous.nativeDispatches);
+    const completedBlocks = delta(counts.completedBlocks, previous.completedBlocks);
+    const execution = {
+      nativeDispatches, completedBlocks,
+      linkedBlocks: Math.max(0, completedBlocks - nativeDispatches),
+      budgetReuses: delta(counts.budgetReuses, previous.budgetReuses),
+      fastDispatchHits: delta(counts.fastDispatchHits, previous.fastDispatchHits),
+    };
+    this.#lastExecutionCounts = counts;
+    return { execution };
   }
 
   input(value: InputState): undefined {

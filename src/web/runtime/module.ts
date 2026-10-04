@@ -16,6 +16,11 @@ export interface AzaharModule {
   addFunction(callback: (...args: number[]) => unknown, signature: string): number;
   removeFunction(pointer: number): unknown;
   _azahar_web_abi(): number;
+  _azahar_arm_jit_statistics_enabled(): number;
+  _azahar_arm_jit_native_dispatches(): bigint;
+  _azahar_arm_jit_completed_blocks(): bigint;
+  _azahar_arm_jit_budget_reuses(): bigint;
+  _azahar_arm_jit_fast_dispatch_hits(): bigint;
   _azahar_dsp_jit_entries(): number;
   _azahar_dsp_jit_optimized_entries(): number;
   _azahar_mount_storage(): number;
