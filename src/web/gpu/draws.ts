@@ -25,6 +25,7 @@ interface DrawPipeline {
   pipeline: GPURenderPipeline;
   groups: readonly GPUBindGroupLayout[];
   textures: TextureBindingGroup[];
+  uniforms: WeakMap<GPUBuffer, GPUBindGroup>;
 }
 
 const pipelineStateKeys = ["cull", "flipped", "colorMask", "depthWrite", "depthCompare", "stencil",
@@ -52,6 +53,7 @@ export class GraphicsDraws {
   #drawCount = 0;
   #uploadBytes = 0;
   #upload: DrawUpload | undefined;
+  #uniformOffsets = new Uint32Array(3);
   #luts: readonly GPUBuffer[];
   #empty: GPUTexture;
   #emptyShadow: GPUBuffer;
@@ -142,11 +144,10 @@ export class GraphicsDraws {
       const dimensions = store(new Uint8Array(new Uint32Array([width, height, 0, 0]).buffer));
       let shadow = this.#emptyShadow;
       if (state.shadow) { shadow = this.shadows.buffer(encoder, attachment!, colorLevel); temporary.push(shadow); }
-      const uniformGroup = this.device.createBindGroup({ layout: compiled.groups[0]!, entries: [
-        { binding: 1, resource: vs }, { binding: 2, resource: fs },
-        ...this.#luts.map((lut, i) => ({ binding: i + 3, resource: { buffer: lut } })),
-        { binding: 6, resource: transform },
-      ] });
+      const uniformGroup = this.uniformGroup(compiled, upload.buffer);
+      this.#uniformOffsets[0] = vs.offset!;
+      this.#uniformOffsets[1] = fs.offset!;
+      this.#uniformOffsets[2] = transform.offset!;
       const textureResources: (GPUTextureView | GPUSampler)[] = [];
       let reusableTextures = true;
       for (let i = 0; i < 3; i++) {
@@ -193,7 +194,8 @@ export class GraphicsDraws {
           } as GPURenderPassDepthStencilAttachment } : {}),
         });
         pass.setPipeline(compiled.pipeline); pass.setVertexBuffer(0, vertex.buffer, vertex.offset, vertex.size);
-        pass.setBindGroup(0, uniformGroup); pass.setBindGroup(1, textureGroup); pass.setBindGroup(2, utilityGroup);
+        pass.setBindGroup(0, uniformGroup, this.#uniformOffsets, 0, 3);
+        pass.setBindGroup(1, textureGroup); pass.setBindGroup(2, utilityGroup);
         pass.setScissorRect(x, y, w, h); pass.setStencilReference(state.stencilReference);
         const blendColor = state.blendColor >>> 0;
         pass.setBlendConstant({ r: (blendColor & 255) / 255, g: ((blendColor >>> 8) & 255) / 255,
@@ -264,6 +266,20 @@ export class GraphicsDraws {
     const factors = [state.rgbSource, state.rgbDest];
     return colorFormat !== 0 || state.rgbEquation >= 3 || factors.some(factor => factor === 12 || factor === 13) ||
       (state.alphaEquation >= 3 && factors.some(factor => factor === 6 || factor === 7 || factor === 14));
+  }
+
+  private uniformGroup(compiled: DrawPipeline, buffer: GPUBuffer): GPUBindGroup {
+    let group = compiled.uniforms.get(buffer);
+    if (!group) {
+      group = this.device.createBindGroup({ layout: compiled.groups[0]!, entries: [
+        { binding: 1, resource: { buffer, size: 32 } },
+        { binding: 2, resource: { buffer, size: 0x530 } },
+        ...this.#luts.map((lut, i) => ({ binding: i + 3, resource: { buffer: lut } })),
+        { binding: 6, resource: { buffer, size: 16 } },
+      ] });
+      compiled.uniforms.set(buffer, group);
+    }
+    return group;
   }
 
   private textureGroup(compiled: DrawPipeline, resources: readonly (GPUTextureView | GPUSampler)[],
@@ -338,10 +354,10 @@ export class GraphicsDraws {
       Number(!!s.normal) | (colorFormat << 1) | (depthFormat << 4));
     const groups = [
       this.device.createBindGroupLayout({ entries: [
-        { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform", minBindingSize: 32 } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform", minBindingSize: 0x530 } },
+        { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform", minBindingSize: 32, hasDynamicOffset: true } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform", minBindingSize: 0x530, hasDynamicOffset: true } },
         ...[3, 4, 5].map(binding => ({ binding, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } as const })),
-        { binding: 6, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform", minBindingSize: 16 } },
+        { binding: 6, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform", minBindingSize: 16, hasDynamicOffset: true } },
       ] }),
       this.device.createBindGroupLayout({ entries: [
         ...[0, 1, 2].map(binding => ({ binding, visibility: GPUShaderStage.FRAGMENT, texture: {
@@ -381,7 +397,7 @@ export class GraphicsDraws {
           stencilReadMask: s.stencilReadMask, stencilWriteMask: s.stencil ? s.stencilWriteMask : 0 } : {}),
       } } : {}),
     });
-    return { pipeline, groups, textures: [] };
+    return { pipeline, groups, textures: [], uniforms: new WeakMap() };
   }
 
   private snapshot(encoder: GPUCommandEncoder, source: GPUTexture): GPUTexture {
