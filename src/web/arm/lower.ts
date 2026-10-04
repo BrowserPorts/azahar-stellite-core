@@ -89,11 +89,16 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   const params: ValueType[] = options.execution ? ["i32", "i64", "i64", "i64"] : ["i32", "i64"];
   const parameterCount = params.length;
   const cpsrModeMask = 0x0600fe20;
+  const fpscrModeMask = 0x07f70000;
   // Native dispatch and links enter the exact Thumb, endian, and IT-state descriptor.
   let knownCpsrMode = options.execution && block.startCpsr !== undefined
     ? block.startCpsr & cpsrModeMask : undefined;
   const entryCpsrMode = knownCpsrMode;
   let terminalCpsrMode: number | undefined;
+  let knownFpscrMode = options.execution && block.startFpscr !== undefined
+    ? block.startFpscr & fpscrModeMask : undefined;
+  const entryFpscrMode = knownFpscrMode;
+  let terminalFpscrMode: number | undefined;
   const hasBxWritePc = block.nodes.some((node) => node.op === "A32BXWritePC");
   const locals: ValueType[] = block.nodes.map((node) => wasmType(node.type));
   const carryLocals = new Map<number, number>();
@@ -168,6 +173,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     }
     // Native helpers can call back into the core and change the processor mode.
     knownCpsrMode = undefined;
+    knownFpscrMode = undefined;
     // Native callbacks and exception unwinding must see all ticks from prior linked blocks.
     if (options.execution) store(options.execution.pendingTicks, () => get(2), true);
     get(0); emit(); body.byte(0x10).u32(importIndex);
@@ -229,7 +235,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     return undefined;
   };
   const finishBlock = (cycles: number, destination?: Extract<Terminal, { kind: "link" }>,
-    fastDispatch = false): undefined => {
+    fastDispatch = false, fpscrMode = terminalFpscrMode): undefined => {
     if (!block.sourceCell) {
       consume(cycles).byte(0x0f);
       return undefined;
@@ -254,18 +260,22 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     };
     if (destination?.cell && destination.fpscr !== undefined) {
       canLink(destination.cell, 0n); body.byte(0x04).byte(0x40);
-      // Static terminals establish PC and CPSR mode; FPSCR can change within the block.
-      load(options.layout.fpscr); constant(0x07f70000).byte(0x71);
-      constant(destination.fpscr & 0x07f70000).byte(0x46);
+      // Entry descriptors establish FPSCR mode; callbacks and mode writes discard that knowledge.
+      const checkFpscr = fpscrMode !== (destination.fpscr & fpscrModeMask);
+      if (checkFpscr) {
+        load(options.layout.fpscr); constant(fpscrModeMask).byte(0x71);
+        constant(destination.fpscr & fpscrModeMask).byte(0x46);
+      }
       constant(destination.cell).byte(0x28).u32(2).u32(0).byte(0x22).u32(linkSlot);
-      body.byte(0x45).byte(0x45).byte(0x71).byte(0x04).byte(0x40);
+      if (checkFpscr) body.byte(0x45).byte(0x45).byte(0x71);
+      body.byte(0x04).byte(0x40);
       tailCall(); body.byte(0x0b).byte(0x0b);
     } else if (fastDispatch) {
       canLink(0, 1n); body.byte(0x04).byte(0x40);
       const cache = options.execution!.fastDispatch;
       // Match Dynarmic's LocationDescriptor, including split Thumb IT-state bits.
       load(options.layout.cpsr); set(dispatchPointer);
-      load(options.layout.fpscr); constant(0x07f70000).byte(0x71);
+      load(options.layout.fpscr); constant(fpscrModeMask).byte(0x71);
       get(dispatchPointer); constant(5).byte(0x76); constant(1).byte(0x71).byte(0x72);
       get(dispatchPointer); constant(8).byte(0x76); constant(2).byte(0x71).byte(0x72);
       get(dispatchPointer); constant(0xfc00).byte(0x71).byte(0x72);
@@ -506,11 +516,12 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       kind: "link", pc: block.conditionFailedPc, cpsr: block.conditionFailedCpsr,
       ...(block.conditionFailedCell ? { cell: block.conditionFailedCell } : {}),
       ...(block.conditionFailedFpscr !== undefined ? { fpscr: block.conditionFailedFpscr } : {}),
-    });
+    }, false, entryFpscrMode);
     body.byte(0x0b);
   }
   // The failed condition returned; the executed body still starts in its entry mode.
   knownCpsrMode = entryCpsrMode;
+  knownFpscrMode = entryFpscrMode;
   block.nodes.forEach((node, index) => {
     const arg = (position: number): undefined => argument(node.args[position]!);
     let result = node.type !== "Void";
@@ -1041,6 +1052,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       case "A32CoprocSendOneWord": case "A32CoprocSendTwoWords":
       case "A32CoprocInternalOperation": case "A32CoprocLoadWords": case "A32CoprocStoreWords": {
         knownCpsrMode = undefined;
+        knownFpscrMode = undefined;
         const binding = node.binding;
         if (!binding) throw new JitError("compile", "Coprocessor is missing its compiled binding");
         if (binding.kind === "callback") {
@@ -1079,7 +1091,9 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         });
         break;
       case "A32GetFpscr": load(options.layout.fpscr); break;
-      case "A32SetFpscr": store(options.layout.fpscr, () => arg(0)); break;
+      case "A32SetFpscr":
+        knownFpscrMode = undefined;
+        store(options.layout.fpscr, () => arg(0)); break;
       case "A32GetFpscrNZCV": load(options.layout.fpscr); constant(0xf0000000).byte(0x71); break;
       case "A32SetFpscrNZCV": store(options.layout.fpscr, () => {
         load(options.layout.fpscr); constant(0x0fffffff).byte(0x71);
@@ -1243,6 +1257,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   });
   // Every terminal branch sees the same body result, independently of other emitted exits.
   terminalCpsrMode = options.execution ? knownCpsrMode : undefined;
+  terminalFpscrMode = options.execution ? knownFpscrMode : undefined;
   terminal(block.terminal);
   // Every terminal path returns or tail-calls, including both branches of a conditional exit.
   body.byte(0x00);

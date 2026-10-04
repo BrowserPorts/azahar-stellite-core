@@ -20,6 +20,7 @@ export interface ArmBlock {
   cycles: number;
   condition: number;
   startCpsr?: number;
+  startFpscr?: number;
   endCpsr: number;
   conditionFailedPc?: number;
   conditionFailedCpsr?: number;

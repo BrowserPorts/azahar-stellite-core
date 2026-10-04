@@ -96,10 +96,12 @@ std::string SerializeArmBlock(const Dynarmic::IR::Block& block,
     unsigned index = 0;
     for (const auto& instruction : block) names.emplace(&instruction, index++);
     std::ostringstream stream;
-    const auto start_cpsr = Dynarmic::A32::LocationDescriptor(block.Location()).CPSR().Value();
+    const auto start_location = Dynarmic::A32::LocationDescriptor(block.Location());
+    const auto start_cpsr = start_location.CPSR().Value();
     const auto end_cpsr = Dynarmic::A32::LocationDescriptor(block.EndLocation()).CPSR().Value();
     stream << "{\"cycles\":" << block.CycleCount() << ",\"condition\":" << static_cast<int>(block.GetCondition())
            << ",\"startCpsr\":" << start_cpsr
+           << ",\"startFpscr\":" << start_location.FPSCR().Value()
            << ",\"endCpsr\":" << (end_cpsr & ~(always_little_endian ? 0x200u : 0u));
     if (source_cell) stream << ",\"sourceCell\":" << source_cell;
     if (block.HasConditionFailedLocation()) {
