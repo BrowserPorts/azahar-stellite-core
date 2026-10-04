@@ -1197,7 +1197,8 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     if (result) set(index + 2);
   });
   terminal(block.terminal);
-  finishBlock(block.cycles);
+  // Every terminal path returns or tail-calls, including both branches of a conditional exit.
+  body.byte(0x00);
   return regionModule({ imports, shared: options.shared, maximumPages: options.maximumPages,
     signature: { params: ["i32", "i64"], results: ["i64"] }, locals, body,
     table: Boolean(block.sourceCell) });
