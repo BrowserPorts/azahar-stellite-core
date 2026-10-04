@@ -16,6 +16,8 @@ interface DrawPipeline { pipeline: GPURenderPipeline; groups: readonly GPUBindGr
 /** Executes native PICA triangle batches, retaining the upstream fragment generator. */
 export class GraphicsDraws {
   #pipelines = new Map<string, Promise<DrawPipeline>>();
+  // Views follow texture lifetimes across native handle reuse and save-state restoration.
+  #views = new WeakMap<GPUTexture, Map<number | GPUTextureViewDimension | undefined, GPUTextureView>>();
   #encoder: GPUCommandEncoder | undefined;
   #temporary: (GPUTexture | GPUBuffer)[] = [];
   #drawCount = 0;
@@ -130,7 +132,7 @@ export class GraphicsDraws {
         }
         const dimension: GPUTextureViewDimension = i === 0 && state.texture0Type === 1 ? "cube" :
           i === 0 && state.texture0Type === 4 ? "2d-array" : "2d";
-        textureEntries.push({ binding: i, resource: image.createView({ dimension }) },
+        textureEntries.push({ binding: i, resource: this.view(image, dimension) },
           { binding: i + 3, resource: this.samplers.get(state.samplers[i]!) });
       }
       const textureGroup = this.device.createBindGroup({ layout: compiled.groups[1]!, entries: textureEntries });
@@ -143,9 +145,9 @@ export class GraphicsDraws {
       }
       const utilityGroup = this.device.createBindGroup({ layout: compiled.groups[2]!, entries: [
         { binding: 0, resource: { buffer: shadow } },
-        { binding: 1, resource: (state.normal ? this.textures.get(state.normal).texture : this.#empty).createView() },
+        { binding: 1, resource: this.view(state.normal ? this.textures.get(state.normal).texture : this.#empty) },
         { binding: 2, resource: state.normal ? this.samplers.get(state.samplers[0]) : this.#utilitySampler },
-        { binding: 3, resource: dest.createView() },
+        { binding: 3, resource: this.view(dest) },
         { binding: 4, resource: dimensions },
       ] });
       const count = draw.vertices.byteLength / stride;
@@ -296,8 +298,17 @@ export class GraphicsDraws {
     return copy;
   }
 
-  private view(texture: GPUTexture, level: number): GPUTextureView {
-    return texture.createView({ dimension: "2d", baseMipLevel: level, mipLevelCount: 1, baseArrayLayer: 0, arrayLayerCount: 1 });
+  private view(texture: GPUTexture, key?: number | GPUTextureViewDimension): GPUTextureView {
+    let views = this.#views.get(texture);
+    if (!views) { views = new Map(); this.#views.set(texture, views); }
+    let view = views.get(key);
+    if (!view) {
+      view = texture.createView(typeof key === "number" ? {
+        dimension: "2d", baseMipLevel: key, mipLevelCount: 1, baseArrayLayer: 0, arrayLayerCount: 1,
+      } : key === undefined ? {} : { dimension: key });
+      views.set(key, view);
+    }
+    return view;
   }
 
   private checkOpen(): undefined {
@@ -309,6 +320,7 @@ export class GraphicsDraws {
     if (this.#closed) return undefined;
     this.discard();
     this.#closed = true; this.#pipelines.clear();
+    this.#views = new WeakMap();
     for (const buffer of this.#luts) buffer.destroy();
     this.#empty.destroy(); this.#emptyShadow.destroy();
     return undefined;
