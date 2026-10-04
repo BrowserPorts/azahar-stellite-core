@@ -75,12 +75,14 @@ export interface ModuleOptions {
   locals: ValueType[];
   body: Bytes;
   table?: boolean;
+  functions?: readonly { locals: ValueType[]; body: Bytes }[];
 }
 
 /** All generated regions share the emulator heap and export one Wasm entry. */
 export function regionModule(options: ModuleOptions): Uint8Array<ArrayBuffer> {
   const module = new Bytes().append([0, 97, 115, 109, 1, 0, 0, 0]);
   const imports = options.imports ?? [];
+  const functions = options.functions ?? [options];
   // The region entry has type zero, including when referenced by a tail call.
   const types = [options.signature, ...imports.map((item) => item.type)];
   const typeSection = new Bytes().u32(types.length);
@@ -101,17 +103,23 @@ export function regionModule(options: ModuleOptions): Uint8Array<ArrayBuffer> {
     importSection.name("env").name("__indirect_function_table").byte(1).byte(0x70).byte(0).u32(0);
   }
   module.section(2, importSection);
-  module.section(3, new Bytes().u32(1).u32(0));
+  const declarations = new Bytes().u32(functions.length);
+  functions.forEach(() => declarations.u32(0));
+  module.section(3, declarations);
   module.section(7, new Bytes().u32(1).name("run").byte(0).u32(imports.length));
-  const localRuns: { type: ValueType; count: number }[] = [];
-  for (const local of options.locals) {
-    const previous = localRuns[localRuns.length - 1];
-    if (previous?.type === local) previous.count++;
-    else localRuns.push({ type: local, count: 1 });
+  const code = new Bytes().u32(functions.length);
+  for (const definition of functions) {
+    const localRuns: { type: ValueType; count: number }[] = [];
+    for (const local of definition.locals) {
+      const previous = localRuns[localRuns.length - 1];
+      if (previous?.type === local) previous.count++;
+      else localRuns.push({ type: local, count: 1 });
+    }
+    const body = new Bytes().u32(localRuns.length);
+    for (const run of localRuns) body.u32(run.count).byte(Type[run.type]);
+    body.append(definition.body.data).byte(0x0b);
+    code.u32(body.data.length).append(body.data);
   }
-  const body = new Bytes().u32(localRuns.length);
-  for (const run of localRuns) body.u32(run.count).byte(Type[run.type]);
-  body.append(options.body.data).byte(0x0b);
-  module.section(10, new Bytes().u32(1).u32(body.data.length).append(body.data));
+  module.section(10, code);
   return module.finish();
 }

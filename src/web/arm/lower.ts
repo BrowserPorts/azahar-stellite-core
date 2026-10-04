@@ -2,7 +2,7 @@
 
 import { JitError } from "../protocol";
 import { Bytes, regionModule } from "../wasm/binary";
-import type { FunctionImport, ValueType } from "../wasm/binary";
+import type { FunctionImport, ModuleOptions, ValueType } from "../wasm/binary";
 import type { Argument, ArmBlock, ArmLayout, Terminal } from "./ir";
 
 const binary: Record<string, number> = {
@@ -79,12 +79,45 @@ export interface MemoryOptions {
   boundaryOnly: boolean;
 }
 
+interface RegionLink {
+  index: number;
+  minimumBudget: number;
+}
+
+interface LowerRegion {
+  imports: FunctionImport[];
+  links: ReadonlyMap<number, RegionLink>;
+  calls: { body: Bytes; offset: number; index: number }[];
+}
+
 export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<ArrayBuffer> {
+  return regionModule(lowerArmBody(block, options));
+}
+
+export function lowerArmRegion(blocks: readonly ArmBlock[], links: ReadonlyMap<number, RegionLink>,
+  options: LowerOptions): Uint8Array<ArrayBuffer> {
+  if (!options.execution || !blocks.length || !blocks[0]!.sourceCell) {
+    throw new JitError("compile", "ARM hot region is missing its native entry");
+  }
+  const region: LowerRegion = { imports: [], links, calls: [] };
+  // Inlined blocks share the owning region's cache age and retirement lifetime.
+  const functions = blocks.map(block => lowerArmBody({ ...block, sourceCell: blocks[0]!.sourceCell! }, options, region));
+  for (const call of region.calls) {
+    let index = region.imports.length + call.index;
+    for (let byte = 0; byte < 5; byte++) {
+      call.body.data[call.offset + byte] = (index & 127) | (byte < 4 ? 128 : 0);
+      index >>>= 7;
+    }
+  }
+  return regionModule({ ...functions[0]!, functions, imports: region.imports });
+}
+
+function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegion): ModuleOptions {
   if (Boolean(block.sourceCell) !== Boolean(options.execution)) {
     throw new JitError("compile", "ARM execution layout does not match the region");
   }
   const body = new Bytes();
-  const imports: FunctionImport[] = [];
+  const imports: FunctionImport[] = region?.imports ?? [];
   // Native entries and links carry budget, pending ticks, and cache age without heap round trips.
   const params: ValueType[] = options.execution ? ["i32", "i64", "i64", "i64"] : ["i32", "i64"];
   const parameterCount = params.length;
@@ -258,7 +291,20 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       body.byte(0x13).u32(0).byte(0);
       return undefined;
     };
-    if (destination?.cell && destination.fpscr !== undefined) {
+    const internal = destination?.cell ? region?.links.get(destination.cell) : undefined;
+    if (internal && destination?.fpscr !== undefined) {
+      canLink(0, BigInt(internal.minimumBudget)); body.byte(0x04).byte(0x40);
+      if (fpscrMode !== (destination.fpscr & fpscrModeMask)) {
+        load(options.layout.fpscr); constant(fpscrModeMask).byte(0x71);
+        constant(destination.fpscr & fpscrModeMask).byte(0x46).byte(0x04).byte(0x40);
+      }
+      get(0); get(1); get(2); get(3);
+      body.byte(0x12);
+      region!.calls.push({ body, offset: body.data.length, index: internal.index });
+      body.append([128, 128, 128, 128, 0]);
+      if (fpscrMode !== (destination.fpscr & fpscrModeMask)) body.byte(0x0b);
+      body.byte(0x0b);
+    } else if (destination?.cell && destination.fpscr !== undefined) {
       canLink(destination.cell, 0n); body.byte(0x04).byte(0x40);
       // Entry descriptors establish FPSCR mode; callbacks and mode writes discard that knowledge.
       const checkFpscr = fpscrMode !== (destination.fpscr & fpscrModeMask);
@@ -1264,7 +1310,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   terminal(block.terminal);
   // Every terminal path returns or tail-calls, including both branches of a conditional exit.
   body.byte(0x00);
-  return regionModule({ imports, shared: options.shared, maximumPages: options.maximumPages,
+  return { imports, shared: options.shared, maximumPages: options.maximumPages,
     signature: { params, results: ["i64"] }, locals, body,
-    table: Boolean(block.sourceCell) });
+    table: Boolean(block.sourceCell) };
 }

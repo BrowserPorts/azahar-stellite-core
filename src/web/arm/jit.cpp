@@ -51,6 +51,7 @@ struct LinkCell {
     uint64_t used = 0;
     uint32_t minimum_budget = 0;
     uint32_t maximum_instructions = 0;
+    uint32_t native_entries = 0;
 };
 static_assert(offsetof(LinkCell, slot) == 0);
 static_assert(offsetof(LinkCell, minimum_budget) == 16);
@@ -124,6 +125,15 @@ EM_JS(char*, ArmCompileError, (), {
 });
 EM_JS(void, ReleaseArmRegion, (uint32_t slot), {
     Module["azaharJitHost"].release(slot, wasmExports["__indirect_function_table"]);
+});
+EM_JS(uint32_t, OptimizeArmRegion, (const uint32_t* slots, const uint32_t* links, uint32_t count, uint32_t maximum_bytes), {
+    try {
+        return Module["azaharJitHost"].optimize(HEAPU32.slice(slots >> 2, (slots >> 2) + count),
+            HEAPU32.slice(links >> 2, (links >> 2) + count * 3), maximum_bytes);
+    } catch (error) {
+        Module["azaharJitError"] = String(error);
+        return 0xffffffff;
+    }
 });
 
 struct CodeReader final : Dynarmic::A32::TranslateCallbacks {
@@ -967,6 +977,10 @@ FP_FROM_FIXED(FPFixedU64ToDouble, uint64_t, uint64_t, uint64_t)
 namespace Dynarmic::A32 {
 struct Jit::Impl {
     using Entry = int64_t (*)(ArmState*, int64_t, uint64_t, uint64_t);
+    struct CodeRange {
+        uint32_t first;
+        uint64_t length;
+    };
     struct Region {
         Entry entry;
         uint32_t bytes;
@@ -977,6 +991,9 @@ struct Jit::Impl {
         uint32_t minimum_budget;
         uint32_t maximum_instructions;
         std::vector<RegionKey> links;
+        std::vector<CodeRange> ranges;
+        bool optimized = false;
+        uint32_t block_links = 0;
     };
     UserConfig config;
     ArmState state;
@@ -987,6 +1004,7 @@ struct Jit::Impl {
     std::array<FastDispatchEntry, fast_dispatch_size> fast_dispatch{};
     // Native entry selection also checks the requested translation limit.
     std::array<uint32_t, fast_dispatch_size> fast_dispatch_limits{};
+    std::array<LinkCell*, fast_dispatch_size> fast_dispatch_cells{};
     uint64_t generated_bytes = 0;
     uint64_t clock = 0;
     bool executing = false;
@@ -1054,13 +1072,90 @@ struct Jit::Impl {
             fast_dispatch[index] = {
                 location, destination.slot, destination.minimum_budget};
             fast_dispatch_limits[index] = destination.maximum_instructions;
+            fast_dispatch_cells[index] = &destination;
         }
     }
     void Clear() {
         while (!regions.empty()) Retire(regions.begin());
         fast_dispatch.fill({});
         fast_dispatch_limits.fill(0);
+        fast_dispatch_cells.fill(nullptr);
         if (!executing) ReleaseRetired();
+    }
+    void Promote(decltype(regions)::iterator root) {
+        if (root->second.optimized) return;
+        std::vector<decltype(root)> selected{root};
+        for (size_t index = 0; index < selected.size() && selected.size() < 8; ++index) {
+            const auto& block = selected[index]->second;
+            for (size_t link = 0; link < block.block_links; ++link) {
+                const auto& key = block.links[link];
+                if (key.second || std::any_of(selected.begin(), selected.end(), [&](const auto& item) {
+                        return item->first.first == key.first;
+                    })) continue;
+                const auto& cell = links.at(key);
+                if (!cell.slot) continue;
+                for (auto peer = regions.lower_bound({key.first, 0});
+                     peer != regions.end() && peer->first.first == key.first; ++peer) {
+                    if (reinterpret_cast<uintptr_t>(peer->second.entry) == cell.slot) {
+                        selected.push_back(peer);
+                        break;
+                    }
+                }
+                if (selected.size() == 8) break;
+            }
+        }
+        std::vector<uint32_t> slots, internal;
+        std::vector<CodeRange> ranges;
+        std::vector<RegionKey> references;
+        try {
+            for (size_t index = 0; index < selected.size(); ++index) {
+                const auto& region = selected[index]->second;
+                slots.push_back(reinterpret_cast<uintptr_t>(region.entry));
+                internal.insert(internal.end(), {static_cast<uint32_t>(reinterpret_cast<uintptr_t>(region.destination)),
+                    static_cast<uint32_t>(index), region.minimum_budget});
+                ranges.push_back({region.first, region.length});
+                // Peer code is copied, and its outgoing cells remain owned after peer eviction.
+                if (index) for (size_t link = 0; link < region.block_links; ++link) {
+                    AcquireLink(region.links[link], references);
+                }
+            }
+            auto& region = root->second;
+            region.links.reserve(region.links.size() + references.size());
+            const auto bytes = OptimizeArmRegion(slots.data(), internal.data(), slots.size(), config.code_cache_size);
+            if (bytes == std::numeric_limits<uint32_t>::max()) {
+                char* error = ArmCompileError();
+                std::string message(error);
+                std::free(error);
+                throw std::runtime_error(message);
+            }
+            if (!bytes) { ReleaseLinks(references); return; }
+            region.links.insert(region.links.end(), references.begin(), references.end());
+            references.clear();
+            region.ranges = std::move(ranges);
+            generated_bytes -= region.bytes;
+            generated_bytes += bytes;
+            region.bytes = bytes;
+            region.optimized = true;
+            while (generated_bytes > config.code_cache_size) {
+                auto oldest = regions.end();
+                for (auto item = regions.begin(); item != regions.end(); ++item) {
+                    if (item != root && (oldest == regions.end() || item->second.source->used < oldest->second.source->used)) {
+                        oldest = item;
+                    }
+                }
+                if (oldest == regions.end()) throw std::runtime_error("ARM hot region exceeds the code cache budget");
+                Retire(oldest);
+            }
+        } catch (...) { ReleaseLinks(references); throw; }
+    }
+    void Visit(uint64_t location, Entry entry, LinkCell& cell, bool step) {
+        if (step || !config.HasOptimization(OptimizationFlag::BlockLinking)) return;
+        if (++cell.native_entries < AZAHAR_ARM_JIT_REGION_AFTER) return;
+        cell.native_entries = 0;
+        for (auto item = regions.lower_bound({location, 0});
+             item != regions.end() && item->first.first == location; ++item) {
+            if (item->second.entry == entry) { Promote(item); break; }
+        }
     }
     Entry GetEntry(uint32_t limit, bool step) {
         const LocationDescriptor location(state.registers[15], PSR{state.cpsr}, FPSCR{state.fpscr}, step);
@@ -1074,7 +1169,9 @@ struct Jit::Impl {
                 fast_dispatch_hits.fetch_add(1, std::memory_order_relaxed);
 #endif
                 // Emitted code records use, and retirement disconnects this slot.
-                return reinterpret_cast<Entry>(fast.slot);
+                const auto entry = reinterpret_cast<Entry>(fast.slot);
+                Visit(key.first, entry, *fast_dispatch_cells[index], step);
+                return entry;
             }
         }
         auto cached = regions.end();
@@ -1095,6 +1192,7 @@ struct Jit::Impl {
 #endif
             cached->second.source->used = clock;
             Publish(key.first, cached->second);
+            Visit(key.first, cached->second.entry, *cached->second.destination, step);
             return cached->second.entry;
         }
         CodeReader reader{*config.callbacks, limit};
@@ -1107,6 +1205,7 @@ struct Jit::Impl {
             config.HasOptimization(OptimizationFlag::ConstProp), config.callbacks);
         std::vector<RegionKey> references;
         Entry entry = nullptr;
+        bool installed = false;
         try {
             auto& source = AcquireLink(key, references);
             auto& destination = AcquireLink({location.UniqueHash(), 0}, references);
@@ -1164,15 +1263,20 @@ struct Jit::Impl {
             auto region = regions.emplace(key, Region{entry, bytes, reader.first,
                 uint64_t(uint32_t(reader.last - reader.first)) + 4, &source, &destination,
                 std::max(1u, std::min(reader.instructions, limit)), limit, {}}).first;
+            region->second.block_links = references.size();
             region->second.links = std::move(references);
             generated_bytes += bytes;
             source.slot = slot;
             source.used = clock;
             Publish(key.first, region->second);
+            installed = true;
+            Visit(key.first, entry, *region->second.destination, step);
             return entry;
         } catch (...) {
-            if (entry) ReleaseArmRegion(reinterpret_cast<uintptr_t>(entry));
-            ReleaseLinks(references);
+            if (!installed) {
+                if (entry) ReleaseArmRegion(reinterpret_cast<uintptr_t>(entry));
+                ReleaseLinks(references);
+            }
             throw;
         }
     }
@@ -1230,7 +1334,10 @@ void Jit::ClearCache() { impl->Clear(); if (impl->executing) HaltExecution(HaltR
 void Jit::InvalidateCacheRange(uint32_t address, size_t length) {
     if (!length) return;
     for (auto item = impl->regions.begin(); item != impl->regions.end();) {
-        if (Overlaps(item->second.first, item->second.length, address, length)) item = impl->Retire(item);
+        if (Overlaps(item->second.first, item->second.length, address, length) ||
+            std::any_of(item->second.ranges.begin(), item->second.ranges.end(), [&](const auto& range) {
+                return Overlaps(range.first, range.length, address, length);
+            })) item = impl->Retire(item);
         else ++item;
     }
     if (impl->executing) HaltExecution(HaltReason::CacheInvalidation);

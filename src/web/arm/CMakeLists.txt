@@ -41,6 +41,11 @@ if(AZAHAR_ARM_JIT_STATISTICS)
     target_compile_definitions(azahar_arm_jit PRIVATE AZAHAR_ARM_JIT_STATISTICS)
 endif()
 target_compile_options(azahar_arm_jit PRIVATE -O3 PUBLIC -msimd128 -fwasm-exceptions)
+set(AZAHAR_ARM_JIT_REGION_AFTER "64" CACHE STRING "Native entries before compiling an ARM hot region")
+if(NOT AZAHAR_ARM_JIT_REGION_AFTER MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "AZAHAR_ARM_JIT_REGION_AFTER must be a positive integer")
+endif()
+target_compile_definitions(azahar_arm_jit PRIVATE AZAHAR_ARM_JIT_REGION_AFTER=${AZAHAR_ARM_JIT_REGION_AFTER})
 target_link_options(azahar_arm_jit INTERFACE
     -fwasm-exceptions -sALLOW_TABLE_GROWTH=1 -Wl,--export-table
     "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=['$stringToNewUTF8','$UTF8ToString']")

@@ -13,6 +13,7 @@
         "CMAKE_BUILD_TYPE": "Release",
         "ENABLE_LTO": true,
         "AZAHAR_BUILD_UPSTREAM_FUZZ": true,
+        "AZAHAR_ARM_JIT_REGION_AFTER": "1",
         "TEAKRA_TEST_ASSETS_DIR": "${sourceDir}/../../../../build/upstream-teakra"
       }
     },
