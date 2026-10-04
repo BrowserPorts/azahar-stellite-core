@@ -25,15 +25,21 @@ export class AzaharClient {
   #initialized = false;
   #disposed = false;
   #closing: Promise<undefined> | undefined;
+  #rejectReady: ((error: Error) => unknown) | undefined;
 
   constructor(readonly output: ClientOutput,
     workerUrl = new URL("./azahar-worker.js", import.meta.url)) {
     this.#worker = new Worker(workerUrl, { type: "module", name: "Azahar" });
     this.ready = new Promise((resolve, reject) => {
+      this.#rejectReady = reject;
       this.#worker.onmessage = (event: MessageEvent<SessionEvent>): undefined => {
         const value = event.data;
         switch (value.type) {
-          case "ready": this.#initialized = true; resolve(undefined); break;
+          case "ready":
+            this.#initialized = true;
+            this.#rejectReady = undefined;
+            resolve(undefined);
+            break;
           case "reply": {
             const pending = this.#pending.get(value.id);
             this.#pending.delete(value.id);
@@ -115,6 +121,12 @@ export class AzaharClient {
   close(): Promise<undefined> {
     if (this.#closing) return this.#closing;
     if (this.#disposed) return Promise.resolve(undefined);
+    if (!this.#initialized) {
+      this.#closing = Promise.resolve(undefined);
+      this.ready.catch(() => undefined);
+      this.dispose(new Error("The Azahar session is closed"));
+      return this.#closing;
+    }
     this.#closing = this.request({ type: "close" }).then(() => undefined)
       .finally(() => this.dispose(new Error("The Azahar session is closed")));
     return this.#closing;
@@ -140,6 +152,8 @@ export class AzaharClient {
   private dispose(error: Error): undefined {
     if (this.#disposed) return undefined;
     this.#disposed = true;
+    this.#rejectReady?.(error);
+    this.#rejectReady = undefined;
     this.#worker.terminate();
     for (const pending of this.#pending.values()) pending.reject(error);
     this.#pending.clear();
