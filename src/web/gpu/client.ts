@@ -5,7 +5,7 @@ import { fenceByteLength, fenceErrorOffset } from "./messages";
 import type { TextureRegion } from "./textures";
 import type { TextureRect } from "./blits";
 import type { NativeSampler } from "./samplers";
-import type { NativeDrawState } from "./draw-types";
+import { nativeDrawStateBytes, nativeVertexUniformBytes, nativeFragmentUniformBytes } from "./draw-types";
 import type { ScreenFrame } from "./screens";
 
 type Pending = { resolve(): unknown; reject(error: Error): unknown };
@@ -184,14 +184,26 @@ export class GraphicsClient {
     return this.post({ type: "sampler-destroy", handle });
   }
 
-  draw(state: NativeDrawState, configuration: Uint8Array<SharedArrayBuffer>, vertices: Uint8Array<SharedArrayBuffer>,
+  draw(state: Uint8Array<SharedArrayBuffer>, configuration: Uint8Array<SharedArrayBuffer>, vertices: Uint8Array<SharedArrayBuffer>,
     vertexUniforms: Uint8Array<SharedArrayBuffer>, fragmentUniforms: Uint8Array<SharedArrayBuffer>): undefined {
     this.checkOpen();
-    this.accountBytes(configuration.byteLength + vertices.byteLength + vertexUniforms.byteLength + fragmentUniforms.byteLength);
-    const draw = { state, configuration: configuration.slice(), vertices: vertices.slice(),
-      vertexUniforms: vertexUniforms.slice(), fragmentUniforms: fragmentUniforms.slice() };
-    this.post({ type: "draw", draw }, [draw.configuration.buffer, draw.vertices.buffer,
-      draw.vertexUniforms.buffer, draw.fragmentUniforms.buffer]);
+    if (state.byteLength !== nativeDrawStateBytes || configuration.byteLength !== this.configurationSize ||
+      vertexUniforms.byteLength !== nativeVertexUniformBytes || fragmentUniforms.byteLength !== nativeFragmentUniformBytes) {
+      throw new Error("Invalid native draw layout");
+    }
+    const vsOffset = nativeDrawStateBytes + configuration.byteLength;
+    const fsOffset = vsOffset + nativeVertexUniformBytes;
+    const vertexOffset = fsOffset + nativeFragmentUniformBytes;
+    const size = vertexOffset + vertices.byteLength;
+    this.accountBytes(size);
+    // One owned buffer snapshots every native input before heap and register writes resume.
+    const bytes = new Uint8Array(size);
+    bytes.set(state);
+    bytes.set(configuration, nativeDrawStateBytes);
+    bytes.set(vertexUniforms, vsOffset);
+    bytes.set(fragmentUniforms, fsOffset);
+    bytes.set(vertices, vertexOffset);
+    this.post({ type: "draw", bytes }, [bytes.buffer]);
     return undefined;
   }
 

@@ -38,19 +38,8 @@ EM_JS(void, UploadLookupTable, (u32 table, u32 offset, const u8* pointer, u32 si
 });
 EM_JS(void, DrawTriangles, (const DrawState* state, const u8* config, u32 config_size,
                            const u8* vertices, u32 vertex_bytes, const u8* vs, const u8* fs), {
-    const p = state >>> 2;
-    const u = (index) => HEAPU32[p + index];
-    Module["azaharGraphicsHost"].draw({
-        color: u(0), depth: u(1), colorLevel: u(2), depthLevel: u(3),
-        cull: u(4), flipped: u(5) !== 0, colorMask: u(6), depthWrite: u(7) !== 0, depthCompare: u(8),
-        stencil: u(9) !== 0, stencilCompare: u(10), stencilFail: u(11), stencilDepthFail: u(12),
-        stencilPass: u(13), stencilReadMask: u(14), stencilWriteMask: u(15), stencilReference: u(16),
-        blend: u(17) !== 0, rgbEquation: u(18), alphaEquation: u(19), rgbSource: u(20), rgbDest: u(21),
-        alphaSource: u(22), alphaDest: u(23), blendColor: u(24), logicOp: u(25), texture0Type: u(26),
-        textures: [u(27), u(28), u(29)], samplers: [u(30), u(31), u(32)], normal: u(33), shadow: u(34) !== 0,
-        viewport: [HEAP32[p + 35], HEAP32[p + 36], HEAP32[p + 37], HEAP32[p + 38]],
-        scissor: [u(39), u(40), u(41), u(42)]
-    }, HEAPU8.subarray(config, config + config_size), HEAPU8.subarray(vertices, vertices + vertex_bytes),
+    Module["azaharGraphicsHost"].draw(HEAPU8.subarray(state, state + 43 * 4),
+       HEAPU8.subarray(config, config + config_size), HEAPU8.subarray(vertices, vertices + vertex_bytes),
        HEAPU8.subarray(vs, vs + 32), HEAPU8.subarray(fs, fs + 0x530));
 });
 

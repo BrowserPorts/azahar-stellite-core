@@ -7,6 +7,7 @@ import { WebGpuPresenter } from "./presenter";
 import { GraphicsTextures } from "./textures";
 import { GraphicsSamplers } from "./samplers";
 import { GraphicsDraws } from "./draws";
+import { unpackNativeDraw } from "./draw-types";
 import { GraphicsScreens } from "./screens";
 
 const worker = self as unknown as DedicatedWorkerGlobalScope;
@@ -78,7 +79,7 @@ async function execute(request: GraphicsCommand): Promise<undefined> {
     // Submit prior draws before a queue write, resource mutation, presentation, or fence.
     if (request.type !== "draw") draws.flush();
     switch (request.type) {
-      case "draw": await draws.draw(request.draw); break;
+      case "draw": await draws.draw(unpackNativeDraw(request.bytes, shaders.configurationSize)); break;
       case "lookup-table": draws.lookupTable(request.table, request.offset, request.bytes); break;
       case "sampler-create": samplers.create(request.handle, request.params); break;
       case "sampler-destroy": samplers.destroy(request.handle); break;
