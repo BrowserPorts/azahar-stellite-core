@@ -88,6 +88,7 @@ interface LowerRegion {
   imports: FunctionImport[];
   links: ReadonlyMap<number, RegionLink>;
   calls: { body: Bytes; offset: number; index: number }[];
+  state: readonly number[];
 }
 
 export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<ArrayBuffer> {
@@ -99,8 +100,23 @@ export function lowerArmRegion(blocks: readonly ArmBlock[], links: ReadonlyMap<n
   if (!options.execution || !blocks.length || !blocks[0]!.sourceCell) {
     throw new JitError("compile", "ARM hot region is missing its native entry");
   }
-  const region: LowerRegion = { imports: [], links, calls: [] };
-  // Copied blocks share cache lifetime and carry CPSR between their direct calls.
+  const references = new Map<number, number>();
+  for (const block of blocks) for (const node of block.nodes) {
+    if (node.op !== "A32GetRegister" && node.op !== "A32SetRegister") continue;
+    const argument = node.args[0];
+    if (!argument || !("imm" in argument)) throw new JitError("compile", "Invalid ARM register reference");
+    const register = Number(BigInt(argument.imm));
+    if (!Number.isInteger(register) || register < 0 || register > 15) {
+      throw new JitError("compile", "Invalid ARM register index");
+    }
+    if (register < 15) references.set(register, (references.get(register) ?? 0) + 1);
+  }
+  // Bound the extra call parameters to the four most frequently referenced registers.
+  const registers = [...references].filter(([, count]) => count > 1)
+    .sort(([a, countA], [b, countB]) => countB - countA || a - b).slice(0, 4);
+  const region: LowerRegion = { imports: [], links, calls: [], state: [options.layout.cpsr,
+    ...registers.map(([register]) => options.layout.registers + register * 4)] };
+  // Copied blocks share cache lifetime and carry CPU state between their direct calls.
   const functions = blocks.map(block => lowerArmBody({ ...block, sourceCell: blocks[0]!.sourceCell! }, options, region));
   for (const call of region.calls) {
     let index = region.imports.length + 1 + call.index;
@@ -109,10 +125,10 @@ export function lowerArmRegion(blocks: readonly ArmBlock[], links: ReadonlyMap<n
       index >>>= 7;
     }
   }
-  // The table entry retains the native ABI; only internal functions receive cached flags.
+  // The table entry retains the native ABI; only internal functions receive cached state.
   const body = new Bytes();
   for (let parameter = 0; parameter < 4; parameter++) body.byte(0x20).u32(parameter);
-  body.byte(0x20).u32(0).byte(0x28).u32(2).u32(options.layout.cpsr);
+  for (const offset of region.state) body.byte(0x20).u32(0).byte(0x28).u32(2).u32(offset);
   body.byte(0x12).u32(region.imports.length + 1);
   const entry: ModuleOptions = { ...functions[0]!, signature: {
     params: ["i32", "i64", "i64", "i64"], results: ["i64"],
@@ -128,8 +144,8 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   const imports: FunctionImport[] = region?.imports ?? [];
   // Native entries and links carry budget, pending ticks, and cache age without heap round trips.
   const params: ValueType[] = options.execution ? ["i32", "i64", "i64", "i64"] : ["i32", "i64"];
-  const cachedCpsr = region ? params.length : undefined;
-  if (region) params.push("i32");
+  const cachedState = region ? new Map(region.state.map((offset, index) => [offset, params.length + index])) : undefined;
+  region?.state.forEach(() => params.push("i32"));
   const parameterCount = params.length;
   const cpsrModeMask = 0x0600fe20;
   const fpscrModeMask = 0x07f70000;
@@ -191,25 +207,28 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   };
   const loadState = (offset: number, wide = false): Bytes =>
     get(0).byte(wide ? 0x29 : 0x28).u32(wide ? 3 : 2).u32(offset);
-  const load = (offset: number, wide = false): Bytes => cachedCpsr !== undefined &&
-    offset === options.layout.cpsr && !wide ? get(cachedCpsr) : loadState(offset, wide);
+  const load = (offset: number, wide = false): Bytes => {
+    const cached = wide ? undefined : cachedState?.get(offset);
+    return cached !== undefined ? get(cached) : loadState(offset, wide);
+  };
   const storeState = (offset: number, value: () => unknown, wide = false): undefined => {
     get(0); value(); body.byte(wide ? 0x37 : 0x36).u32(wide ? 3 : 2).u32(offset);
     return undefined;
   };
   const store = (offset: number, value: () => unknown, wide = false): undefined => {
-    if (cachedCpsr !== undefined && offset === options.layout.cpsr && !wide) {
-      value(); set(cachedCpsr);
+    const cached = wide ? undefined : cachedState?.get(offset);
+    if (cached !== undefined) {
+      value(); set(cached);
       return undefined;
     }
     return storeState(offset, value, wide);
   };
-  const writeBackCpsr = (): undefined => {
-    if (cachedCpsr !== undefined) storeState(options.layout.cpsr, () => get(cachedCpsr));
+  const writeBackState = (): undefined => {
+    if (cachedState) for (const [offset, parameter] of cachedState) storeState(offset, () => get(parameter));
     return undefined;
   };
-  const reloadCpsr = (): undefined => {
-    if (cachedCpsr !== undefined) { loadState(options.layout.cpsr); set(cachedCpsr); }
+  const reloadState = (): undefined => {
+    if (cachedState) for (const [offset, parameter] of cachedState) { loadState(offset); set(parameter); }
     return undefined;
   };
   const argument = (value: Argument): undefined => {
@@ -236,9 +255,9 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
     knownFpscrMode = undefined;
     // Native callbacks and exception unwinding must see all ticks from prior linked blocks.
     if (options.execution) store(options.execution.pendingTicks, () => get(2), true);
-    writeBackCpsr();
+    writeBackState();
     get(0); emit(); body.byte(0x10).u32(importIndex);
-    reloadCpsr();
+    reloadState();
     return undefined;
   };
   const bit = (mask: number): Bytes => load(options.layout.cpsr).byte(0x41)
@@ -327,7 +346,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       return undefined;
     };
     const tailCall = (): undefined => {
-      writeBackCpsr();
+      writeBackState();
       get(0); get(1); get(2); get(3); get(linkSlot);
       body.byte(0x13).u32(0).byte(0);
       return undefined;
@@ -339,7 +358,8 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
         load(options.layout.fpscr); constant(fpscrModeMask).byte(0x71);
         constant(destination.fpscr & fpscrModeMask).byte(0x46).byte(0x04).byte(0x40);
       }
-      get(0); get(1); get(2); get(3); get(cachedCpsr!);
+      get(0); get(1); get(2); get(3);
+      for (const parameter of cachedState!.values()) get(parameter);
       body.byte(0x12);
       region!.calls.push({ body, offset: body.data.length, index: internal.index });
       body.append([128, 128, 128, 128, 0]);
@@ -381,7 +401,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       incrementCounter(cache.hits);
       tailCall(); body.byte(0x0b).byte(0x0b);
     }
-    writeBackCpsr();
+    writeBackState();
     store(options.execution!.budget, () => get(1), true);
     store(options.execution!.pendingTicks, () => get(2), true);
     body.byte(0x42).signed(0n, 64).byte(0x0f);
@@ -1157,7 +1177,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
         } else {
           const count = node.op.endsWith("TwoWords") ? 2 : 1;
           if (binding.addresses.length !== count) throw new JitError("compile", "Invalid coprocessor register binding");
-          writeBackCpsr();
+          writeBackState();
           for (let word = 0; word < count; ++word) {
             constant(binding.addresses[word]!);
             if (result) {
@@ -1168,7 +1188,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
               }
             } else { arg(word + 1); body.byte(0x36).u32(2).u32(0); }
           }
-          reloadCpsr();
+          reloadState();
         }
         break;
       }
