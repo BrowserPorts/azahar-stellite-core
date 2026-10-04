@@ -300,6 +300,33 @@ template <class Bits> Bits RoundNative(Bits result, bool sign, int comparison,
     if (!away && comparison > 0) --result;
     return result;
 }
+template <class Bits, bool Subtract> Bits AddFP(Bits lhs, Bits rhs,
+    Dynarmic::FP::FPCR fpcr, Dynarmic::FP::FPSR& fpsr) {
+    using namespace Dynarmic::FP;
+    using Info = FPInfo<Bits>;
+    if constexpr (sizeof(Bits) == 4) {
+        const int left_exponent = (lhs & Info::exponent_mask) >> Info::explicit_mantissa_width;
+        const int right_exponent = (rhs & Info::exponent_mask) >> Info::explicit_mantissa_width;
+        if (left_exponent && left_exponent < 255 && right_exponent && right_exponent < 255 &&
+            std::abs(left_exponent - right_exponent) <= 28) {
+            // Aligned binary32 significands plus a carry fit in binary64's 53 bits.
+            const double left_value = std::bit_cast<float>(lhs);
+            const double right_value = std::bit_cast<float>(rhs);
+            const double exact = Subtract ? left_value - right_value : left_value + right_value;
+            const Bits result = std::bit_cast<Bits>(static_cast<float>(exact));
+            const Bits exponent = result & Info::exponent_mask;
+            const Bits binade = Bits{1} << Info::explicit_mantissa_width;
+            // Boundary binades retain ARM's before-rounding underflow and overflow rules.
+            if (exponent > binade && exponent < Info::exponent_mask - binade) {
+                const bool sign = (result & Info::sign_mask) != 0;
+                const double rounded = std::bit_cast<float>(result);
+                const int comparison = (rounded > exact) - (rounded < exact);
+                return RoundNative(result, sign, sign ? -comparison : comparison, fpcr, fpsr);
+            }
+        }
+    }
+    return FPMulAdd(lhs, rhs, FPValue<Bits, Subtract, 0, 1>(), fpcr, fpsr);
+}
 template <class Bits> Bits MultiplyFP(Bits lhs, Bits rhs,
     Dynarmic::FP::FPCR fpcr, Dynarmic::FP::FPSR& fpsr) {
     using namespace Dynarmic::FP;
@@ -931,14 +958,14 @@ FIXED_CONVERSION(FPDoubleToFixedU64, uint64_t, uint64_t, 64, true)
         return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
             lhs = VfpInput(state, lhs, fpcr, fpsr); \
             rhs = VfpInput(state, rhs, fpcr, fpsr); \
-            return Dynarmic::FP::FPMulAdd(lhs, rhs, Dynarmic::FP::FPValue<type, false, 0, 1>(), fpcr, fpsr); \
+            return AddFP<type, false>(lhs, rhs, fpcr, fpsr); \
         }); \
     } \
     EMSCRIPTEN_KEEPALIVE type FPSub##bits(ArmState* state, type lhs, type rhs) { \
         return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
             lhs = VfpInput(state, lhs, fpcr, fpsr); \
             rhs = VfpInput(state, rhs, fpcr, fpsr); \
-            return Dynarmic::FP::FPMulAdd(lhs, rhs, Dynarmic::FP::FPValue<type, true, 0, 1>(), fpcr, fpsr); \
+            return AddFP<type, true>(lhs, rhs, fpcr, fpsr); \
         }); \
     } \
     EMSCRIPTEN_KEEPALIVE type FPMul##bits(ArmState* state, type lhs, type rhs) { \
