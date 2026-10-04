@@ -11,7 +11,16 @@ const stencilOps: readonly GPUStencilOperation[] = ["keep", "zero", "replace", "
 const factors: readonly GPUBlendFactor[] = ["zero", "one", "src", "one-minus-src", "dst", "one-minus-dst", "src-alpha", "one-minus-src-alpha", "dst-alpha", "one-minus-dst-alpha", "constant", "one-minus-constant", "constant", "one-minus-constant", "src-alpha-saturated"];
 const equations: readonly GPUBlendOperation[] = ["add", "subtract", "reverse-subtract"];
 
-interface DrawPipeline { pipeline: GPURenderPipeline; groups: readonly GPUBindGroupLayout[] }
+interface TextureBindingGroup {
+  resources: readonly (GPUTextureView | GPUSampler)[];
+  group: GPUBindGroup;
+}
+
+interface DrawPipeline {
+  pipeline: GPURenderPipeline;
+  groups: readonly GPUBindGroupLayout[];
+  textures: TextureBindingGroup[];
+}
 
 const pipelineStateKeys = ["cull", "flipped", "colorMask", "depthWrite", "depthCompare", "stencil",
   "stencilCompare", "stencilFail", "stencilDepthFail", "stencilPass", "stencilReadMask", "stencilWriteMask",
@@ -137,20 +146,23 @@ export class GraphicsDraws {
         ...this.#luts.map((lut, i) => ({ binding: i + 3, resource: { buffer: lut } })),
         { binding: 6, resource: transform },
       ] });
-      const textureEntries: GPUBindGroupEntry[] = [];
+      const textureResources: (GPUTextureView | GPUSampler)[] = [];
+      let reusableTextures = true;
       for (let i = 0; i < 3; i++) {
         let image = this.textures.get(state.textures[i]!).texture;
         if (i === 0 && (state.texture0Type === 2 || state.texture0Type === 4)) {
           image = this.shadows.image(encoder, image); temporary.push(image);
+          reusableTextures = false;
         } else if (image === color || image === depth) {
           image = this.snapshot(encoder, image); temporary.push(image);
+          reusableTextures = false;
         }
         const dimension: GPUTextureViewDimension = i === 0 && state.texture0Type === 1 ? "cube" :
           i === 0 && state.texture0Type === 4 ? "2d-array" : "2d";
-        textureEntries.push({ binding: i, resource: this.view(image, dimension) },
-          { binding: i + 3, resource: this.samplers.get(state.samplers[i]!) });
+        textureResources[i] = this.view(image, dimension);
+        textureResources[i + 3] = this.samplers.get(state.samplers[i]!);
       }
-      const textureGroup = this.device.createBindGroup({ layout: compiled.groups[1]!, entries: textureEntries });
+      const textureGroup = this.textureGroup(compiled, textureResources, reusableTextures);
       const destRead = !!attachment && !state.shadow && this.readsDestination(state, colorFormat);
       let dest = this.#empty;
       if (destRead) {
@@ -231,6 +243,32 @@ export class GraphicsDraws {
     const factors = [state.rgbSource, state.rgbDest];
     return colorFormat !== 0 || state.rgbEquation >= 3 || factors.some(factor => factor === 12 || factor === 13) ||
       (state.alphaEquation >= 3 && factors.some(factor => factor === 6 || factor === 7 || factor === 14));
+  }
+
+  private textureGroup(compiled: DrawPipeline, resources: readonly (GPUTextureView | GPUSampler)[],
+    reusable: boolean): GPUBindGroup {
+    const groups = compiled.textures;
+    // GPU identities change when native handles are recreated or feedback images are copied.
+    for (let index = reusable ? groups.length - 1 : -1; index >= 0; index--) {
+      const cached = groups[index]!;
+      let matches = cached.resources.length === resources.length;
+      for (let binding = 0; matches && binding < resources.length; binding++) {
+        matches = cached.resources[binding] === resources[binding];
+      }
+      if (!matches) continue;
+      // Move the hit to the newest position without allocating another array.
+      for (let next = index; next < groups.length - 1; next++) groups[next] = groups[next + 1]!;
+      groups[groups.length - 1] = cached;
+      return cached.group;
+    }
+    const group = this.device.createBindGroup({ layout: compiled.groups[1]!,
+      entries: resources.map((resource, binding) => ({ binding, resource })),
+    });
+    if (reusable) {
+      if (groups.length >= 16) groups.shift();
+      groups.push({ resources, group });
+    }
+    return group;
   }
 
   private pipeline(draw: NativeDraw, colorFormat: number, color?: GPUTextureFormat, depth?: GPUTextureFormat): Promise<DrawPipeline> {
@@ -322,7 +360,7 @@ export class GraphicsDraws {
           stencilReadMask: s.stencilReadMask, stencilWriteMask: s.stencil ? s.stencilWriteMask : 0 } : {}),
       } } : {}),
     });
-    return { pipeline, groups };
+    return { pipeline, groups, textures: [] };
   }
 
   private snapshot(encoder: GPUCommandEncoder, source: GPUTexture): GPUTexture {
