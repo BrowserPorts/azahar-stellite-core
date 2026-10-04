@@ -17,6 +17,15 @@
       }
     },
     {
+      "name": "web-arm-jit-threads",
+      "displayName": "Dynarmic native fixtures with shared Wasm memory",
+      "inherits": "web-native-fixtures",
+      "binaryDir": "${sourceDir}/../../../../build/web-arm-jit-thread-fixtures",
+      "cacheVariables": {
+        "AZAHAR_ARM_JIT_THREADS": true
+      }
+    },
+    {
       "name": "web-dsp-jit",
       "displayName": "Teakra native fixtures in the Wasm DSP JIT",
       "inherits": "web-native-fixtures",
@@ -46,6 +55,11 @@
       "targets": ["upstream_fixtures"]
     },
     {
+      "name": "web-arm-jit-threads",
+      "configurePreset": "web-arm-jit-threads",
+      "targets": ["browser_jit_fixtures"]
+    },
+    {
       "name": "web-dsp-jit",
       "configurePreset": "web-dsp-jit",
       "targets": ["teakra_reference_fixtures", "test_verifier"]
@@ -62,6 +76,13 @@
       "configurePreset": "web-native-fixtures",
       "output": { "outputOnFailure": true },
       "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "web-arm-jit-threads",
+      "configurePreset": "web-arm-jit-threads",
+      "filter": { "include": { "name": "^dynarmic_(arm_jit_fixtures|arm_fuzz_fixtures|vfp_recordings)$" } },
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error", "timeout": 1500 }
     },
     {
       "name": "web-dsp-jit",

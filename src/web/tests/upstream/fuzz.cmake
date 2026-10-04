@@ -8,9 +8,13 @@ set(UNICORN_ORACLE_DOWNLOAD
 if(EMSCRIPTEN)
     set(UNICORN_ORACLE_BINARY "${CMAKE_CURRENT_BINARY_DIR}/unicorn-wasm-oracle")
     set(UNICORN_ORACLE_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/unicorn-wasm-source")
+    set(UNICORN_ORACLE_C_FLAGS "${CMAKE_C_FLAGS} -fwasm-exceptions")
+    if(AZAHAR_TEAKRA_JIT OR AZAHAR_ARM_JIT_THREADS)
+        string(APPEND UNICORN_ORACLE_C_FLAGS " -pthread")
+    endif()
     list(APPEND UNICORN_ORACLE_TOOLCHAIN
         "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
-        "-DCMAKE_C_FLAGS=-fwasm-exceptions")
+        "-DCMAKE_C_FLAGS=${UNICORN_ORACLE_C_FLAGS}")
 else()
     # The fork also fixes the native AArch64 oracle's single-lane encodings.
     set(UNICORN_ORACLE_BINARY "${CMAKE_CURRENT_BINARY_DIR}/unicorn-native-oracle")
