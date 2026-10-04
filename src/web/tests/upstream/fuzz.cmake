@@ -14,11 +14,14 @@ if(EMSCRIPTEN)
     endif()
     list(APPEND UNICORN_ORACLE_TOOLCHAIN
         "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
-        "-DCMAKE_C_FLAGS=${UNICORN_ORACLE_C_FLAGS}")
+        "-DCMAKE_C_FLAGS=${UNICORN_ORACLE_C_FLAGS}"
+        "-DCMAKE_EXE_LINKER_FLAGS=-sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=67108864 -sMAXIMUM_MEMORY=536870912 -sEXIT_RUNTIME=1")
+    set(UNICORN_ORACLE_ARM_TEST "${UNICORN_ORACLE_BINARY}/test_arm.js")
 else()
     # The fork also fixes the native AArch64 oracle's single-lane encodings.
     set(UNICORN_ORACLE_BINARY "${CMAKE_CURRENT_BINARY_DIR}/unicorn-native-oracle")
     set(UNICORN_ORACLE_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/unicorn-native-source")
+    set(UNICORN_ORACLE_ARM_TEST "${UNICORN_ORACLE_BINARY}/test_arm${CMAKE_EXECUTABLE_SUFFIX}")
     if(APPLE)
         list(APPEND UNICORN_ORACLE_TOOLCHAIN
             "-DCMAKE_OSX_ARCHITECTURES=${CMAKE_HOST_SYSTEM_PROCESSOR}")
@@ -30,12 +33,15 @@ ExternalProject_Add(unicorn_test_oracle
     GIT_SUBMODULES ""
     BINARY_DIR "${UNICORN_ORACLE_BINARY}"
     CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
-        -DUNICORN_ARCH=arm -DUNICORN_BUILD_TESTS=OFF -DUNICORN_INSTALL=OFF
+        -DUNICORN_ARCH=arm -DUNICORN_BUILD_TESTS=ON -DUNICORN_INSTALL=OFF
         -DUNICORN_LEGACY_STATIC_ARCHIVE=ON ${UNICORN_ORACLE_TOOLCHAIN}
     BUILD_COMMAND "${CMAKE_COMMAND}" --build <BINARY_DIR>
-        --target unicorn_archive --parallel 4
-    BUILD_BYPRODUCTS "${UNICORN_ORACLE_BINARY}/libunicorn.a"
+        --target unicorn_archive test_arm --parallel 4
+    BUILD_BYPRODUCTS "${UNICORN_ORACLE_BINARY}/libunicorn.a" "${UNICORN_ORACLE_ARM_TEST}"
     INSTALL_COMMAND "")
+add_test(NAME unicorn_arm_fixtures COMMAND "${CMAKE_CTEST_COMMAND}"
+    --test-dir "${UNICORN_ORACLE_BINARY}" -R "^test_arm$" --verbose --no-tests=error)
+set_tests_properties(unicorn_arm_fixtures PROPERTIES TIMEOUT 60)
 add_library(azahar_unicorn_test_oracle STATIC IMPORTED)
 set_target_properties(azahar_unicorn_test_oracle PROPERTIES
     IMPORTED_LOCATION "${UNICORN_ORACLE_BINARY}/libunicorn.a")
