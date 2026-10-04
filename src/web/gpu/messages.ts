@@ -14,7 +14,7 @@ export interface GraphicsAdapterInfo {
   isFallbackAdapter: boolean;
 }
 
-export type GraphicsRequest =
+export type GraphicsCommand =
   { type: "initialize"; fence: SharedArrayBuffer } |
   { type: "surface"; id: number; canvas: OffscreenCanvas } |
   { type: "video"; bytes: Uint8Array<ArrayBuffer>; width: number; height: number; pitch: number } |
@@ -34,6 +34,10 @@ export type GraphicsRequest =
   { type: "texture-download"; handle: number; region: TextureRegion;
     destination: Uint8Array<SharedArrayBuffer>; sequence: number } |
   { type: "close"; id: number };
+
+export interface GraphicsRequest {
+  commands: GraphicsCommand[];
+}
 
 export type GraphicsEvent =
   { type: "ready"; configurationSize: number; configurationSchema: bigint; adapter: GraphicsAdapterInfo } |

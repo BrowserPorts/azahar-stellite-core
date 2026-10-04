@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { GraphicsAdapterInfo, GraphicsEvent, GraphicsRequest } from "./messages";
+import type { GraphicsAdapterInfo, GraphicsCommand, GraphicsEvent, GraphicsRequest } from "./messages";
 import { fenceByteLength, fenceErrorOffset } from "./messages";
 import type { TextureRegion } from "./textures";
 import type { TextureRect } from "./blits";
@@ -20,6 +20,8 @@ export interface GraphicsStatistics {
   /** Emulation worker wall time waiting for readbacks and native graphics fences. */
   fenceWaitMs: number;
   fenceCount: number;
+  submittedCommands: number;
+  submittedBatches: number;
   /** Interval totals by the operation that stopped the emulation worker. */
   fences: {
     textureReadback: GraphicsFenceStatistics;
@@ -35,6 +37,11 @@ export class GraphicsClient {
   #pending = new Map<number, Pending>();
   #nextId = 0;
   #sequence = 0;
+  #commands: GraphicsCommand[] = [];
+  #transfers: Transferable[] = [];
+  #batchBytes = 0;
+  #submittedCommands = 0;
+  #submittedBatches = 0;
   #closed = false;
   #hasSurface = false;
   // Outstanding snapshot bytes through each submitted frame.
@@ -99,9 +106,9 @@ export class GraphicsClient {
 
   present(view: Uint8Array<SharedArrayBuffer>, width: number, height: number, pitch: number): boolean {
     this.checkOpen();
-    if (!this.#hasSurface) return false;
+    if (!this.#hasSurface) { this.flush(); return false; }
     // Presentation can drop old frames without dropping native rasterizer commands.
-    if (this.#queuedFrameBytes.length >= 2) return true;
+    if (this.#queuedFrameBytes.length >= 2) { this.flush(); return true; }
     // The native framebuffer can change as soon as the callback returns.
     const bytes = view.slice();
     this.post({ type: "video", bytes, width, height, pitch }, [bytes.buffer]);
@@ -128,13 +135,16 @@ export class GraphicsClient {
       stats.waitMs = 0;
       stats.count = 0;
     }
-    return { adapter: { ...this.#adapter }, fenceWaitMs, fenceCount, fences };
+    const submittedCommands = this.#submittedCommands, submittedBatches = this.#submittedBatches;
+    this.#submittedCommands = 0;
+    this.#submittedBatches = 0;
+    return { adapter: { ...this.#adapter }, fenceWaitMs, fenceCount, fences, submittedCommands, submittedBatches };
   }
 
   screens(frame: ScreenFrame): boolean {
     this.checkOpen();
-    if (!this.#hasSurface) return false;
-    if (this.#queuedFrameBytes.length >= 2) return true;
+    if (!this.#hasSurface) { this.flush(); return false; }
+    if (this.#queuedFrameBytes.length >= 2) { this.flush(); return true; }
     const quads = frame.quads.map(quad => ({ ...quad, vertices: quad.vertices.slice() }));
     this.post({ type: "screens", frame: { ...frame, quads } }, quads.map(quad => quad.vertices.buffer));
     this.#queuedFrameBytes.push(this.#queuedBytes);
@@ -206,7 +216,7 @@ export class GraphicsClient {
   }
 
   private synchronize(reason: keyof GraphicsStatistics["fences"],
-    build: (sequence: number) => GraphicsRequest): undefined {
+    build: (sequence: number) => GraphicsCommand): undefined {
     this.checkOpen();
     const previous = this.#sequence;
     this.#sequence = (previous + 1) | 0;
@@ -248,11 +258,14 @@ export class GraphicsClient {
       this.worker.terminate();
       for (const pending of this.#pending.values()) pending.reject(new Error("The graphics worker is closed"));
       this.#pending.clear();
+      this.#commands = [];
+      this.#transfers = [];
+      this.#batchBytes = 0;
     }
     return undefined;
   }
 
-  private request(build: (id: number) => GraphicsRequest, transfer: Transferable[] = []): Promise<undefined> {
+  private request(build: (id: number) => GraphicsCommand, transfer: Transferable[] = []): Promise<undefined> {
     this.checkOpen();
     const id = this.#nextId++;
     return new Promise((resolve, reject) => {
@@ -262,9 +275,28 @@ export class GraphicsClient {
     });
   }
 
-  private post(request: GraphicsRequest, transfer: Transferable[] = []): undefined {
+  private post(request: GraphicsCommand, transfer: Transferable[] = []): undefined {
     this.checkOpen();
-    this.worker.postMessage(request, transfer);
+    this.#commands.push(request);
+    this.#transfers.push(...transfer);
+    for (const item of transfer) if (item instanceof ArrayBuffer) this.#batchBytes += item.byteLength;
+    // Start GPU work during large frames and flush before any caller waits for a reply.
+    if (this.#commands.length >= 64 || this.#batchBytes >= 256 * 1024 ||
+      request.type === "initialize" || request.type === "surface" || request.type === "video" ||
+      request.type === "screens" || request.type === "finish" || request.type === "texture-download" ||
+      request.type === "close") this.flush();
+    return undefined;
+  }
+
+  private flush(): undefined {
+    this.checkOpen();
+    if (!this.#commands.length) return undefined;
+    this.worker.postMessage({ commands: this.#commands } satisfies GraphicsRequest, this.#transfers);
+    this.#submittedCommands += this.#commands.length;
+    this.#submittedBatches++;
+    this.#commands = [];
+    this.#transfers = [];
+    this.#batchBytes = 0;
     return undefined;
   }
 

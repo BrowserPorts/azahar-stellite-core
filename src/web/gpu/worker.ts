@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { GraphicsEvent, GraphicsRequest } from "./messages";
+import type { GraphicsCommand, GraphicsEvent, GraphicsRequest } from "./messages";
 import { fenceByteLength, fenceErrorOffset } from "./messages";
 import { PicaShaders } from "./pica-shaders";
 import { WebGpuPresenter } from "./presenter";
@@ -69,86 +69,91 @@ async function initialize(fence: SharedArrayBuffer): Promise<undefined> {
   return undefined;
 }
 
-worker.onmessage = (event: MessageEvent<GraphicsRequest>): undefined => {
-  const request = event.data;
-  commands = commands.then(async () => {
-    try {
-      if (closed) throw new Error("The graphics worker is closed");
-      if (failure) throw new Error(failure);
-      if (request.type === "initialize") return await initialize(request.fence);
-      if (!device || !shaders || !textures || !samplers || !draws || !screens || !control) throw new Error("WebGPU is unavailable");
-      switch (request.type) {
-        case "draw": await draws.draw(request.draw); break;
-        case "lookup-table": draws.lookupTable(request.table, request.offset, request.bytes); break;
-        case "sampler-create": samplers.create(request.handle, request.params); break;
-        case "sampler-destroy": samplers.destroy(request.handle); break;
-        case "texture-create":
-          textures.create(request.handle, request.width, request.height, request.levels, request.layers, request.format);
-          break;
-        case "texture-destroy": textures.destroy(request.handle); break;
-        case "texture-copy": await textures.copy(request.source, request.dest, request.src, request.dst); break;
-        case "texture-blit": await textures.blit(request.source, request.dest, request.src, request.dst); break;
-        case "texture-mipmaps": await textures.mipmaps(request.handle); break;
-        case "texture-clear": await textures.clear(request.handle, request.region, request.value, request.stencil); break;
-        case "texture-upload": await textures.upload(request.handle, request.region, request.bytes); break;
-        case "texture-download": {
-          await textures.download(request.handle, request.region, request.destination);
-          if (failure) throw new Error(failure);
-          Atomics.store(control, 0, request.sequence);
-          Atomics.notify(control, 0);
-          break;
-        }
-        case "surface": {
-          const next = await WebGpuPresenter.create(request.canvas, fail, device);
-          presenter?.close();
-          presenter = next;
-          post({ type: "reply", id: request.id });
-          break;
-        }
-        case "video":
-          if (!presenter) throw new Error("No WebGPU presentation surface is attached");
-          presenter.present(request.bytes, request.width, request.height, request.pitch);
-          // Retain the frame limit while later commands are submitted in queue order.
-          device.queue.onSubmittedWorkDone().then(() => post({ type: "presented" }), fail);
-          break;
-        case "screens":
-          if (!presenter) throw new Error("No WebGPU presentation surface is attached");
-          presenter.screens(request.frame, screens);
-          device.queue.onSubmittedWorkDone().then(() => post({ type: "presented" }), fail);
-          break;
-        case "finish":
-          await device.queue.onSubmittedWorkDone();
-          if (failure) throw new Error(failure);
-          Atomics.store(control, 0, request.sequence);
-          Atomics.notify(control, 0);
-          break;
-        case "close":
-          await device.queue.onSubmittedWorkDone();
-          closed = true;
-          presenter?.close();
-          draws.close();
-          screens.close();
-          shaders.close();
-          textures.close();
-          samplers.close();
-          device.destroy();
-          post({ type: "reply", id: request.id });
-          worker.close();
-          break;
+async function execute(request: GraphicsCommand): Promise<undefined> {
+  try {
+    if (closed) throw new Error("The graphics worker is closed");
+    if (failure) throw new Error(failure);
+    if (request.type === "initialize") return await initialize(request.fence);
+    if (!device || !shaders || !textures || !samplers || !draws || !screens || !control) throw new Error("WebGPU is unavailable");
+    switch (request.type) {
+      case "draw": await draws.draw(request.draw); break;
+      case "lookup-table": draws.lookupTable(request.table, request.offset, request.bytes); break;
+      case "sampler-create": samplers.create(request.handle, request.params); break;
+      case "sampler-destroy": samplers.destroy(request.handle); break;
+      case "texture-create":
+        textures.create(request.handle, request.width, request.height, request.levels, request.layers, request.format);
+        break;
+      case "texture-destroy": textures.destroy(request.handle); break;
+      case "texture-copy": await textures.copy(request.source, request.dest, request.src, request.dst); break;
+      case "texture-blit": await textures.blit(request.source, request.dest, request.src, request.dst); break;
+      case "texture-mipmaps": await textures.mipmaps(request.handle); break;
+      case "texture-clear": await textures.clear(request.handle, request.region, request.value, request.stencil); break;
+      case "texture-upload": await textures.upload(request.handle, request.region, request.bytes); break;
+      case "texture-download": {
+        await textures.download(request.handle, request.region, request.destination);
+        if (failure) throw new Error(failure);
+        Atomics.store(control, 0, request.sequence);
+        Atomics.notify(control, 0);
+        break;
       }
-    } catch (error) {
-      fail(error, "id" in request ? request.id : undefined);
-      if (request.type === "initialize") {
+      case "surface": {
+        const next = await WebGpuPresenter.create(request.canvas, fail, device);
+        presenter?.close();
+        presenter = next;
+        post({ type: "reply", id: request.id });
+        break;
+      }
+      case "video":
+        if (!presenter) throw new Error("No WebGPU presentation surface is attached");
+        presenter.present(request.bytes, request.width, request.height, request.pitch);
+        // Retain the frame limit while later commands are submitted in queue order.
+        device.queue.onSubmittedWorkDone().then(() => post({ type: "presented" }), fail);
+        break;
+      case "screens":
+        if (!presenter) throw new Error("No WebGPU presentation surface is attached");
+        presenter.screens(request.frame, screens);
+        device.queue.onSubmittedWorkDone().then(() => post({ type: "presented" }), fail);
+        break;
+      case "finish":
+        await device.queue.onSubmittedWorkDone();
+        if (failure) throw new Error(failure);
+        Atomics.store(control, 0, request.sequence);
+        Atomics.notify(control, 0);
+        break;
+      case "close":
+        await device.queue.onSubmittedWorkDone();
         closed = true;
-        shaders?.close();
-        draws?.close();
-        screens?.close();
-        textures?.close();
-        samplers?.close();
-        device?.destroy();
+        presenter?.close();
+        draws.close();
+        screens.close();
+        shaders.close();
+        textures.close();
+        samplers.close();
+        device.destroy();
+        post({ type: "reply", id: request.id });
         worker.close();
-      }
+        break;
     }
+  } catch (error) {
+    fail(error, "id" in request ? request.id : undefined);
+    if (request.type === "initialize") {
+      closed = true;
+      shaders?.close();
+      draws?.close();
+      screens?.close();
+      textures?.close();
+      samplers?.close();
+      device?.destroy();
+      worker.close();
+    }
+  }
+  return undefined;
+}
+
+worker.onmessage = (event: MessageEvent<GraphicsRequest>): undefined => {
+  const requests = event.data.commands;
+  commands = commands.then(async () => {
+    for (const request of requests) await execute(request);
     return undefined;
   }).catch(fail);
   return undefined;
