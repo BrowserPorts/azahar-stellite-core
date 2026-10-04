@@ -81,7 +81,6 @@ struct alignas(8) ArmState {
     uint64_t exclusive_value{};
     Dynarmic::A32::UserConfig* config{};
     std::atomic<uint32_t>* halt{};
-    uint64_t* clock{};
     uint64_t next_budget{};
     uint64_t pending_ticks{};
     FastDispatchEntry* fast_dispatch{};
@@ -97,7 +96,7 @@ void RefreshBudget(ArmState* state) {
                                           std::numeric_limits<int64_t>::max());
 }
 
-EM_JS(uint32_t, CompileArmRegion, (const char* json, const uint32_t* layout, const uint32_t* memory_config, uint32_t* bytes), {
+EM_JS(uint32_t, CompileArmRegion, (const char* json, const uint32_t* layout, uint32_t layout_count, const uint32_t* memory_config, uint32_t* bytes), {
     try {
         if (!Module["azaharJitHelpers"]) {
             const rawExports = new Set(Object.values(wasmExports));
@@ -107,7 +106,7 @@ EM_JS(uint32_t, CompileArmRegion, (const char* json, const uint32_t* layout, con
         }
         const memory = HEAPU32.slice(memory_config >> 2, (memory_config >> 2) + 7);
         const result = Module["azaharJitHost"].compile(UTF8ToString(json),
-            HEAPU32.slice(layout >> 2, (layout >> 2) + 20), wasmMemory,
+            HEAPU32.slice(layout >> 2, (layout >> 2) + layout_count), wasmMemory,
             wasmExports["__indirect_function_table"], Module["azaharJitHelpers"], {
                 pageTable: memory[0], ...(memory[2] ? { fastmem: memory[1] } : {}),
                 pointerMaskBits: memory[3], absoluteOffset: Boolean(memory[4]),
@@ -967,7 +966,7 @@ FP_FROM_FIXED(FPFixedU64ToDouble, uint64_t, uint64_t, uint64_t)
 
 namespace Dynarmic::A32 {
 struct Jit::Impl {
-    using Entry = int64_t (*)(ArmState*, int64_t);
+    using Entry = int64_t (*)(ArmState*, int64_t, uint64_t, uint64_t);
     struct Region {
         Entry entry;
         uint32_t bytes;
@@ -1004,7 +1003,6 @@ struct Jit::Impl {
         }
         state.config = &config;
         state.halt = &halt;
-        state.clock = &clock;
         state.fast_dispatch = fast_dispatch.data();
     }
     ~Impl() { Clear(); ReleaseRetired(); }
@@ -1123,8 +1121,8 @@ struct Jit::Impl {
             }, config.always_little_endian, reinterpret_cast<uintptr_t>(&source), link,
                 config.HasOptimization(OptimizationFlag::FastDispatch) && !step);
             const uint32_t layout[] = {offsetof(ArmState, registers), offsetof(ArmState, cpsr),
-                offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit), 6,
-                offsetof(ArmState, halt), offsetof(ArmState, clock), offsetof(ArmState, next_budget),
+                offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit), 7,
+                offsetof(ArmState, halt), offsetof(ArmState, next_budget),
                 offsetof(ArmState, pending_ticks), offsetof(LinkCell, used), offsetof(LinkCell, minimum_budget),
 #ifdef AZAHAR_ARM_JIT_STATISTICS
                 reinterpret_cast<uintptr_t>(&completed_blocks),
@@ -1145,7 +1143,7 @@ struct Jit::Impl {
                 static_cast<uint32_t>(config.page_table_pointer_mask_bits), config.absolute_offset_page_table,
                 config.detect_misaligned_access_via_page_table, config.only_detect_misalignment_via_page_table_on_page_boundary};
             uint32_t bytes = 0;
-            const auto slot = CompileArmRegion(json.c_str(), layout, memory_config, &bytes);
+            const auto slot = CompileArmRegion(json.c_str(), layout, std::size(layout), memory_config, &bytes);
             if (!slot) {
                 char* error = ArmCompileError();
                 std::string message(error);
@@ -1197,7 +1195,7 @@ struct Jit::Impl {
 #ifdef AZAHAR_ARM_JIT_STATISTICS
                 native_dispatches.fetch_add(1, std::memory_order_relaxed);
 #endif
-                entry(&state, budget);
+                entry(&state, budget, state.pending_ticks, clock);
                 ReleaseRetired();
             } while (!step);
             FlushTicks(&state);
@@ -1243,7 +1241,6 @@ void Jit::Reset() {
     impl->state = {};
     impl->state.config = &impl->config;
     impl->state.halt = &impl->halt;
-    impl->state.clock = &impl->clock;
     impl->state.fast_dispatch = impl->fast_dispatch.data();
 }
 void Jit::HaltExecution(HaltReason reason) { impl->halt.fetch_or(static_cast<uint32_t>(reason)); }

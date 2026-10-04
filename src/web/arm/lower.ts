@@ -53,7 +53,6 @@ export interface LowerOptions {
 
 export interface ArmExecutionLayout {
   halt: number;
-  clock: number;
   budget: number;
   pendingTicks: number;
   sourceUsed: number;
@@ -86,6 +85,9 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   }
   const body = new Bytes();
   const imports: FunctionImport[] = [];
+  // Native entries and links carry budget, pending ticks, and cache age without heap round trips.
+  const params: ValueType[] = options.execution ? ["i32", "i64", "i64", "i64"] : ["i32", "i64"];
+  const parameterCount = params.length;
   const hasBxWritePc = block.nodes.some((node) => node.op === "A32BXWritePC");
   const locals: ValueType[] = block.nodes.map((node) => wasmType(node.type));
   const carryLocals = new Map<number, number>();
@@ -93,30 +95,30 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   const overflowLocals = new Map<number, number>();
   block.nodes.forEach((node, index) => {
     if (["Add32", "Sub32"].includes(node.op)) {
-      wideLocals.set(index, locals.length + 2);
+      wideLocals.set(index, locals.length + parameterCount);
       locals.push("i64");
     } else if (["SignedSaturatedAddWithFlag32", "SignedSaturatedSubWithFlag32"].includes(node.op)) {
-      overflowLocals.set(index, locals.length + 2);
+      overflowLocals.set(index, locals.length + parameterCount);
       locals.push("i32");
     } else if (["LogicalShiftLeft32", "LogicalShiftRight32", "ArithmeticShiftRight32", "RotateRight32", "RotateRightExtended"].includes(node.op)) {
-      carryLocals.set(index, locals.length + 2);
+      carryLocals.set(index, locals.length + parameterCount);
       locals.push("i32");
     }
   });
-  const memoryPointer = locals.length + 2;
+  const memoryPointer = locals.length + parameterCount;
   if (options.memory) locals.push("i32");
-  const scalarShiftCount = locals.length + 2;
+  const scalarShiftCount = locals.length + parameterCount;
   if (block.nodes.some((node) => /^Vector((Arithmetic|Logical)VShift|RoundingShiftLeft(S|U))(32|64)$/.test(node.op))) {
     locals.push("i32", "i32");
   }
-  const vectorShiftScratch = locals.length + 2;
+  const vectorShiftScratch = locals.length + parameterCount;
   if (block.nodes.some((node) => /^Vector((Arithmetic|Logical)VShift|RoundingShiftLeft(S|U))(8|16)$/.test(node.op))) {
     locals.push("v128", "v128", "v128", "v128", "v128");
     if (block.nodes.some((node) => /^VectorRoundingShiftLeft(S|U)(8|16)$/.test(node.op))) locals.push("v128");
   }
-  const linkSlot = locals.length + 2;
-  const clockPointer = linkSlot + 1;
-  const blockClock = linkSlot + 2;
+  const linkSlot = locals.length + parameterCount;
+  const dispatchPointer = linkSlot + 1;
+  const dispatchLocation = linkSlot + 2;
   if (block.sourceCell) locals.push("i32", "i32", "i64");
   const constant = (value: number): Bytes => body.byte(0x41).signed(BigInt(value), 32);
   const get = (index: number): Bytes => body.byte(0x20).u32(index);
@@ -136,7 +138,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   const argument = (value: Argument): undefined => {
     if ("ref" in value) {
       if (!block.nodes[value.ref]) throw new JitError("compile", "Invalid ARM IR reference");
-      get(value.ref + 2);
+      get(value.ref + parameterCount);
     } else {
       const wide = wasmType(value.type) === "i64";
       body.byte(wide ? 0x42 : 0x41).signed(BigInt(value.imm), wide ? 64 : 32);
@@ -152,6 +154,8 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       importIndex = imports.length;
       imports.push({ module: "core", name, type: { params: ["i32", ...params], results } });
     }
+    // Native callbacks and exception unwinding must see all ticks from prior linked blocks.
+    if (options.execution) store(options.execution.pendingTicks, () => get(2), true);
     get(0); emit(); body.byte(0x10).u32(importIndex);
     return undefined;
   };
@@ -201,14 +205,9 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   };
   const chargeTicks = (cycles: number): undefined => {
     const execution = options.execution!;
-    // Size-based eviction runs between native entries; linked blocks share their timestamp.
-    constant(block.sourceCell!);
-    load(execution.clock).byte(0x29).u32(3).u32(0);
+    constant(block.sourceCell!); get(3);
     body.byte(0x37).u32(3).u32(execution.sourceUsed);
-    store(execution.pendingTicks, () => {
-      load(execution.pendingTicks, true);
-      body.byte(0x42).signed(BigInt(cycles), 64).byte(0x7c);
-    }, true);
+    get(2).byte(0x42).signed(BigInt(cycles), 64).byte(0x7c); set(2);
     // Linked regions carry the remaining budget in their i64 parameter.
     get(1).byte(0x42).signed(BigInt(cycles), 64).byte(0x56).byte(0x04).byte(0x7e);
     consume(cycles).byte(0x05).byte(0x42).signed(0n, 64).byte(0x0b); set(1);
@@ -235,7 +234,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       return undefined;
     };
     const tailCall = (): undefined => {
-      get(0); get(1); get(linkSlot);
+      get(0); get(1); get(2); get(3); get(linkSlot);
       body.byte(0x13).u32(0).byte(0);
       return undefined;
     };
@@ -251,27 +250,28 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       canLink(0, 1n); body.byte(0x04).byte(0x40);
       const cache = options.execution!.fastDispatch;
       // Match Dynarmic's LocationDescriptor, including split Thumb IT-state bits.
-      load(options.layout.cpsr); set(clockPointer);
+      load(options.layout.cpsr); set(dispatchPointer);
       load(options.layout.fpscr); constant(0x07f70000).byte(0x71);
-      get(clockPointer); constant(5).byte(0x76); constant(1).byte(0x71).byte(0x72);
-      get(clockPointer); constant(8).byte(0x76); constant(2).byte(0x71).byte(0x72);
-      get(clockPointer); constant(0xfc00).byte(0x71).byte(0x72);
-      get(clockPointer); constant(17).byte(0x76); constant(0x300).byte(0x71).byte(0x72);
+      get(dispatchPointer); constant(5).byte(0x76); constant(1).byte(0x71).byte(0x72);
+      get(dispatchPointer); constant(8).byte(0x76); constant(2).byte(0x71).byte(0x72);
+      get(dispatchPointer); constant(0xfc00).byte(0x71).byte(0x72);
+      get(dispatchPointer); constant(17).byte(0x76); constant(0x300).byte(0x71).byte(0x72);
       body.byte(0xad).byte(0x42).signed(32n, 64).byte(0x86);
-      load(options.layout.registers + 60).byte(0xad).byte(0x84); set(blockClock);
+      load(options.layout.registers + 60).byte(0xad).byte(0x84); set(dispatchLocation);
       load(cache.pointer);
-      get(blockClock).byte(0x42).signed(1n, 64).byte(0x88);
-      get(blockClock).byte(0x42).signed(32n, 64).byte(0x88).byte(0x85).byte(0xa7);
-      constant(cache.mask).byte(0x71); constant(cache.strideShift).byte(0x74).byte(0x6a); set(clockPointer);
-      get(clockPointer).byte(0x29).u32(3).u32(cache.location); get(blockClock).byte(0x51);
-      get(1); get(clockPointer).byte(0x28).u32(2).u32(cache.minimumBudget).byte(0xad).byte(0x5a).byte(0x71);
-      get(clockPointer).byte(0x28).u32(2).u32(cache.slot).byte(0x22).u32(linkSlot);
+      get(dispatchLocation).byte(0x42).signed(1n, 64).byte(0x88);
+      get(dispatchLocation).byte(0x42).signed(32n, 64).byte(0x88).byte(0x85).byte(0xa7);
+      constant(cache.mask).byte(0x71); constant(cache.strideShift).byte(0x74).byte(0x6a); set(dispatchPointer);
+      get(dispatchPointer).byte(0x29).u32(3).u32(cache.location); get(dispatchLocation).byte(0x51);
+      get(1); get(dispatchPointer).byte(0x28).u32(2).u32(cache.minimumBudget).byte(0xad).byte(0x5a).byte(0x71);
+      get(dispatchPointer).byte(0x28).u32(2).u32(cache.slot).byte(0x22).u32(linkSlot);
       body.byte(0x45).byte(0x45).byte(0x71);
       checkHalt(); body.byte(0x45).byte(0x71).byte(0x04).byte(0x40);
       incrementCounter(cache.hits);
       tailCall(); body.byte(0x0b).byte(0x0b);
     }
     store(options.execution!.budget, () => get(1), true);
+    store(options.execution!.pendingTicks, () => get(2), true);
     body.byte(0x42).signed(0n, 64).byte(0x0f);
     return undefined;
   };
@@ -391,7 +391,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       return undefined;
     }
     if (source.op === "SignedSaturation" || source.op === "UnsignedSaturation") {
-      argument(source.args[0]!); get(reference + 2).byte(0x47);
+      argument(source.args[0]!); get(reference + parameterCount).byte(0x47);
       return undefined;
     }
     if (source.op !== "Add32" && source.op !== "Sub32") {
@@ -399,7 +399,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     }
     argument(source.args[0]!); argument(source.args[1]!); body.byte(0x73);
     if (source.op === "Add32") constant(-1).byte(0x73);
-    argument(source.args[0]!); get(reference + 2).byte(0x73).byte(0x71);
+    argument(source.args[0]!); get(reference + parameterCount).byte(0x73).byte(0x71);
     constant(31).byte(0x76);
     return undefined;
   };
@@ -415,8 +415,8 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     arg(2); set(outputCarry); arg(0);
     body.byte(0x05);
     if (op === "RotateRight32") {
-      arg(0); arg(1); body.byte(0x78).byte(0x22).u32(index + 2);
-      get(index + 2); constant(31).byte(0x76); set(outputCarry);
+      arg(0); arg(1); body.byte(0x78).byte(0x22).u32(index + parameterCount);
+      get(index + parameterCount); constant(31).byte(0x76); set(outputCarry);
     } else if (op === "ArithmeticShiftRight32") {
       arg(0); arg(1); constant(1).byte(0x6b); constant(31);
       arg(1); constant(32).byte(0x49).byte(0x1b).byte(0x76); carryBit(); set(outputCarry);
@@ -535,25 +535,25 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
           arg(0); simd(0x1b).byte(lane); body.byte(0x67); simd(0x1c).byte(lane);
         }
       } else {
-        arg(0); set(index + 2);
+        arg(0); set(index + parameterCount);
         for (let shift = 1; shift < bits; shift *= 2) {
-          get(index + 2); get(index + 2); constant(shift);
-          simd(vectorShiftLeft[bits]! + 2); simd(0x50); set(index + 2);
+          get(index + parameterCount); get(index + parameterCount); constant(shift);
+          simd(vectorShiftLeft[bits]! + 2); simd(0x50); set(index + parameterCount);
         }
-        constant(bits); simd(laneSplat[bits]!); get(index + 2); simd(0x62);
+        constant(bits); simd(laneSplat[bits]!); get(index + parameterCount); simd(0x62);
         if (bits === 16) simd(0x7d);
         simd(vectorBinary[`VectorSub${bits}`]!);
       }
     } else if (doublingLong) {
       const bits = Number(doublingLong[1]);
       arg(0); arg(1); simd(bits === 16 ? 0xbc : 0xdc);
-      constant(1); simd(vectorShiftLeft[bits * 2]!); body.byte(0x22).u32(index + 2);
-      get(index + 2);
+      constant(1); simd(vectorShiftLeft[bits * 2]!); body.byte(0x22).u32(index + parameterCount);
+      get(index + parameterCount);
       if (bits === 16) constant(-0x80000000); else body.byte(0x42).signed(-0x8000000000000000n, 64);
       simd(laneSplat[bits * 2]!); simd(vectorBinary[`VectorEqual${bits * 2}`]!);
-      body.byte(0x22).u32(index + 2); simd(0x51);
+      body.byte(0x22).u32(index + parameterCount); simd(0x51);
       store(options.layout.fpscr, () => {
-        load(options.layout.fpscr); get(index + 2); simd(0x53); constant(27).byte(0x74).byte(0x72);
+        load(options.layout.fpscr); get(index + parameterCount); simd(0x53); constant(27).byte(0x74).byte(0x72);
       });
     } else if (doublingHigh) {
       const bits = Number(doublingHigh[2]);
@@ -561,7 +561,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       const splat = (value: number): Bytes => constant(value).byte(0xfd).u32(laneSplat[bits]!);
       arg(0); splat(-(2 ** (bits - 1))); simd(vectorBinary[`VectorEqual${bits}`]!);
       arg(1); splat(-(2 ** (bits - 1))); simd(vectorBinary[`VectorEqual${bits}`]!);
-      simd(0x4e); set(index + 2);
+      simd(0x4e); set(index + parameterCount);
       if (bits === 16 && rounding) { arg(0); arg(1); simd(0x82); }
       else {
         for (let part = 0; part < 2; ++part) {
@@ -575,11 +575,11 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         else {
           simd(0x0d);
           for (let byte = 0; byte < 16; ++byte) body.byte(Math.floor(byte / 4) * 8 + byte % 4);
-          splat(0x7fffffff); get(index + 2); simd(0x4d); simd(0x52);
+          splat(0x7fffffff); get(index + parameterCount); simd(0x4d); simd(0x52);
         }
       }
       store(options.layout.fpscr, () => {
-        load(options.layout.fpscr); get(index + 2); simd(0x53); constant(27).byte(0x74).byte(0x72);
+        load(options.layout.fpscr); get(index + parameterCount); simd(0x53); constant(27).byte(0x74).byte(0x72);
       });
     } else if (variableShift || roundingShift) {
       const bits = Number((variableShift ?? roundingShift)![2]);
@@ -713,9 +713,9 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
           simd(0x1c).byte(lane);
         }
       }
-      body.byte(0x22).u32(index + 2);
+      body.byte(0x22).u32(index + parameterCount);
       store(options.layout.fpscr, () => {
-        load(options.layout.fpscr); arg(0); get(index + 2);
+        load(options.layout.fpscr); arg(0); get(index + parameterCount);
         simd(vectorUnary[`Vector${signedOutput ? "Sign" : "Zero"}Extend${bits / 2}`]!);
         simd(0x51); simd(0x53); constant(27).byte(0x74).byte(0x72);
       });
@@ -727,9 +727,9 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       if (bits === 64) body.byte(0x42).signed(-0x8000000000000000n, 64);
       else constant(-(2 ** (bits - 1)));
       simd(laneSplat[bits]!); simd(vectorBinary[`VectorEqual${bits}`]!);
-      body.byte(0x22).u32(index + 2); simd(0x51);
+      body.byte(0x22).u32(index + parameterCount); simd(0x51);
       store(options.layout.fpscr, () => {
-        load(options.layout.fpscr); get(index + 2); simd(0x53); constant(27).byte(0x74).byte(0x72);
+        load(options.layout.fpscr); get(index + parameterCount); simd(0x53); constant(27).byte(0x74).byte(0x72);
       });
     } else if (saturatedBinary) {
       const signed = saturatedBinary[1] === "Signed";
@@ -738,9 +738,9 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       const wrapping = vectorBinary[`Vector${subtract ? "Sub" : "Add"}${bits}`]!;
       if (bits <= 16) {
         const opcode = (bits === 8 ? 0x6f : 0x8f) + (signed ? 0 : 1) + (subtract ? 3 : 0);
-        arg(0); arg(1); simd(opcode); body.byte(0x22).u32(index + 2);
+        arg(0); arg(1); simd(opcode); body.byte(0x22).u32(index + parameterCount);
         store(options.layout.fpscr, () => {
-          load(options.layout.fpscr); get(index + 2); arg(0); arg(1); simd(wrapping);
+          load(options.layout.fpscr); get(index + parameterCount); arg(0); arg(1); simd(wrapping);
           simd(0x51); simd(0x53); constant(27).byte(0x74).byte(0x72);
         });
       } else {
@@ -748,26 +748,26 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
           if (bits === 32) constant(Number(value)); else body.byte(0x42).signed(value, 64);
           return simd(laneSplat[bits]!);
         };
-        arg(0); arg(1); simd(wrapping); set(index + 2);
+        arg(0); arg(1); simd(wrapping); set(index + parameterCount);
         if (signed) {
           arg(0); constant(bits - 1); simd(vectorShiftLeft[bits]! + 1);
           splat((1n << BigInt(bits - 1)) - 1n); simd(0x51);
         } else if (subtract) zeroVector();
         else splat(-1n);
-        get(index + 2);
+        get(index + parameterCount);
         if (signed) {
-          arg(0); get(index + 2); simd(0x51); arg(0); arg(1); simd(0x51);
+          arg(0); get(index + parameterCount); simd(0x51); arg(0); arg(1); simd(0x51);
           simd(subtract ? 0x4e : 0x4f); constant(bits - 1); simd(vectorShiftLeft[bits]! + 1);
         } else {
           if (subtract) arg(1); else arg(0);
           if (bits === 64) { splat(-0x8000000000000000n); simd(0x51); }
-          if (subtract) arg(0); else get(index + 2);
+          if (subtract) arg(0); else get(index + parameterCount);
           if (bits === 64) { splat(-0x8000000000000000n); simd(0x51); }
           simd(bits === 32 ? 0x3c : 0xd9);
         }
-        body.byte(0x22).u32(index + 2); simd(0x52);
+        body.byte(0x22).u32(index + parameterCount); simd(0x52);
         store(options.layout.fpscr, () => {
-          load(options.layout.fpscr); get(index + 2); simd(0x53); constant(27).byte(0x74).byte(0x72);
+          load(options.layout.fpscr); get(index + parameterCount); simd(0x53); constant(27).byte(0x74).byte(0x72);
         });
       }
     } else if (paired) {
@@ -1109,13 +1109,13 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         body.byte(0x7c); arg(2); body.byte(0xad).byte(0x7c); break;
       case "SignedSaturatedAddWithFlag32": case "SignedSaturatedSubWithFlag32": {
         const subtract = node.op === "SignedSaturatedSubWithFlag32";
-        arg(0); arg(1); body.byte(subtract ? 0x6b : 0x6a); set(index + 2);
+        arg(0); arg(1); body.byte(subtract ? 0x6b : 0x6a); set(index + parameterCount);
         arg(0); arg(1); body.byte(0x73);
         if (!subtract) constant(-1).byte(0x73);
-        arg(0); get(index + 2).byte(0x73).byte(0x71); constant(31).byte(0x76);
+        arg(0); get(index + parameterCount).byte(0x73).byte(0x71); constant(31).byte(0x76);
         set(overflowLocals.get(index)!);
         constant(0x7fffffff); arg(0); constant(31).byte(0x75).byte(0x73);
-        get(index + 2); get(overflowLocals.get(index)!).byte(0x1b);
+        get(index + parameterCount); get(overflowLocals.get(index)!).byte(0x1b);
         break;
       }
       case "SignedSaturation": case "UnsignedSaturation": {
@@ -1127,8 +1127,8 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         const minimum = signed ? -(2 ** (bits - 1)) : 0;
         const maximum = 2 ** (signed ? bits - 1 : bits) - 1;
         constant(minimum); arg(0); arg(0); constant(minimum).byte(0x48).byte(0x1b);
-        set(index + 2);
-        constant(maximum); get(index + 2); get(index + 2);
+        set(index + parameterCount);
+        constant(maximum); get(index + parameterCount); get(index + parameterCount);
         constant(maximum).byte(0x4a).byte(0x1b);
         break;
       }
@@ -1193,16 +1193,17 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         helper(node.op, node.args.map(argType), result ? [wasmType(node.type)] : [], () => node.args.forEach(argument));
       }
     }
-    if (result) set(index + 2);
+    if (result) set(index + parameterCount);
     if (options.execution && (node.op === "A32CallSupervisor" || node.op === "A32ExceptionRaised")) {
       // These native callbacks flush prior ticks and refresh the remaining budget.
       load(options.execution.budget, true); set(1);
+      load(options.execution.pendingTicks, true); set(2);
     }
   });
   terminal(block.terminal);
   // Every terminal path returns or tail-calls, including both branches of a conditional exit.
   body.byte(0x00);
   return regionModule({ imports, shared: options.shared, maximumPages: options.maximumPages,
-    signature: { params: ["i32", "i64"], results: ["i64"] }, locals, body,
+    signature: { params, results: ["i64"] }, locals, body,
     table: Boolean(block.sourceCell) });
 }
