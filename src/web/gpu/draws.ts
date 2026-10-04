@@ -11,8 +11,8 @@ const stencilOps: readonly GPUStencilOperation[] = ["keep", "zero", "replace", "
 const factors: readonly GPUBlendFactor[] = ["zero", "one", "src", "one-minus-src", "dst", "one-minus-dst", "src-alpha", "one-minus-src-alpha", "dst-alpha", "one-minus-dst-alpha", "constant", "one-minus-constant", "constant", "one-minus-constant", "src-alpha-saturated"];
 const equations: readonly GPUBlendOperation[] = ["add", "subtract", "reverse-subtract"];
 
-interface TextureBindingGroup {
-  resources: readonly (GPUTextureView | GPUSampler)[];
+interface ResourceBindingGroup {
+  resources: readonly (GPUBuffer | GPUTextureView | GPUSampler)[];
   group: GPUBindGroup;
 }
 
@@ -24,8 +24,9 @@ interface DrawUpload {
 interface DrawPipeline {
   pipeline: GPURenderPipeline;
   groups: readonly GPUBindGroupLayout[];
-  textures: TextureBindingGroup[];
+  textures: ResourceBindingGroup[];
   uniforms: WeakMap<GPUBuffer, GPUBindGroup>;
+  utilities: WeakMap<GPUBuffer, ResourceBindingGroup[]>;
 }
 
 const pipelineStateKeys = ["cull", "flipped", "colorMask", "depthWrite", "depthCompare", "stencil",
@@ -53,7 +54,7 @@ export class GraphicsDraws {
   #drawCount = 0;
   #uploadBytes = 0;
   #upload: DrawUpload | undefined;
-  #uniformOffsets = new Uint32Array(3);
+  #uniformOffsets = new Uint32Array(4);
   #luts: readonly GPUBuffer[];
   #empty: GPUTexture;
   #emptyShadow: GPUBuffer;
@@ -148,6 +149,7 @@ export class GraphicsDraws {
       this.#uniformOffsets[0] = vs.offset!;
       this.#uniformOffsets[1] = fs.offset!;
       this.#uniformOffsets[2] = transform.offset!;
+      this.#uniformOffsets[3] = dimensions.offset!;
       const textureResources: (GPUTextureView | GPUSampler)[] = [];
       let reusableTextures = true;
       for (let i = 0; i < 3; i++) {
@@ -172,13 +174,10 @@ export class GraphicsDraws {
           format: attachment!.format, usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING });
         temporary.push(dest);
       }
-      const utilityGroup = this.device.createBindGroup({ layout: compiled.groups[2]!, entries: [
-        { binding: 0, resource: { buffer: shadow } },
-        { binding: 1, resource: this.view(state.normal ? this.textures.get(state.normal).texture : this.#empty) },
-        { binding: 2, resource: state.normal ? this.samplers.get(state.samplers[0]) : this.#utilitySampler },
-        { binding: 3, resource: this.view(dest) },
-        { binding: 4, resource: dimensions },
-      ] });
+      const utilityGroup = this.utilityGroup(compiled, upload.buffer, [shadow,
+        this.view(state.normal ? this.textures.get(state.normal).texture : this.#empty),
+        state.normal ? this.samplers.get(state.samplers[0]) : this.#utilitySampler,
+        this.view(dest)], !state.shadow && !destRead);
       const count = draw.vertices.byteLength / stride;
       // Logic ops and min/max blend factors read the result of preceding primitives.
       const step = destRead ? 3 : count;
@@ -195,7 +194,8 @@ export class GraphicsDraws {
         });
         pass.setPipeline(compiled.pipeline); pass.setVertexBuffer(0, vertex.buffer, vertex.offset, vertex.size);
         pass.setBindGroup(0, uniformGroup, this.#uniformOffsets, 0, 3);
-        pass.setBindGroup(1, textureGroup); pass.setBindGroup(2, utilityGroup);
+        pass.setBindGroup(1, textureGroup);
+        pass.setBindGroup(2, utilityGroup, this.#uniformOffsets, 3, 1);
         pass.setScissorRect(x, y, w, h); pass.setStencilReference(state.stencilReference);
         const blendColor = state.blendColor >>> 0;
         pass.setBlendConstant({ r: (blendColor & 255) / 255, g: ((blendColor >>> 8) & 255) / 255,
@@ -282,11 +282,9 @@ export class GraphicsDraws {
     return group;
   }
 
-  private textureGroup(compiled: DrawPipeline, resources: readonly (GPUTextureView | GPUSampler)[],
-    reusable: boolean): GPUBindGroup {
-    const groups = compiled.textures;
+  private findGroup(groups: ResourceBindingGroup[], resources: ResourceBindingGroup["resources"]): GPUBindGroup | undefined {
     // GPU identities change when native handles are recreated or feedback images are copied.
-    for (let index = reusable ? groups.length - 1 : -1; index >= 0; index--) {
+    for (let index = groups.length - 1; index >= 0; index--) {
       const cached = groups[index]!;
       let matches = cached.resources.length === resources.length;
       for (let binding = 0; matches && binding < resources.length; binding++) {
@@ -298,10 +296,36 @@ export class GraphicsDraws {
       groups[groups.length - 1] = cached;
       return cached.group;
     }
+    return undefined;
+  }
+
+  private textureGroup(compiled: DrawPipeline, resources: readonly (GPUTextureView | GPUSampler)[],
+    reusable: boolean): GPUBindGroup {
+    const groups = compiled.textures;
+    const cached = reusable ? this.findGroup(groups, resources) : undefined;
+    if (cached) return cached;
     const group = this.device.createBindGroup({ layout: compiled.groups[1]!,
       entries: resources.map((resource, binding) => ({ binding, resource })),
     });
     if (reusable) {
+      if (groups.length >= 16) groups.shift();
+      groups.push({ resources, group });
+    }
+    return group;
+  }
+
+  private utilityGroup(compiled: DrawPipeline, buffer: GPUBuffer,
+    resources: readonly [GPUBuffer, GPUTextureView, GPUSampler, GPUTextureView], reusable: boolean): GPUBindGroup {
+    let groups = reusable ? compiled.utilities.get(buffer) : undefined;
+    const cached = groups ? this.findGroup(groups, resources) : undefined;
+    if (cached) return cached;
+    const group = this.device.createBindGroup({ layout: compiled.groups[2]!, entries: [
+      { binding: 0, resource: { buffer: resources[0] } },
+      { binding: 1, resource: resources[1] }, { binding: 2, resource: resources[2] },
+      { binding: 3, resource: resources[3] }, { binding: 4, resource: { buffer, size: 16 } },
+    ] });
+    if (reusable) {
+      if (!groups) { groups = []; compiled.utilities.set(buffer, groups); }
       if (groups.length >= 16) groups.shift();
       groups.push({ resources, group });
     }
@@ -371,7 +395,7 @@ export class GraphicsDraws {
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform", minBindingSize: 16 } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform", minBindingSize: 16, hasDynamicOffset: true } },
       ] }),
     ];
     const blend = (eq: number, src: number, dst: number, emulated: boolean): GPUBlendComponent => {
@@ -397,7 +421,7 @@ export class GraphicsDraws {
           stencilReadMask: s.stencilReadMask, stencilWriteMask: s.stencil ? s.stencilWriteMask : 0 } : {}),
       } } : {}),
     });
-    return { pipeline, groups, textures: [], uniforms: new WeakMap() };
+    return { pipeline, groups, textures: [], uniforms: new WeakMap(), utilities: new WeakMap() };
   }
 
   private snapshot(encoder: GPUCommandEncoder, source: GPUTexture): GPUTexture {
