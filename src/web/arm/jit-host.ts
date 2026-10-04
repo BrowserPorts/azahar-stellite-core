@@ -43,6 +43,9 @@ export class ArmJitHost {
   #generatedBytes = 0;
   #compileMs = 0;
   #optimizedRegions = 0;
+  readonly #lowerBlock: typeof lowerArm;
+
+  constructor(lowerBlock: typeof lowerArm = lowerArm) { this.#lowerBlock = lowerBlock; }
 
   compile(json: string, layout: Uint32Array, memory: WebAssembly.Memory,
     table: WebAssembly.Table, helpers: WebAssembly.ModuleImports,
@@ -72,7 +75,7 @@ export class ArmJitHost {
       helperNames: new Set(Object.keys(helpers)),
       ...(memoryOptions ? { memory: memoryOptions } : {}),
     };
-    const bytes = lowerArm(block, options);
+    const bytes = this.#lowerBlock(block, options);
     const module = new WebAssembly.Module(bytes);
     const instance = new WebAssembly.Instance(module, {
       env: { memory, __indirect_function_table: table }, core: helpers,

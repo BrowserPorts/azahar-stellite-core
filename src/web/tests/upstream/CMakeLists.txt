@@ -188,6 +188,8 @@ if(EMSCRIPTEN)
     set_target_properties(dynarmic_arm_jit_fixtures PROPERTIES SUFFIX ".mjs")
     add_test(NAME dynarmic_arm_jit_fixtures COMMAND "${BUN_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/run-jit.ts" "$<TARGET_FILE:dynarmic_arm_jit_fixtures>")
+    add_test(NAME dynarmic_arm_region_fixtures COMMAND "${BUN_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/run-jit.ts" "$<TARGET_FILE:dynarmic_arm_jit_fixtures>" --arm-region-tier)
     configure_file(browser-jit.html browser-jit.html COPYONLY)
     add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/browser-jit.js"
         "${CMAKE_CURRENT_BINARY_DIR}/browser-worker.js"
@@ -238,6 +240,8 @@ if(EMSCRIPTEN)
     set_target_properties(dynarmic_vfp_recordings PROPERTIES SUFFIX ".mjs")
     add_test(NAME dynarmic_vfp_recordings COMMAND "${BUN_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/run-jit.ts" "$<TARGET_FILE:dynarmic_vfp_recordings>")
+    add_test(NAME dynarmic_vfp_region_recordings COMMAND "${BUN_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/run-jit.ts" "$<TARGET_FILE:dynarmic_vfp_recordings>" --arm-region-tier)
 else()
     target_link_libraries(dynarmic_vfp_recordings PRIVATE dynarmic merry::mcl fmt::fmt)
     register_fixture(dynarmic_vfp_recordings)

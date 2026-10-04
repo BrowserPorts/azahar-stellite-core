@@ -3,6 +3,7 @@
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { ArmJitHost } from "../../arm/jit-host";
+import { lowerArm, lowerArmRegion } from "../../arm/lower";
 import { PicaJitHost } from "../../pica/jit-host";
 
 const modulePath = process.argv[2];
@@ -10,12 +11,15 @@ if (!modulePath) throw new Error("An upstream fixture module path is required");
 const { default: createModule } = await import(pathToFileURL(modulePath).href);
 const args = process.argv.slice(3);
 const dispatch = args.includes("--pica-dispatch");
+const regionTier = args.includes("--arm-region-tier");
 const replayPath = process.env.DYNARMIC_THUMB_IT_REPLAY;
 const replay = replayPath ? await readFile(replayPath) : undefined;
 let linkedBlocks: (() => bigint) | undefined;
 let budgetReuses: (() => bigint) | undefined;
 let fastDispatchHits: (() => bigint) | undefined;
-const armJit = new ArmJitHost();
+const armJit = new ArmJitHost(regionTier ? (block, options) => options.execution
+  ? lowerArmRegion([block], new Map(), options) : lowerArm(block, options) : undefined);
+if (regionTier) console.log("ARM JIT: upstream fixtures use the region compiler");
 process.on("exit", () => {
   const count = linkedBlocks?.();
   if (count) console.log(`ARM JIT: ${count} blocks entered through direct Wasm links`);
@@ -27,7 +31,7 @@ process.on("exit", () => {
   if (stats.optimizedRegions) console.log(`ARM JIT: ${stats.optimizedRegions} hot regions compiled with direct Wasm calls`);
   if (stats.compiledBlocks) console.log(`ARM JIT: ${stats.compiledBlocks} regions, ${stats.generatedBytes} Wasm bytes, ${stats.compileMs.toFixed(2)} ms compilation`);
 });
-await createModule({ arguments: args.filter((arg) => arg !== "--pica-dispatch"),
+await createModule({ arguments: args.filter((arg) => arg !== "--pica-dispatch" && arg !== "--arm-region-tier"),
   azaharJitHost: armJit, azaharPicaJitHost: new PicaJitHost(dispatch),
   preRun: [(module: { FS: { writeFile(path: string, data: Uint8Array): undefined },
     ENV: Record<string, string>; _azahar_arm_jit_linked_blocks?: () => bigint;

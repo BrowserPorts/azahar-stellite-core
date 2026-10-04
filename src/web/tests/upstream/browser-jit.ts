@@ -13,6 +13,7 @@ const core = new URL(location.href).searchParams.has("core");
 const dispatch = new URL(location.href).searchParams.has("pica-dispatch");
 const fuzz = new URL(location.href).searchParams.has("fuzz");
 const dsp = new URL(location.href).searchParams.has("dsp");
+const regionTier = new URL(location.href).searchParams.has("region-tier");
 const filter = new URL(location.href).searchParams.get("filter");
 const seed = new URL(location.href).searchParams.get("seed");
 const storage = new URL(location.href).searchParams.get("storage");
@@ -37,4 +38,4 @@ worker.onerror = (event: ErrorEvent): undefined => {
 worker.postMessage({ url: fixtureUrl.href,
   args: recordings || storage ? [] : ["--reporter", "compact", ...(filter ? [filter] : []),
     ...(seed ? ["--rng-seed", seed] : [])],
-  dispatch, dsp } satisfies FixtureRequest);
+  dispatch, dsp, regionTier } satisfies FixtureRequest);

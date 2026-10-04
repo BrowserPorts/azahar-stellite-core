@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { ArmJitHost } from "../../arm/jit-host";
+import { lowerArm, lowerArmRegion } from "../../arm/lower";
 import { PicaJitHost } from "../../pica/jit-host";
 
 export interface FixtureRequest {
@@ -8,6 +9,7 @@ export interface FixtureRequest {
   args: string[];
   dispatch: boolean;
   dsp?: boolean;
+  regionTier?: boolean;
 }
 export type FixtureReply = { line: string } | { exit: number };
 
@@ -32,7 +34,9 @@ worker.onmessage = async (event: MessageEvent<FixtureRequest>): Promise<undefine
     }
     const { default: createModule } = await import(event.data.url);
     let linkedBlocks: (() => bigint) | undefined;
-    const armJit = new ArmJitHost();
+    const armJit = new ArmJitHost(event.data.regionTier ? (block, options) => options.execution
+      ? lowerArmRegion([block], new Map(), options) : lowerArm(block, options) : undefined);
+    if (event.data.regionTier) append("ARM JIT: upstream fixtures use the region compiler");
     await createModule({
       ...(dspHost ? { azaharDspJitHost: dspHost } : {}),
       azaharJitHost: armJit,
