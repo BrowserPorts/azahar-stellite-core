@@ -81,7 +81,7 @@
     {
       "name": "web-arm-jit-threads",
       "configurePreset": "web-arm-jit-threads",
-      "filter": { "include": { "name": "^(dynarmic_(arm_jit_fixtures|arm_fuzz_fixtures|vfp_recordings)|unicorn_arm_fixtures)$" } },
+      "filter": { "include": { "name": "^(dynarmic_(arm_jit_fixtures|arm_region_fixtures|arm_fuzz_fixtures|vfp_recordings|vfp_region_recordings)|unicorn_arm_fixtures)$" } },
       "output": { "outputOnFailure": true },
       "execution": { "noTestsAction": "error", "timeout": 1500 }
     },
