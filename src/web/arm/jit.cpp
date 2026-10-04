@@ -300,6 +300,43 @@ template <class Bits> Bits RoundNative(Bits result, bool sign, int comparison,
     if (!away && comparison > 0) --result;
     return result;
 }
+template <class Bits> Bits MultiplyFP(Bits lhs, Bits rhs,
+    Dynarmic::FP::FPCR fpcr, Dynarmic::FP::FPSR& fpsr) {
+    using namespace Dynarmic::FP;
+    using Info = FPInfo<Bits>;
+    const Bits left_exponent = lhs & Info::exponent_mask;
+    const Bits right_exponent = rhs & Info::exponent_mask;
+    const bool sign = ((lhs ^ rhs) & Info::sign_mask) != 0;
+    if (left_exponent && left_exponent != Info::exponent_mask &&
+        right_exponent && right_exponent != Info::exponent_mask) {
+        using Float = std::conditional_t<sizeof(Bits) == 4, float, double>;
+        const Float left_value = std::bit_cast<Float>(lhs);
+        const Float right_value = std::bit_cast<Float>(rhs);
+        const Bits result = std::bit_cast<Bits>(left_value * right_value);
+        const Bits exponent = result & Info::exponent_mask;
+        const Bits binade = Bits{1} << Info::explicit_mantissa_width;
+        // Boundary binades retain ARM's before-rounding underflow and overflow rules.
+        if (exponent > binade && exponent < Info::exponent_mask - binade) {
+            if constexpr (sizeof(Bits) == 4) {
+                // A binary32 product has at most 48 significant bits and is exact in binary64.
+                const double exact = static_cast<double>(left_value) * static_cast<double>(right_value);
+                const double rounded = static_cast<double>(std::bit_cast<Float>(result));
+                const int comparison = (rounded > exact) - (rounded < exact);
+                return RoundNative(result, sign, sign ? -comparison : comparison, fpcr, fpsr);
+            } else {
+                using Wide = __uint128_t;
+                const auto left = UnpackNormal(lhs);
+                const auto right = UnpackNormal(rhs);
+                const auto output = UnpackNormal(result);
+                const Wide exact = Wide{left.mantissa} * right.mantissa;
+                const Wide rounded = Wide{output.mantissa} <<
+                    (normalized_point_position + output.exponent - left.exponent - right.exponent);
+                return RoundNative(result, sign, (rounded > exact) - (rounded < exact), fpcr, fpsr);
+            }
+        }
+    }
+    return FPMulAdd(Info::Zero(sign), lhs, rhs, fpcr, fpsr);
+}
 template <class Bits> Bits DivideFP(Bits lhs, Bits rhs,
     Dynarmic::FP::FPCR fpcr, Dynarmic::FP::FPSR& fpsr) {
     using namespace Dynarmic::FP;
@@ -908,8 +945,7 @@ FIXED_CONVERSION(FPDoubleToFixedU64, uint64_t, uint64_t, 64, true)
         return FloatingPoint(state, [&](auto fpcr, auto& fpsr) { \
             lhs = VfpInput(state, lhs, fpcr, fpsr); \
             rhs = VfpInput(state, rhs, fpcr, fpsr); \
-            const auto zero = Dynarmic::FP::FPInfo<type>::Zero(((lhs ^ rhs) & Dynarmic::FP::FPInfo<type>::sign_mask) != 0); \
-            return Dynarmic::FP::FPMulAdd(zero, lhs, rhs, fpcr, fpsr); \
+            return MultiplyFP(lhs, rhs, fpcr, fpsr); \
         }); \
     } \
     EMSCRIPTEN_KEEPALIVE type FPMulAdd##bits(ArmState* state, type addend, type lhs, type rhs) { \
