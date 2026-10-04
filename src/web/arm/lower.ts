@@ -211,12 +211,9 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       load(execution.pendingTicks, true);
       body.byte(0x42).signed(BigInt(cycles), 64).byte(0x7c);
     }, true);
-    // Native callbacks can refresh the budget while the block is running.
-    load(execution.budget, true); set(1);
-    store(execution.budget, () => {
-      get(1).byte(0x42).signed(BigInt(cycles), 64).byte(0x56).byte(0x04).byte(0x7e);
-      consume(cycles).byte(0x05).byte(0x42).signed(0n, 64).byte(0x0b).byte(0x22).u32(1);
-    }, true);
+    // Linked regions carry the remaining budget in their i64 parameter.
+    get(1).byte(0x42).signed(BigInt(cycles), 64).byte(0x56).byte(0x04).byte(0x7e);
+    consume(cycles).byte(0x05).byte(0x42).signed(0n, 64).byte(0x0b); set(1);
     incrementCounter(execution.completedBlocks);
     return undefined;
   };
@@ -227,16 +224,16 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       return undefined;
     }
     chargeTicks(cycles);
-    const nextBudget = (cell: number, minimum: bigint): undefined => {
+    const canLink = (cell: number, minimum: bigint): undefined => {
       const execution = options.execution!;
       checkHalt(); body.byte(0x04).byte(0x40);
-      store(execution.budget, () => body.byte(0x42).signed(0n, 64), true);
       body.byte(0x42).signed(0n, 64); set(1); body.byte(0x0b);
       get(1);
       if (cell) constant(cell).byte(0x28).u32(2).u32(execution.minimumBudget).byte(0xad);
       else body.byte(0x42).signed(minimum, 64);
-      body.byte(0x54).byte(0x04).byte(0x40);
-      body.byte(0x42).signed(0n, 64); set(1); body.byte(0x0b);
+      // A smaller budget returns to native dispatch without discarding the unused ticks.
+      body.byte(0x5a);
+      get(1).byte(0x42).signed(0n, 64).byte(0x55).byte(0x71);
       return undefined;
     };
     const tailCall = (): undefined => {
@@ -245,8 +242,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       return undefined;
     };
     if (destination?.cell && destination.fpscr !== undefined) {
-      nextBudget(destination.cell, 0n);
-      get(1).byte(0x42).signed(0n, 64).byte(0x55).byte(0x04).byte(0x40);
+      canLink(destination.cell, 0n); body.byte(0x04).byte(0x40);
       // Static terminals just wrote PC and CPSR mode bits; FPSCR can change within the block.
       load(options.layout.fpscr); constant(0x07f70000).byte(0x71);
       constant(destination.fpscr & 0x07f70000).byte(0x46);
@@ -254,8 +250,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       body.byte(0x45).byte(0x45).byte(0x71).byte(0x04).byte(0x40);
       tailCall(); body.byte(0x0b).byte(0x0b);
     } else if (fastDispatch) {
-      nextBudget(0, 1n);
-      get(1).byte(0x42).signed(0n, 64).byte(0x55).byte(0x04).byte(0x40);
+      canLink(0, 1n); body.byte(0x04).byte(0x40);
       const cache = options.execution!.fastDispatch;
       // Match Dynarmic's LocationDescriptor, including split Thumb IT-state bits.
       load(options.layout.cpsr); set(clockPointer);
@@ -278,6 +273,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       incrementCounter(cache.hits);
       tailCall(); body.byte(0x0b).byte(0x0b);
     }
+    store(options.execution!.budget, () => get(1), true);
     body.byte(0x42).signed(0n, 64).byte(0x0f);
     return undefined;
   };
@@ -1200,6 +1196,10 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       }
     }
     if (result) set(index + 2);
+    if (options.execution && (node.op === "A32CallSupervisor" || node.op === "A32ExceptionRaised")) {
+      // These native callbacks flush prior ticks and refresh the remaining budget.
+      load(options.execution.budget, true); set(1);
+    }
   });
   terminal(block.terminal);
   // Every terminal path returns or tail-calls, including both branches of a conditional exit.
