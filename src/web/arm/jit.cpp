@@ -304,24 +304,38 @@ template <class Bits, bool Subtract> Bits AddFP(Bits lhs, Bits rhs,
     Dynarmic::FP::FPCR fpcr, Dynarmic::FP::FPSR& fpsr) {
     using namespace Dynarmic::FP;
     using Info = FPInfo<Bits>;
+    const Bits left_exponent = lhs & Info::exponent_mask;
+    const Bits right_exponent = rhs & Info::exponent_mask;
+    const bool left_normal = left_exponent && left_exponent != Info::exponent_mask;
+    const bool right_normal = right_exponent && right_exponent != Info::exponent_mask;
+    if (left_normal && !(rhs & ~Info::sign_mask)) return lhs;
+    const Bits right_operand = Subtract ? rhs ^ Info::sign_mask : rhs;
+    if (right_normal && !(lhs & ~Info::sign_mask)) return right_operand;
     if constexpr (sizeof(Bits) == 4) {
-        const int left_exponent = (lhs & Info::exponent_mask) >> Info::explicit_mantissa_width;
-        const int right_exponent = (rhs & Info::exponent_mask) >> Info::explicit_mantissa_width;
-        if (left_exponent && left_exponent < 255 && right_exponent && right_exponent < 255 &&
-            std::abs(left_exponent - right_exponent) <= 28) {
-            // Aligned binary32 significands plus a carry fit in binary64's 53 bits.
-            const double left_value = std::bit_cast<float>(lhs);
-            const double right_value = std::bit_cast<float>(rhs);
-            const double exact = Subtract ? left_value - right_value : left_value + right_value;
-            const Bits result = std::bit_cast<Bits>(static_cast<float>(exact));
+        if (left_normal && right_normal) {
+            Bits result;
+            int comparison;
+            const int difference = static_cast<int>(left_exponent >> Info::explicit_mantissa_width) -
+                static_cast<int>(right_exponent >> Info::explicit_mantissa_width);
+            if (std::abs(difference) <= 28) {
+                // Aligned binary32 significands plus a carry fit in binary64's 53 bits.
+                const double left_value = std::bit_cast<float>(lhs);
+                const double right_value = std::bit_cast<float>(rhs);
+                const double exact = Subtract ? left_value - right_value : left_value + right_value;
+                result = std::bit_cast<Bits>(static_cast<float>(exact));
+                const double rounded = std::bit_cast<float>(result);
+                comparison = (rounded > exact) - (rounded < exact);
+                if (result & Info::sign_mask) comparison = -comparison;
+            } else {
+                // The smaller operand is below half an ulp even at a binade boundary.
+                result = difference > 0 ? lhs : right_operand;
+                comparison = ((lhs ^ right_operand) & Info::sign_mask) ? 1 : -1;
+            }
             const Bits exponent = result & Info::exponent_mask;
             const Bits binade = Bits{1} << Info::explicit_mantissa_width;
             // Boundary binades retain ARM's before-rounding underflow and overflow rules.
             if (exponent > binade && exponent < Info::exponent_mask - binade) {
-                const bool sign = (result & Info::sign_mask) != 0;
-                const double rounded = std::bit_cast<float>(result);
-                const int comparison = (rounded > exact) - (rounded < exact);
-                return RoundNative(result, sign, sign ? -comparison : comparison, fpcr, fpsr);
+                return RoundNative(result, (result & Info::sign_mask) != 0, comparison, fpcr, fpsr);
             }
         }
     }
