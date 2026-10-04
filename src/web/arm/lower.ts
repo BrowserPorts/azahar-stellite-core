@@ -92,11 +92,17 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   const locals: ValueType[] = block.nodes.map((node) => wasmType(node.type));
   const carryLocals = new Map<number, number>();
   const wideLocals = new Map<number, number>();
+  const narrowArithmetic = new Set<number>();
   const overflowLocals = new Map<number, number>();
   block.nodes.forEach((node, index) => {
     if (["Add32", "Sub32"].includes(node.op)) {
-      wideLocals.set(index, locals.length + parameterCount);
-      locals.push("i64");
+      const carryIn = node.args[2];
+      if (carryIn && "imm" in carryIn && carryIn.imm === (node.op === "Add32" ? "0" : "1")) {
+        narrowArithmetic.add(index);
+      } else {
+        wideLocals.set(index, locals.length + parameterCount);
+        locals.push("i64");
+      }
     } else if (["SignedSaturatedAddWithFlag32", "SignedSaturatedSubWithFlag32"].includes(node.op)) {
       overflowLocals.set(index, locals.length + parameterCount);
       locals.push("i32");
@@ -336,7 +342,15 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   const carry = (reference: number): undefined => {
     const wide = wideLocals.get(reference);
     const shift = carryLocals.get(reference);
-    if (wide !== undefined) get(wide).byte(0x42).signed(32n, 64).byte(0x88).byte(0xa7);
+    if (narrowArithmetic.has(reference)) {
+      const source = block.nodes[reference]!;
+      // Subtraction carries when no borrow occurs; addition carries when its result wraps.
+      if (source.op === "Sub32") {
+        argument(source.args[0]!); argument(source.args[1]!); body.byte(0x4f);
+      } else {
+        get(reference + parameterCount); argument(source.args[0]!); body.byte(0x49);
+      }
+    } else if (wide !== undefined) get(wide).byte(0x42).signed(32n, 64).byte(0x88).byte(0xa7);
     else if (shift !== undefined) get(shift);
     else if (block.nodes[reference]?.op === "MostSignificantWord") {
       argument(block.nodes[reference]!.args[0]!);
@@ -1091,17 +1105,21 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         constant(0x80000000).byte(0x71);
         arg(0); body.byte(argType(node.args[0]!) === "i64" ? 0x50 : 0x45);
         constant(30).byte(0x74).byte(0x72);
-        if (node.op === "GetNZCVFromOp" && wideLocals.has(reference)) {
+        if (node.op === "GetNZCVFromOp" && (wideLocals.has(reference) || narrowArithmetic.has(reference))) {
           carry(reference); constant(29).byte(0x74).byte(0x72);
           overflow(reference); constant(28).byte(0x74).byte(0x72);
         }
         break;
       }
       case "Add32": case "Sub32":
-        arg(0); body.byte(0xad); arg(1);
-        if (node.op === "Sub32") constant(-1).byte(0x73);
-        body.byte(0xad).byte(0x7c); arg(2); body.byte(0xad).byte(0x7c);
-        body.byte(0x22).u32(wideLocals.get(index)!).byte(0xa7);
+        if (narrowArithmetic.has(index)) {
+          arg(0); arg(1); body.byte(node.op === "Sub32" ? 0x6b : 0x6a);
+        } else {
+          arg(0); body.byte(0xad); arg(1);
+          if (node.op === "Sub32") constant(-1).byte(0x73);
+          body.byte(0xad).byte(0x7c); arg(2); body.byte(0xad).byte(0x7c);
+          body.byte(0x22).u32(wideLocals.get(index)!).byte(0xa7);
+        }
         break;
       case "Add64": case "Sub64":
         arg(0); arg(1);
