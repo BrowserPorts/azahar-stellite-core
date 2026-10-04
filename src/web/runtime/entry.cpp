@@ -10,6 +10,7 @@
 #include <emscripten/console.h>
 #include "audio_core/audio_types.h"
 #include "citra_libretro/citra_libretro.h"
+#include "citra_libretro/core_settings.h"
 #include "core/core.h"
 #include "core/loader/loader.h"
 #include "libretro.h"
@@ -122,6 +123,8 @@ extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_initialize() {
     retro_set_input_poll(PollInput);
     retro_set_input_state(ReadInput);
     retro_init();
+    // Resolve the same user paths used at game load before accepting file imports.
+    LibRetro::ParseCoreOptions();
     initialized = true;
     return true;
 }

@@ -16,6 +16,7 @@
 #include <emscripten.h>
 #include <emscripten/wasmfs.h>
 #include "backend.h"
+#include "common/file_util.h"
 #include "memory_backend.h"
 #include "wasmfs.h"
 
@@ -124,7 +125,13 @@ extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_import_user_file(const char* path, s
         start = end + 1;
     } while (true);
 
-    const std::string destination = "/opfs/azahar/user/" + relative;
+    auto* root = realpath(FileUtil::GetUserPath(FileUtil::UserPath::UserDir).c_str(), nullptr);
+    if (!root) return false;
+    const std::string directory_root{root};
+    std::free(root);
+    if (directory_root != "/opfs/azahar/user" &&
+        !directory_root.starts_with("/opfs/azahar/user/")) return false;
+    const std::string destination = directory_root + "/" + relative;
     for (size_t end = destination.find('/', 1); end != std::string::npos;
          end = destination.find('/', end + 1)) {
         const auto directory = destination.substr(0, end);
