@@ -10,11 +10,22 @@ import type { ScreenFrame } from "./screens";
 
 type Pending = { resolve(): unknown; reject(error: Error): unknown };
 
+export interface GraphicsFenceStatistics {
+  waitMs: number;
+  count: number;
+}
+
 export interface GraphicsStatistics {
   adapter: GraphicsAdapterInfo;
   /** Emulation worker wall time waiting for readbacks and native graphics fences. */
   fenceWaitMs: number;
   fenceCount: number;
+  /** Interval totals by the operation that stopped the emulation worker. */
+  fences: {
+    textureReadback: GraphicsFenceStatistics;
+    explicitFinish: GraphicsFenceStatistics;
+    snapshotBackpressure: GraphicsFenceStatistics;
+  };
 }
 
 /** Owns the GPU worker and the synchronous fence used by native cache readbacks. */
@@ -33,8 +44,11 @@ export class GraphicsClient {
   #reported = false;
   #ready: Promise<undefined>;
   #adapter: GraphicsAdapterInfo | undefined;
-  #fenceWaitMs = 0;
-  #fenceCount = 0;
+  #fences: GraphicsStatistics["fences"] = {
+    textureReadback: { waitMs: 0, count: 0 },
+    explicitFinish: { waitMs: 0, count: 0 },
+    snapshotBackpressure: { waitMs: 0, count: 0 },
+  };
   configurationSize = 0;
   configurationSchema = 0n;
 
@@ -96,17 +110,25 @@ export class GraphicsClient {
   }
 
   finish(): undefined {
-    return this.synchronize((sequence) => ({ type: "finish", sequence }));
+    return this.synchronize("explicitFinish", (sequence) => ({ type: "finish", sequence }));
   }
 
   takeStatistics(): GraphicsStatistics {
     this.checkOpen();
     if (!this.#adapter) throw new Error("WebGPU adapter information is unavailable");
-    const stats = { adapter: { ...this.#adapter }, fenceWaitMs: this.#fenceWaitMs,
-      fenceCount: this.#fenceCount };
-    this.#fenceWaitMs = 0;
-    this.#fenceCount = 0;
-    return stats;
+    const fences = {
+      textureReadback: { ...this.#fences.textureReadback },
+      explicitFinish: { ...this.#fences.explicitFinish },
+      snapshotBackpressure: { ...this.#fences.snapshotBackpressure },
+    };
+    let fenceWaitMs = 0, fenceCount = 0;
+    for (const stats of Object.values(this.#fences)) {
+      fenceWaitMs += stats.waitMs;
+      fenceCount += stats.count;
+      stats.waitMs = 0;
+      stats.count = 0;
+    }
+    return { adapter: { ...this.#adapter }, fenceWaitMs, fenceCount, fences };
   }
 
   screens(frame: ScreenFrame): boolean {
@@ -179,10 +201,12 @@ export class GraphicsClient {
 
   downloadTexture(handle: number, region: TextureRegion,
     destination: Uint8Array<SharedArrayBuffer>): undefined {
-    return this.synchronize((sequence) => ({ type: "texture-download", handle, region, destination, sequence }));
+    return this.synchronize("textureReadback",
+      (sequence) => ({ type: "texture-download", handle, region, destination, sequence }));
   }
 
-  private synchronize(build: (sequence: number) => GraphicsRequest): undefined {
+  private synchronize(reason: keyof GraphicsStatistics["fences"],
+    build: (sequence: number) => GraphicsRequest): undefined {
     this.checkOpen();
     const previous = this.#sequence;
     this.#sequence = (previous + 1) | 0;
@@ -199,8 +223,8 @@ export class GraphicsClient {
       Atomics.wait(this.#control, 0, previous, remaining);
     }
     this.checkOpen();
-    this.#fenceWaitMs += performance.now() - started;
-    this.#fenceCount++;
+    this.#fences[reason].waitMs += performance.now() - started;
+    this.#fences[reason].count++;
     this.#queuedBytes = 0;
     // Presentation replies queued during the synchronous wait cover these bytes too.
     this.#queuedFrameBytes.fill(0);
@@ -209,7 +233,9 @@ export class GraphicsClient {
 
   private accountBytes(bytes: number): undefined {
     // Bound immutable heap snapshots while a cold native shader is being compiled.
-    if (this.#queuedBytes + bytes > 64 * 1024 * 1024) this.finish();
+    if (this.#queuedBytes + bytes > 64 * 1024 * 1024) {
+      this.synchronize("snapshotBackpressure", (sequence) => ({ type: "finish", sequence }));
+    }
     this.#queuedBytes += bytes;
     return undefined;
   }
