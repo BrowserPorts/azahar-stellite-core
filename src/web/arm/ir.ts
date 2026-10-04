@@ -19,6 +19,7 @@ export interface ArmBlock {
   sourceCell?: number;
   cycles: number;
   condition: number;
+  startCpsr?: number;
   endCpsr: number;
   conditionFailedPc?: number;
   conditionFailedCpsr?: number;

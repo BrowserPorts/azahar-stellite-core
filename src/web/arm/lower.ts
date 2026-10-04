@@ -88,6 +88,12 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   // Native entries and links carry budget, pending ticks, and cache age without heap round trips.
   const params: ValueType[] = options.execution ? ["i32", "i64", "i64", "i64"] : ["i32", "i64"];
   const parameterCount = params.length;
+  const cpsrModeMask = 0x0600fe20;
+  // Native dispatch and links enter the exact Thumb, endian, and IT-state descriptor.
+  let knownCpsrMode = options.execution && block.startCpsr !== undefined
+    ? block.startCpsr & cpsrModeMask : undefined;
+  const entryCpsrMode = knownCpsrMode;
+  let terminalCpsrMode: number | undefined;
   const hasBxWritePc = block.nodes.some((node) => node.op === "A32BXWritePC");
   const locals: ValueType[] = block.nodes.map((node) => wasmType(node.type));
   const carryLocals = new Map<number, number>();
@@ -160,6 +166,8 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       importIndex = imports.length;
       imports.push({ module: "core", name, type: { params: ["i32", ...params], results } });
     }
+    // Native helpers can call back into the core and change the processor mode.
+    knownCpsrMode = undefined;
     // Native callbacks and exception unwinding must see all ticks from prior linked blocks.
     if (options.execution) store(options.execution.pendingTicks, () => get(2), true);
     get(0); emit(); body.byte(0x10).u32(importIndex);
@@ -246,7 +254,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     };
     if (destination?.cell && destination.fpscr !== undefined) {
       canLink(destination.cell, 0n); body.byte(0x04).byte(0x40);
-      // Static terminals just wrote PC and CPSR mode bits; FPSCR can change within the block.
+      // Static terminals establish PC and CPSR mode; FPSCR can change within the block.
       load(options.layout.fpscr); constant(0x07f70000).byte(0x71);
       constant(destination.fpscr & 0x07f70000).byte(0x46);
       constant(destination.cell).byte(0x28).u32(2).u32(0).byte(0x22).u32(linkSlot);
@@ -281,10 +289,17 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     body.byte(0x42).signed(0n, 64).byte(0x0f);
     return undefined;
   };
-  const mergeFlags = (mask: number, value: () => unknown): undefined => store(options.layout.cpsr, () => {
-    load(options.layout.cpsr); constant(~mask).byte(0x71);
-    value(); constant(mask).byte(0x71).byte(0x72);
-  });
+  const mergeFlags = (mask: number, value: () => unknown): undefined => {
+    if (mask & cpsrModeMask) knownCpsrMode = undefined;
+    return store(options.layout.cpsr, () => {
+      load(options.layout.cpsr); constant(~mask).byte(0x71);
+      value(); constant(mask).byte(0x71).byte(0x72);
+    });
+  };
+  const writeMode = (cpsr: number, known: number | undefined): undefined => {
+    if (known !== (cpsr & cpsrModeMask)) mergeFlags(cpsrModeMask, () => constant(cpsr));
+    return undefined;
+  };
   const immediate = (value: Argument): number => {
     if (!("imm" in value)) throw new JitError("compile", "Expected a constant ARM register index");
     return Number(BigInt(value.imm));
@@ -455,7 +470,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     switch (term.kind) {
       case "link":
         store(options.layout.registers + 60, () => constant(term.pc));
-        mergeFlags(0x0600fe20, () => constant(term.cpsr));
+        writeMode(term.cpsr, terminalCpsrMode);
         finishBlock(block.cycles, term);
         break;
       case "dispatch": finishBlock(block.cycles); break;
@@ -486,7 +501,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     }
     condition(block.condition); body.byte(0x45).byte(0x04).byte(0x40);
     store(options.layout.registers + 60, () => constant(block.conditionFailedPc!));
-    mergeFlags(0x0600fe20, () => constant(block.conditionFailedCpsr!));
+    writeMode(block.conditionFailedCpsr, entryCpsrMode);
     finishBlock(block.conditionFailedCycles, {
       kind: "link", pc: block.conditionFailedPc, cpsr: block.conditionFailedCpsr,
       ...(block.conditionFailedCell ? { cell: block.conditionFailedCell } : {}),
@@ -494,6 +509,8 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     });
     body.byte(0x0b);
   }
+  // The failed condition returned; the executed body still starts in its entry mode.
+  knownCpsrMode = entryCpsrMode;
   block.nodes.forEach((node, index) => {
     const arg = (position: number): undefined => argument(node.args[position]!);
     let result = node.type !== "Void";
@@ -855,7 +872,10 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       case "Void": case "PushRSB": result = false; break;
       case "A32UpdateUpperLocationDescriptor":
         if (block.endCpsr === undefined) throw new JitError("compile", "ARM block is missing its end location");
-        if (!hasBxWritePc) mergeFlags(0x0600fe20, () => constant(block.endCpsr));
+        if (!hasBxWritePc) {
+          writeMode(block.endCpsr, knownCpsrMode);
+          knownCpsrMode = block.endCpsr & cpsrModeMask;
+        }
         result = false;
         break;
       case "Identity": arg(0); break;
@@ -1014,10 +1034,13 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         break;
       }
       case "A32GetCpsr": load(options.layout.cpsr); break;
-      case "A32SetCpsr": store(options.layout.cpsr, () => arg(0)); break;
+      case "A32SetCpsr":
+        knownCpsrMode = undefined;
+        store(options.layout.cpsr, () => arg(0)); break;
       case "A32CoprocGetOneWord": case "A32CoprocGetTwoWords":
       case "A32CoprocSendOneWord": case "A32CoprocSendTwoWords":
       case "A32CoprocInternalOperation": case "A32CoprocLoadWords": case "A32CoprocStoreWords": {
+        knownCpsrMode = undefined;
         const binding = node.binding;
         if (!binding) throw new JitError("compile", "Coprocessor is missing its compiled binding");
         if (binding.kind === "callback") {
@@ -1218,6 +1241,8 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       load(options.execution.pendingTicks, true); set(2);
     }
   });
+  // Every terminal branch sees the same body result, independently of other emitted exits.
+  terminalCpsrMode = options.execution ? knownCpsrMode : undefined;
   terminal(block.terminal);
   // Every terminal path returns or tail-calls, including both branches of a conditional exit.
   body.byte(0x00);
