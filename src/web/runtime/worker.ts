@@ -5,7 +5,12 @@ import type { SessionEvent, SessionRequest, SessionResult } from "./messages";
 import { BrowserSession } from "./session";
 import { GraphicsClient } from "../gpu/client";
 
-const worker = self as unknown as DedicatedWorkerGlobalScope;
+const worker = self as unknown as DedicatedWorkerGlobalScope & {
+  scheduler: {
+    postTask(callback: () => undefined,
+      options: { delay: number; signal: AbortSignal }): Promise<undefined>;
+  };
+};
 const post = (event: SessionEvent, transfer: Transferable[] = []): undefined => {
   worker.postMessage(event, transfer);
   return undefined;
@@ -18,27 +23,36 @@ const report = (error: unknown, id?: number): undefined => {
 
 let running = false;
 let nextFrame = 0;
-let timer: ReturnType<typeof setTimeout> | undefined;
+let frameTasks: AbortController | undefined;
 let session: BrowserSession | undefined;
 let graphics: GraphicsClient | undefined;
 let commands: Promise<unknown> = Promise.resolve();
 
 function pause(): undefined {
   running = false;
-  if (timer !== undefined) clearTimeout(timer);
-  timer = undefined;
+  frameTasks?.abort();
+  frameTasks = undefined;
+  return undefined;
+}
+
+function scheduleFrame(delay: number): undefined {
+  const signal = frameTasks!.signal;
+  // Posted tasks avoid the minimum delay imposed on nested frame timers.
+  worker.scheduler.postTask(frame, { delay: Math.ceil(delay), signal }).catch((error) => {
+    if (!signal.aborted) { pause(); report(error); }
+    return undefined;
+  });
   return undefined;
 }
 
 function frame(): undefined {
-  timer = undefined;
   if (!running || !session) return undefined;
   try {
     session.runFrame();
     const now = performance.now();
     // Drop accumulated wall-clock debt when background throttling resumes.
     nextFrame = Math.max(nextFrame + 1000 / 60, now - 1000 / 60);
-    timer = setTimeout(frame, Math.max(0, nextFrame - now));
+    scheduleFrame(Math.max(0, nextFrame - now));
   } catch (error) { pause(); report(error); }
   return undefined;
 }
@@ -48,13 +62,17 @@ function start(): undefined {
   if (!session) throw new Error("Azahar is unavailable");
   // Let the command handler report a failed first frame to its caller.
   session.runFrame();
+  frameTasks = new AbortController();
   running = true;
   nextFrame = performance.now() + 1000 / 60;
-  timer = setTimeout(frame, 1000 / 60);
+  scheduleFrame(1000 / 60);
   return undefined;
 }
 
 async function initialize(): Promise<BrowserSession> {
+  if (typeof worker.scheduler?.postTask !== "function") {
+    throw new Error("Azahar requires browser task scheduling");
+  }
   const url = new URL("./azahar-core.mjs", import.meta.url);
   const { default: factory } = await import(url.href) as { default: AzaharModuleFactory };
   graphics = await GraphicsClient.create((error) => { pause(); report(error); });
@@ -106,6 +124,7 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
             completed = true;
           } finally {
             if (resume && (completed || request.type === "save")) {
+              frameTasks = new AbortController();
               running = true; nextFrame = performance.now(); frame();
             }
           }
