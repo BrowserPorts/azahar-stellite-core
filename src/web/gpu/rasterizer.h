@@ -12,6 +12,7 @@ public:
     Rasterizer(Memory::MemorySystem& memory, Pica::PicaCore& pica,
                VideoCore::CustomTexManager& custom_textures, VideoCore::RendererBase& renderer);
     void DrawTriangles() override;
+    bool AccelerateDrawBatch(bool is_indexed) override;
     void FlushAll() override;
     void FlushRegion(PAddr addr, u32 size) override;
     void InvalidateRegion(PAddr addr, u32 size) override;

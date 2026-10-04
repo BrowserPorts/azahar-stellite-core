@@ -131,6 +131,24 @@ void Rasterizer::DrawTriangles() {
     vertex_batch.clear();
 }
 
+bool Rasterizer::AccelerateDrawBatch(bool is_indexed) {
+    const auto vertices = AnalyzeVertexArray(is_indexed);
+    if (vertices.Invalid()) return true;
+
+    const auto& attributes = regs.pipeline.vertex_attributes;
+    const u32 count = vertices.vs_input_index_max - vertices.vs_input_index_min + 1;
+    for (const auto& loader : attributes.attribute_loaders) {
+        if (loader.component_count == 0 || loader.byte_count == 0) continue;
+        const PAddr address = attributes.GetPhysicalBaseAddress() + loader.data_offset +
+                              vertices.vs_input_index_min * loader.byte_count;
+        cache.FlushRegion(address, count * loader.byte_count);
+    }
+
+    pica.LoadVertices(is_indexed, true);
+    DrawTriangles();
+    return true;
+}
+
 u32 Rasterizer::TextureCube(const Pica::TexturingRegs::FullTextureConfig& texture) {
     using Face = Pica::TexturingRegs::CubeFace;
     const VideoCore::TextureCubeConfig config{

@@ -120,6 +120,9 @@ public:
 
     void ProcessCmdList(PAddr list, u32 size, bool ignore_list);
 
+    /// Execute a vertex array through the PICA shader engine.
+    void LoadVertices(bool is_indexed, bool use_attribute_buffers = false);
+
 private:
     void InitializeRegs();
 
@@ -140,8 +143,6 @@ private:
     void DrawImmediate();
 
     void DrawArrays(bool is_indexed);
-
-    void LoadVertices(bool is_indexed);
 
 public:
     union Regs {

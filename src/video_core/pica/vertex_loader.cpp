@@ -8,7 +8,8 @@
 
 namespace Pica {
 
-VertexLoader::VertexLoader(Memory::MemorySystem& memory_, const PipelineRegs& regs)
+VertexLoader::VertexLoader(Memory::MemorySystem& memory_, const PipelineRegs& regs,
+                           bool use_attribute_buffers)
     : memory{memory_} {
     const auto& attribute_config = regs.vertex_attributes;
     num_total_attributes = attribute_config.GetNumTotalAttributes();
@@ -22,6 +23,10 @@ VertexLoader::VertexLoader(Memory::MemorySystem& memory_, const PipelineRegs& re
     // Setup attribute data from loaders
     for (u32 loader = 0; loader < 12; ++loader) {
         const auto& loader_config = attribute_config.attribute_loaders[loader];
+        if (use_attribute_buffers &&
+            (loader_config.component_count == 0 || loader_config.byte_count == 0)) {
+            continue;
+        }
 
         u32 offset = 0;
 
@@ -36,6 +41,10 @@ VertexLoader::VertexLoader(Memory::MemorySystem& memory_, const PipelineRegs& re
 
             u32 attribute_index = loader_config.GetComponent(component);
             if (attribute_index < 12) {
+                // Native accelerated renderers select active buffers before fixed attributes.
+                if (use_attribute_buffers) {
+                    vertex_attribute_is_default[attribute_index] = false;
+                }
                 offset = Common::AlignUp(offset,
                                          attribute_config.GetElementSizeInBytes(attribute_index));
                 vertex_attribute_sources[attribute_index] = loader_config.data_offset + offset;

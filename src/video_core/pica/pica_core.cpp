@@ -1094,11 +1094,11 @@ void PicaCore::DrawArrays(bool is_indexed) {
     }
 }
 
-void PicaCore::LoadVertices(bool is_indexed) {
+void PicaCore::LoadVertices(bool is_indexed, bool use_attribute_buffers) {
     // Read and validate vertex information from the loaders
     const auto& pipeline = regs.internal.pipeline;
     const PAddr base_address = pipeline.vertex_attributes.GetPhysicalBaseAddress();
-    const auto loader = VertexLoader(memory, pipeline);
+    const auto loader = VertexLoader(memory, pipeline, use_attribute_buffers);
     regs.internal.rasterizer.ValidateSemantics();
 
     // Locate index buffer.

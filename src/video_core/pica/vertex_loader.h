@@ -16,7 +16,8 @@ namespace Pica {
 
 class VertexLoader {
 public:
-    explicit VertexLoader(Memory::MemorySystem& memory_, const PipelineRegs& regs);
+    explicit VertexLoader(Memory::MemorySystem& memory_, const PipelineRegs& regs,
+                          bool use_attribute_buffers = false);
     ~VertexLoader();
 
     void LoadVertex(PAddr base_address, u32 index, u32 vertex, AttributeBuffer& input,
