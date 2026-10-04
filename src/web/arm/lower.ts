@@ -1037,10 +1037,15 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         break;
       }
       case "A32BXWritePC":
+        if (block.endCpsr === undefined) throw new JitError("compile", "ARM block is missing its end location");
         store(options.layout.registers + 60, () => {
           arg(0); constant(-2); constant(-4); arg(0); constant(1).byte(0x71).byte(0x1b).byte(0x71);
         });
-        mergeFlags(0x20, () => { arg(0); constant(1).byte(0x71); constant(5).byte(0x74); });
+        // Native BX lowering takes IT/E from the block's end location and T from the branch target.
+        mergeFlags(0x0600fe20, () => {
+          constant(block.endCpsr & 0x0600fe00);
+          arg(0); constant(1).byte(0x71); constant(5).byte(0x74).byte(0x72);
+        });
         break;
       case "A32GetFpscr": load(options.layout.fpscr); break;
       case "A32SetFpscr": store(options.layout.fpscr, () => arg(0)); break;
