@@ -75,7 +75,7 @@ export interface ModuleOptions {
   locals: ValueType[];
   body: Bytes;
   table?: boolean;
-  functions?: readonly { locals: ValueType[]; body: Bytes }[];
+  functions?: readonly { signature?: FunctionType; locals: ValueType[]; body: Bytes }[];
 }
 
 /** All generated regions share the emulator heap and export one Wasm entry. */
@@ -85,6 +85,17 @@ export function regionModule(options: ModuleOptions): Uint8Array<ArrayBuffer> {
   const functions = options.functions ?? [options];
   // The region entry has type zero, including when referenced by a tail call.
   const types = [options.signature, ...imports.map((item) => item.type)];
+  const functionTypes = functions.map(definition => {
+    const signature = definition.signature;
+    if (!signature || signature === options.signature) return 0;
+    const index = types.findIndex(type => type.params.length === signature.params.length &&
+      type.results.length === signature.results.length &&
+      type.params.every((param, index) => param === signature.params[index]) &&
+      type.results.every((result, index) => result === signature.results[index]));
+    if (index >= 0) return index;
+    types.push(signature);
+    return types.length - 1;
+  });
   const typeSection = new Bytes().u32(types.length);
   for (const type of types) {
     typeSection.byte(0x60).u32(type.params.length);
@@ -104,7 +115,7 @@ export function regionModule(options: ModuleOptions): Uint8Array<ArrayBuffer> {
   }
   module.section(2, importSection);
   const declarations = new Bytes().u32(functions.length);
-  functions.forEach(() => declarations.u32(0));
+  functionTypes.forEach(index => declarations.u32(index));
   module.section(3, declarations);
   module.section(7, new Bytes().u32(1).name("run").byte(0).u32(imports.length));
   const code = new Bytes().u32(functions.length);
