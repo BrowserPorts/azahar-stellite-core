@@ -73,11 +73,6 @@ export class GraphicsDraws {
     this.checkOpen();
     const encoder = this.device.createCommandEncoder({ label: "Azahar PICA draw" });
     const temporary: (GPUTexture | GPUBuffer)[] = [];
-    const buffer = (bytes: Uint8Array<ArrayBuffer>, usage: GPUBufferUsageFlags): GPUBuffer => {
-      const resource = this.device.createBuffer({ size: bytes.byteLength, usage, mappedAtCreation: true });
-      new Uint8Array(resource.getMappedRange()).set(bytes); resource.unmap(); temporary.push(resource);
-      return resource;
-    };
     try {
       let attachment = color;
       let colorLevel = state.colorLevel;
@@ -90,19 +85,36 @@ export class GraphicsDraws {
         encoder.copyTextureToTexture({ texture: color, mipLevel: state.colorLevel }, { texture: attachment },
           [Math.min(width, originalWidth), Math.min(height, originalHeight)]);
       }
-      const vertex = buffer(draw.vertices, GPUBufferUsage.VERTEX);
-      const vs = buffer(draw.vertexUniforms, GPUBufferUsage.UNIFORM);
-      const fs = buffer(draw.fragmentUniforms, GPUBufferUsage.UNIFORM);
+      const alignment = this.device.limits.minUniformBufferOffsetAlignment;
+      const aligned = (bytes: number): number => Math.ceil(bytes / alignment) * alignment;
+      const data = this.device.createBuffer({ label: "Azahar triangle batch and uniforms",
+        size: aligned(draw.vertices.byteLength) + aligned(draw.vertexUniforms.byteLength) +
+          aligned(draw.fragmentUniforms.byteLength) + aligned(16) + 16,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.UNIFORM, mappedAtCreation: true });
+      temporary.push(data);
+      const mapped = new Uint8Array(data.getMappedRange());
+      let offset = 0;
+      const upload = (bytes: Uint8Array<ArrayBuffer>): GPUBufferBinding => {
+        const binding = { buffer: data, offset, size: bytes.byteLength };
+        mapped.set(bytes, offset);
+        offset += aligned(bytes.byteLength);
+        return binding;
+      };
+      // Uniform ranges share the vertex upload without exposing alignment padding to bindings.
+      const vertex = upload(draw.vertices);
+      const vs = upload(draw.vertexUniforms);
+      const fs = upload(draw.fragmentUniforms);
       const [vx, vy, vw, vh] = state.viewport;
-      const transform = buffer(new Uint8Array(new Float32Array([vw / width, -vh / height,
-        (2 * vx + vw) / width - 1, 1 - (2 * vy + vh) / height]).buffer), GPUBufferUsage.UNIFORM);
-      const dimensions = buffer(new Uint8Array(new Uint32Array([width, height, 0, 0]).buffer), GPUBufferUsage.UNIFORM);
+      const transform = upload(new Uint8Array(new Float32Array([vw / width, -vh / height,
+        (2 * vx + vw) / width - 1, 1 - (2 * vy + vh) / height]).buffer));
+      const dimensions = upload(new Uint8Array(new Uint32Array([width, height, 0, 0]).buffer));
+      data.unmap();
       let shadow = this.#emptyShadow;
       if (state.shadow) { shadow = this.shadows.buffer(encoder, attachment!, colorLevel); temporary.push(shadow); }
       const uniformGroup = this.device.createBindGroup({ layout: compiled.groups[0]!, entries: [
-        { binding: 1, resource: { buffer: vs } }, { binding: 2, resource: { buffer: fs } },
+        { binding: 1, resource: vs }, { binding: 2, resource: fs },
         ...this.#luts.map((lut, i) => ({ binding: i + 3, resource: { buffer: lut } })),
-        { binding: 6, resource: { buffer: transform } },
+        { binding: 6, resource: transform },
       ] });
       const textureEntries: GPUBindGroupEntry[] = [];
       for (let i = 0; i < 3; i++) {
@@ -130,7 +142,7 @@ export class GraphicsDraws {
         { binding: 1, resource: (state.normal ? this.textures.get(state.normal).texture : this.#empty).createView() },
         { binding: 2, resource: state.normal ? this.samplers.get(state.samplers[0]) : this.#utilitySampler },
         { binding: 3, resource: dest.createView() },
-        { binding: 4, resource: { buffer: dimensions } },
+        { binding: 4, resource: dimensions },
       ] });
       const count = draw.vertices.byteLength / stride;
       // Logic ops and min/max blend factors read the result of preceding primitives.
@@ -145,7 +157,7 @@ export class GraphicsDraws {
             ...(depth.format === "depth24plus-stencil8" ? { stencilLoadOp: "load", stencilStoreOp: "store" } as const : {}),
           } as GPURenderPassDepthStencilAttachment } : {}),
         });
-        pass.setPipeline(compiled.pipeline); pass.setVertexBuffer(0, vertex);
+        pass.setPipeline(compiled.pipeline); pass.setVertexBuffer(0, vertex.buffer, vertex.offset, vertex.size);
         pass.setBindGroup(0, uniformGroup); pass.setBindGroup(1, textureGroup); pass.setBindGroup(2, utilityGroup);
         pass.setScissorRect(x, y, w, h); pass.setStencilReference(state.stencilReference);
         const blendColor = state.blendColor >>> 0;

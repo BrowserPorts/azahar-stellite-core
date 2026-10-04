@@ -87,9 +87,9 @@ export class ShadowPixels {
   }
 
   restore(encoder: GPUCommandEncoder, target: GPUTexture, level: number, pixels: GPUBuffer,
-    dimensions: GPUBuffer): undefined {
+    dimensions: GPUBufferBinding): undefined {
     const group = this.device.createBindGroup({ layout: this.restorePipeline.getBindGroupLayout(0), entries: [
-      { binding: 0, resource: { buffer: pixels } }, { binding: 1, resource: { buffer: dimensions } },
+      { binding: 0, resource: { buffer: pixels } }, { binding: 1, resource: dimensions },
     ] });
     const pass = encoder.beginRenderPass({ colorAttachments: [{ view: target.createView({ dimension: "2d",
       baseMipLevel: level, mipLevelCount: 1, baseArrayLayer: 0, arrayLayerCount: 1 }), loadOp: "load", storeOp: "store" }] });
