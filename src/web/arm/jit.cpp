@@ -1007,6 +1007,7 @@ FP_ARITHMETIC(FP_HELPER_DEFINITION, 32, uint32_t)
 FP_ARITHMETIC(FP_HELPER_DEFINITION, 64, uint64_t)
 #undef FP_HELPER_DEFINITION
 // These helpers only add FPSCR exception flags; registers and processor modes are preserved.
+// With valid IR operands, only enabled FP traps can interrupt their execution.
 #define FP_HELPER_NAME(result_type, name, parameters, ...) #name " "
 constexpr char fp_status_helpers[] =
     FP_ARITHMETIC(FP_HELPER_NAME, 32, uint32_t)

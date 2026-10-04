@@ -48,7 +48,8 @@ export interface LowerOptions {
   maximumPages: number;
   /** Explicit arithmetic/peripheral helpers exported as raw Wasm functions by the core. */
   helperNames?: ReadonlySet<string>;
-  /** Native helpers that only add FPSCR exception flags; registers and processor modes are preserved. */
+  /** Native helpers preserve registers and modes, adding only FPSCR exception flags.
+   * With exception traps disabled, valid arithmetic operands cannot unwind. */
   fpStatusHelpers?: ReadonlySet<string>;
   memory?: MemoryOptions;
 }
@@ -258,9 +259,14 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       knownCpsrMode = undefined;
       knownFpscrMode = undefined;
     }
-    // Native callbacks and exception unwinding must see all ticks from prior linked blocks.
+    // Scalar FP helpers only record flags when all exception traps are disabled.
+    if (preservesRegisters && options.execution) {
+      load(options.layout.fpscr).byte(0x41).signed(0x9f00n, 32).byte(0x71).byte(0x04).byte(0x40);
+    }
+    // Callbacks and enabled FP traps must see all ticks and cached registers.
     if (options.execution) store(options.execution.pendingTicks, () => get(2), true);
     writeBackState();
+    if (preservesRegisters && options.execution) body.byte(0x0b);
     get(0); emit(); body.byte(0x10).u32(importIndex);
     if (!preservesRegisters) reloadState();
     return undefined;
