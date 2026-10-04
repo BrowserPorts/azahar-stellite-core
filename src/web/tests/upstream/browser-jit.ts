@@ -16,6 +16,7 @@ const dsp = new URL(location.href).searchParams.has("dsp");
 const regionTier = new URL(location.href).searchParams.has("region-tier");
 const filter = new URL(location.href).searchParams.get("filter");
 const seed = new URL(location.href).searchParams.get("seed");
+const sections = new URL(location.href).searchParams.getAll("section");
 const storage = new URL(location.href).searchParams.get("storage");
 if (storage !== null && storage !== "setup" && storage !== "resume") throw new Error("Invalid OPFS fixture mode");
 const fixtureUrl = new URL(dsp ? "./teakra_reference_fixtures.mjs" : storage ? `./wasmfs_opfs_${storage}.mjs` : core ? "./tests.mjs" : fuzz ? "./dynarmic_arm_fuzz_fixtures.mjs" : recordings ? "./dynarmic_vfp_recordings.mjs" :
@@ -37,5 +38,5 @@ worker.onerror = (event: ErrorEvent): undefined => {
 };
 worker.postMessage({ url: fixtureUrl.href,
   args: recordings || storage ? [] : ["--reporter", "compact", ...(filter ? [filter] : []),
-    ...(seed ? ["--rng-seed", seed] : [])],
+    ...(seed ? ["--rng-seed", seed] : []), ...sections.flatMap(section => ["--section", section])],
   dispatch, dsp, regionTier } satisfies FixtureRequest);

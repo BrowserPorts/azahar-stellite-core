@@ -66,6 +66,11 @@ if(EMSCRIPTEN)
     add_test(NAME pica_control_flow COMMAND "${NODE_EXECUTABLE}"
         "${CORE_JIT_RUNNER}" "$<TARGET_FILE:tests>"
         "[shader]" --pica-dispatch)
+    # Run the original firmware-free sections independently of the LLE sections.
+    add_test(NAME audio_hle_fixtures COMMAND "${NODE_EXECUTABLE}"
+        "${CORE_JIT_RUNNER}" "$<TARGET_FILE:tests>"
+        "Verify SourceStatus::Status::last_buffer_id*,AudioTest-BiquadFilter"
+        --section HLE)
     set(TEST_WEB_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
     file(GENERATE OUTPUT "${TEST_WEB_DIRECTORY}/browser-jit.html"
         INPUT "${PROJECT_SOURCE_DIR}/src/web/tests/upstream/browser-jit.html")
