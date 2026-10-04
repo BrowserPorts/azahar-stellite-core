@@ -108,14 +108,13 @@ worker.onmessage = (event: MessageEvent<GraphicsRequest>): undefined => {
         case "video":
           if (!presenter) throw new Error("No WebGPU presentation surface is attached");
           presenter.present(request.bytes, request.width, request.height, request.pitch);
-          await device.queue.onSubmittedWorkDone();
-          post({ type: "presented" });
+          // Retain the frame limit while later commands are submitted in queue order.
+          device.queue.onSubmittedWorkDone().then(() => post({ type: "presented" }), fail);
           break;
         case "screens":
           if (!presenter) throw new Error("No WebGPU presentation surface is attached");
           presenter.screens(request.frame, screens);
-          await device.queue.onSubmittedWorkDone();
-          post({ type: "presented" });
+          device.queue.onSubmittedWorkDone().then(() => post({ type: "presented" }), fail);
           break;
         case "finish":
           await device.queue.onSubmittedWorkDone();
