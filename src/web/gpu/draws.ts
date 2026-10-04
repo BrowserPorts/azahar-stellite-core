@@ -148,8 +148,9 @@ export class GraphicsDraws {
       // Logic ops and min/max blend factors read the result of preceding primitives.
       const step = destRead ? 3 : count;
       for (let first = 0; first < count; first += step) {
-        if (destRead) encoder.copyTextureToTexture({ texture: attachment!, mipLevel: colorLevel },
-          { texture: dest }, [width, height]);
+        // Destination blending fetches only the pixels admitted by this draw's scissor.
+        if (destRead) encoder.copyTextureToTexture({ texture: attachment!, mipLevel: colorLevel, origin: [x, y] },
+          { texture: dest, origin: [x, y] }, [w, h]);
         const pass = encoder.beginRenderPass({ colorAttachments: attachment ? [{ view: this.view(attachment, colorLevel),
           loadOp: "load", storeOp: "store" }] : [],
           ...(depth ? { depthStencilAttachment: { view: this.view(depth, state.depthLevel),
