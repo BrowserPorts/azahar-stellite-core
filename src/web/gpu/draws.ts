@@ -13,9 +13,24 @@ const equations: readonly GPUBlendOperation[] = ["add", "subtract", "reverse-sub
 
 interface DrawPipeline { pipeline: GPURenderPipeline; groups: readonly GPUBindGroupLayout[] }
 
+const pipelineStateKeys = ["cull", "flipped", "colorMask", "depthWrite", "depthCompare", "stencil",
+  "stencilCompare", "stencilFail", "stencilDepthFail", "stencilPass", "stencilReadMask", "stencilWriteMask",
+  "blend", "rgbEquation", "alphaEquation", "rgbSource", "rgbDest", "alphaSource", "alphaDest", "logicOp",
+  "texture0Type"] as const satisfies readonly (keyof NativeDrawState)[];
+
+interface PipelineSelection {
+  configuration: Uint8Array<ArrayBuffer>;
+  state: NativeDrawState;
+  colorFormat: number;
+  color: GPUTextureFormat | undefined;
+  depth: GPUTextureFormat | undefined;
+  pipeline: Promise<DrawPipeline>;
+}
+
 /** Executes native PICA triangle batches, retaining the upstream fragment generator. */
 export class GraphicsDraws {
   #pipelines = new Map<string, Promise<DrawPipeline>>();
+  #lastPipeline: PipelineSelection | undefined;
   // Views follow texture lifetimes across native handle reuse and save-state restoration.
   #views = new WeakMap<GPUTexture, Map<number | GPUTextureViewDimension | undefined, GPUTextureView>>();
   #encoder: GPUCommandEncoder | undefined;
@@ -220,20 +235,41 @@ export class GraphicsDraws {
 
   private pipeline(draw: NativeDraw, colorFormat: number, color?: GPUTextureFormat, depth?: GPUTextureFormat): Promise<DrawPipeline> {
     const s = draw.state;
-    const key = String.fromCharCode(...draw.configuration) + JSON.stringify([colorFormat, color, depth, s.cull, s.flipped,
-      s.colorMask, s.depthWrite, s.depthCompare, s.stencil, s.stencilCompare, s.stencilFail, s.stencilDepthFail,
-      s.stencilPass, s.stencilReadMask, s.stencilWriteMask, s.blend, s.rgbEquation, s.alphaEquation,
-      s.rgbSource, s.rgbDest, s.alphaSource, s.alphaDest, s.logicOp, s.texture0Type, !!s.normal, s.shadow]);
-    const cached = this.#pipelines.get(key);
-    if (cached) { this.#pipelines.delete(key); this.#pipelines.set(key, cached); return cached; }
-    // Let prior draws execute while a new native shader and pipeline are compiled.
-    this.flush();
-    const pending = this.createPipeline(draw, colorFormat, color, depth).catch(error => {
-      if (this.#pipelines.get(key) === pending) this.#pipelines.delete(key);
-      throw error;
-    });
-    if (this.#pipelines.size >= 512) this.#pipelines.delete(this.#pipelines.keys().next().value!);
-    this.#pipelines.set(key, pending); return pending;
+    const last = this.#lastPipeline;
+    // Repeated draws already occupy the newest cache entry; compare the full signature directly.
+    if (last && this.matchesPipeline(last, draw, colorFormat, color, depth)) return last.pipeline;
+    const key = String.fromCharCode(...draw.configuration) + JSON.stringify([colorFormat, color, depth,
+      ...pipelineStateKeys.map(field => s[field]), !!s.normal, s.shadow]);
+    let pending = this.#pipelines.get(key);
+    if (pending) {
+      this.#pipelines.delete(key); this.#pipelines.set(key, pending);
+    } else {
+      // Let prior draws execute while a new native shader and pipeline are compiled.
+      this.flush();
+      pending = this.createPipeline(draw, colorFormat, color, depth).catch(error => {
+        if (this.#pipelines.get(key) === pending) this.#pipelines.delete(key);
+        if (this.#lastPipeline?.pipeline === pending) this.#lastPipeline = undefined;
+        throw error;
+      });
+      if (this.#pipelines.size >= 512) this.#pipelines.delete(this.#pipelines.keys().next().value!);
+      this.#pipelines.set(key, pending);
+    }
+    // Copy only the shader bytes, so the last selection does not retain the vertex upload buffer.
+    this.#lastPipeline = { configuration: draw.configuration.slice(), state: { ...s }, colorFormat, color, depth,
+      pipeline: pending };
+    return pending;
+  }
+
+  private matchesPipeline(last: PipelineSelection, draw: NativeDraw, colorFormat: number,
+    color: GPUTextureFormat | undefined, depth: GPUTextureFormat | undefined): boolean {
+    if (last.colorFormat !== colorFormat || last.color !== color || last.depth !== depth ||
+      !!last.state.normal !== !!draw.state.normal || last.state.shadow !== draw.state.shadow ||
+      last.configuration.length !== draw.configuration.length) return false;
+    for (const field of pipelineStateKeys) if (last.state[field] !== draw.state[field]) return false;
+    for (let i = 0; i < last.configuration.length; i++) {
+      if (last.configuration[i] !== draw.configuration[i]) return false;
+    }
+    return true;
   }
 
   private async createPipeline(draw: NativeDraw, colorFormat: number, color?: GPUTextureFormat, depth?: GPUTextureFormat): Promise<DrawPipeline> {
@@ -319,7 +355,7 @@ export class GraphicsDraws {
   close(): undefined {
     if (this.#closed) return undefined;
     this.discard();
-    this.#closed = true; this.#pipelines.clear();
+    this.#closed = true; this.#pipelines.clear(); this.#lastPipeline = undefined;
     this.#views = new WeakMap();
     for (const buffer of this.#luts) buffer.destroy();
     this.#empty.destroy(); this.#emptyShadow.destroy();
