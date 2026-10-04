@@ -21,6 +21,12 @@ interface DrawUpload {
   bytes: Uint8Array<ArrayBuffer>;
 }
 
+interface DrawPass {
+  encoder: GPURenderPassEncoder;
+  color: GPUTextureView | undefined;
+  depth: GPUTextureView | undefined;
+}
+
 interface DrawPipeline {
   pipeline: GPURenderPipeline;
   groups: readonly GPUBindGroupLayout[];
@@ -50,6 +56,7 @@ export class GraphicsDraws {
   // Views follow texture lifetimes across native handle reuse and save-state restoration.
   #views = new WeakMap<GPUTexture, Map<number | GPUTextureViewDimension | undefined, GPUTextureView>>();
   #encoder: GPUCommandEncoder | undefined;
+  #pass: DrawPass | undefined;
   #temporary: (GPUTexture | GPUBuffer)[] = [];
   #drawCount = 0;
   #uploadBytes = 0;
@@ -125,6 +132,7 @@ export class GraphicsDraws {
           format: color.format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC |
             GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING });
         temporary.push(attachment); colorLevel = 0;
+        this.endPass();
         encoder.copyTextureToTexture({ texture: color, mipLevel: state.colorLevel }, { texture: attachment },
           [Math.min(width, originalWidth), Math.min(height, originalHeight)]);
       }
@@ -144,7 +152,10 @@ export class GraphicsDraws {
         (2 * vx + vw) / width - 1, 1 - (2 * vy + vh) / height]).buffer));
       const dimensions = store(new Uint8Array(new Uint32Array([width, height, 0, 0]).buffer));
       let shadow = this.#emptyShadow;
-      if (state.shadow) { shadow = this.shadows.buffer(encoder, attachment!, colorLevel); temporary.push(shadow); }
+      if (state.shadow) {
+        this.endPass();
+        shadow = this.shadows.buffer(encoder, attachment!, colorLevel); temporary.push(shadow);
+      }
       const uniformGroup = this.uniformGroup(compiled, upload.buffer);
       this.#uniformOffsets[0] = vs.offset!;
       this.#uniformOffsets[1] = fs.offset!;
@@ -155,6 +166,7 @@ export class GraphicsDraws {
       for (let i = 0; i < 3; i++) {
         let image = this.textures.get(state.textures[i]!).texture;
         if (i === 0 && (state.texture0Type === 2 || state.texture0Type === 4)) {
+          this.endPass();
           image = this.shadows.image(encoder, image); temporary.push(image);
           reusableTextures = false;
         } else if (image === color || image === depth) {
@@ -183,15 +195,12 @@ export class GraphicsDraws {
       const step = destRead ? 3 : count;
       for (let first = 0; first < count; first += step) {
         // Destination blending fetches only the pixels admitted by this draw's scissor.
-        if (destRead) encoder.copyTextureToTexture({ texture: attachment!, mipLevel: colorLevel, origin: [x, y] },
-          { texture: dest, origin: [x, y] }, [w, h]);
-        const pass = encoder.beginRenderPass({ colorAttachments: attachment ? [{ view: this.view(attachment, colorLevel),
-          loadOp: "load", storeOp: "store" }] : [],
-          ...(depth ? { depthStencilAttachment: { view: this.view(depth, state.depthLevel),
-            depthLoadOp: "load", depthStoreOp: "store",
-            ...(depth.format === "depth24plus-stencil8" ? { stencilLoadOp: "load", stencilStoreOp: "store" } as const : {}),
-          } as GPURenderPassDepthStencilAttachment } : {}),
-        });
+        if (destRead) {
+          this.endPass();
+          encoder.copyTextureToTexture({ texture: attachment!, mipLevel: colorLevel, origin: [x, y] },
+            { texture: dest, origin: [x, y] }, [w, h]);
+        }
+        const pass = this.renderPass(encoder, attachment, colorLevel, depth, state.depthLevel);
         pass.setPipeline(compiled.pipeline); pass.setVertexBuffer(0, vertex.buffer, vertex.offset, vertex.size);
         pass.setBindGroup(0, uniformGroup, this.#uniformOffsets, 0, 3);
         pass.setBindGroup(1, textureGroup);
@@ -200,8 +209,10 @@ export class GraphicsDraws {
         const blendColor = state.blendColor >>> 0;
         pass.setBlendConstant({ r: (blendColor & 255) / 255, g: ((blendColor >>> 8) & 255) / 255,
           b: ((blendColor >>> 16) & 255) / 255, a: (blendColor >>> 24) / 255 });
-        pass.draw(step, 1, first); pass.end();
+        pass.draw(step, 1, first);
       }
+      // Copies and shadow conversions use separate resource scopes, including subsequent draws.
+      if (temporary.length) this.endPass();
       if (state.shadow) this.shadows.restore(encoder, attachment!, colorLevel, shadow, dimensions);
       if (attachment && color && attachment !== color) encoder.copyTextureToTexture({ texture: attachment },
         { texture: color, mipLevel: state.colorLevel }, [Math.min(width, originalWidth), Math.min(height, originalHeight)]);
@@ -228,6 +239,7 @@ export class GraphicsDraws {
     this.#encoder = undefined; this.#temporary = [];
     this.#drawCount = 0; this.#uploadBytes = 0;
     try {
+      this.endPass();
       const commands = encoder.finish();
       // Queue order keeps earlier submissions ahead of the next upload into this buffer.
       this.device.queue.writeBuffer(upload.buffer, 0, upload.bytes.subarray(0, size));
@@ -237,10 +249,35 @@ export class GraphicsDraws {
   }
 
   private discard(): undefined {
-    this.#encoder = undefined;
+    this.#encoder = undefined; this.#pass = undefined;
     for (const resource of this.#temporary) resource.destroy();
     this.#temporary = []; this.#drawCount = 0; this.#uploadBytes = 0;
     return undefined;
+  }
+
+  private endPass(): undefined {
+    const pass = this.#pass;
+    this.#pass = undefined;
+    pass?.encoder.end();
+    return undefined;
+  }
+
+  private renderPass(encoder: GPUCommandEncoder, color: GPUTexture | undefined, colorLevel: number,
+    depth: GPUTexture | undefined, depthLevel: number): GPURenderPassEncoder {
+    const colorView = color ? this.view(color, colorLevel) : undefined;
+    const depthView = depth ? this.view(depth, depthLevel) : undefined;
+    const current = this.#pass;
+    if (current && current.color === colorView && current.depth === depthView) return current.encoder;
+    this.endPass();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: colorView ? [{ view: colorView, loadOp: "load", storeOp: "store" }] : [],
+      ...(depthView ? { depthStencilAttachment: { view: depthView,
+        depthLoadOp: "load", depthStoreOp: "store",
+        ...(depth!.format === "depth24plus-stencil8" ? { stencilLoadOp: "load", stencilStoreOp: "store" } as const : {}),
+      } as GPURenderPassDepthStencilAttachment } : {}),
+    });
+    this.#pass = { encoder: pass, color: colorView, depth: depthView };
+    return pass;
   }
 
   private uploadBuffer(size: number): DrawUpload {
@@ -425,6 +462,7 @@ export class GraphicsDraws {
   }
 
   private snapshot(encoder: GPUCommandEncoder, source: GPUTexture): GPUTexture {
+    this.endPass();
     const copy = this.device.createTexture({ size: [source.width, source.height, source.depthOrArrayLayers],
       format: source.format, mipLevelCount: source.mipLevelCount, usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING });
     for (let level = 0; level < source.mipLevelCount; level++) encoder.copyTextureToTexture(
