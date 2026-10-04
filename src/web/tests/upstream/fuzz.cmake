@@ -4,7 +4,7 @@ include(ExternalProject)
 set(UNICORN_ORACLE_TOOLCHAIN)
 set(UNICORN_ORACLE_DOWNLOAD
     GIT_REPOSITORY https://origin.cursor.com/mov/unicorn-stellite-wasm.git
-    GIT_TAG 25808cc5e80e59d5cf6a0daba3487e5d5cc21da5)
+    GIT_TAG 4336e90d772ea2554e8aa0865bb860b05b3cbb95)
 if(EMSCRIPTEN)
     set(UNICORN_ORACLE_BINARY "${CMAKE_CURRENT_BINARY_DIR}/unicorn-wasm-oracle")
     set(UNICORN_ORACLE_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/unicorn-wasm-source")
