@@ -75,6 +75,8 @@ async function execute(request: GraphicsCommand): Promise<undefined> {
     if (failure) throw new Error(failure);
     if (request.type === "initialize") return await initialize(request.fence);
     if (!device || !shaders || !textures || !samplers || !draws || !screens || !control) throw new Error("WebGPU is unavailable");
+    // Submit prior draws before a queue write, resource mutation, presentation, or fence.
+    if (request.type !== "draw") draws.flush();
     switch (request.type) {
       case "draw": await draws.draw(request.draw); break;
       case "lookup-table": draws.lookupTable(request.table, request.offset, request.bytes); break;
@@ -154,6 +156,7 @@ worker.onmessage = (event: MessageEvent<GraphicsRequest>): undefined => {
   const requests = event.data.commands;
   commands = commands.then(async () => {
     for (const request of requests) await execute(request);
+    if (!failure && !closed) draws?.flush();
     return undefined;
   }).catch(fail);
   return undefined;

@@ -16,6 +16,10 @@ interface DrawPipeline { pipeline: GPURenderPipeline; groups: readonly GPUBindGr
 /** Executes native PICA triangle batches, retaining the upstream fragment generator. */
 export class GraphicsDraws {
   #pipelines = new Map<string, Promise<DrawPipeline>>();
+  #encoder: GPUCommandEncoder | undefined;
+  #temporary: (GPUTexture | GPUBuffer)[] = [];
+  #drawCount = 0;
+  #uploadBytes = 0;
   #luts: readonly GPUBuffer[];
   #empty: GPUTexture;
   #emptyShadow: GPUBuffer;
@@ -71,7 +75,7 @@ export class GraphicsDraws {
     }
     const compiled = await this.pipeline(draw, colorFormat, color?.format, depth?.format);
     this.checkOpen();
-    const encoder = this.device.createCommandEncoder({ label: "Azahar PICA draw" });
+    const encoder = this.#encoder ??= this.device.createCommandEncoder({ label: "Azahar PICA draws" });
     const temporary: (GPUTexture | GPUBuffer)[] = [];
     try {
       let attachment = color;
@@ -169,8 +173,35 @@ export class GraphicsDraws {
       if (state.shadow) this.shadows.restore(encoder, attachment!, colorLevel, shadow, dimensions);
       if (attachment && color && attachment !== color) encoder.copyTextureToTexture({ texture: attachment },
         { texture: color, mipLevel: state.colorLevel }, [Math.min(width, originalWidth), Math.min(height, originalHeight)]);
-      this.device.queue.submit([encoder.finish()]);
+      // Keep every resource alive until the encoder has been submitted.
+      this.#temporary.push(...temporary);
+      temporary.length = 0;
+      this.#uploadBytes += data.size;
+      if (++this.#drawCount >= 16 || this.#uploadBytes >= 1024 * 1024) this.flush();
+    } catch (error) {
+      // A failed draw can leave an unfinished pass in the shared encoder.
+      this.discard();
+      throw error;
     } finally { for (const resource of temporary) resource.destroy(); }
+    return undefined;
+  }
+
+  flush(): undefined {
+    this.checkOpen();
+    const encoder = this.#encoder;
+    if (!encoder) return undefined;
+    const temporary = this.#temporary;
+    this.#encoder = undefined; this.#temporary = [];
+    this.#drawCount = 0; this.#uploadBytes = 0;
+    try { this.device.queue.submit([encoder.finish()]); }
+    finally { for (const resource of temporary) resource.destroy(); }
+    return undefined;
+  }
+
+  private discard(): undefined {
+    this.#encoder = undefined;
+    for (const resource of this.#temporary) resource.destroy();
+    this.#temporary = []; this.#drawCount = 0; this.#uploadBytes = 0;
     return undefined;
   }
 
@@ -193,6 +224,8 @@ export class GraphicsDraws {
       s.rgbSource, s.rgbDest, s.alphaSource, s.alphaDest, s.logicOp, s.texture0Type, !!s.normal, s.shadow]);
     const cached = this.#pipelines.get(key);
     if (cached) { this.#pipelines.delete(key); this.#pipelines.set(key, cached); return cached; }
+    // Let prior draws execute while a new native shader and pipeline are compiled.
+    this.flush();
     const pending = this.createPipeline(draw, colorFormat, color, depth).catch(error => {
       if (this.#pipelines.get(key) === pending) this.#pipelines.delete(key);
       throw error;
@@ -274,6 +307,7 @@ export class GraphicsDraws {
 
   close(): undefined {
     if (this.#closed) return undefined;
+    this.discard();
     this.#closed = true; this.#pipelines.clear();
     for (const buffer of this.#luts) buffer.destroy();
     this.#empty.destroy(); this.#emptyShadow.destroy();
