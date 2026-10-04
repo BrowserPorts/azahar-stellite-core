@@ -213,7 +213,8 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
     return undefined;
   };
   const bit = (mask: number): Bytes => load(options.layout.cpsr).byte(0x41)
-    .signed(BigInt(mask), 32).byte(0x71).byte(0x45).byte(0x45);
+    .signed(BigInt(mask), 32).byte(0x71);
+  let conditionFlags: number | undefined;
   const condition = (code: number): undefined => {
     switch (code) {
       case 0: bit(0x40000000); break;
@@ -224,12 +225,22 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       case 5: bit(0x80000000).byte(0x45); break;
       case 6: bit(0x10000000); break;
       case 7: bit(0x10000000).byte(0x45); break;
-      case 8: bit(0x20000000); bit(0x40000000).byte(0x45).byte(0x71); break;
-      case 9: bit(0x20000000).byte(0x45); bit(0x40000000).byte(0x72); break;
-      case 10: bit(0x80000000); bit(0x10000000).byte(0x46); break;
-      case 11: bit(0x80000000); bit(0x10000000).byte(0x47); break;
-      case 12: bit(0x40000000).byte(0x45); bit(0x80000000); bit(0x10000000).byte(0x46).byte(0x71); break;
-      case 13: bit(0x40000000); bit(0x80000000); bit(0x10000000).byte(0x47).byte(0x72); break;
+      case 8: case 9:
+        bit(0x60000000); constant(0x20000000).byte(code === 8 ? 0x46 : 0x47); break;
+      case 10: case 11: case 12: case 13:
+        if (conditionFlags === undefined) {
+          conditionFlags = locals.length + parameterCount;
+          locals.push("i32");
+        }
+        // Branches and selects accept any nonzero value. Align V with N to compare their bits.
+        load(options.layout.cpsr).byte(0x22).u32(conditionFlags);
+        get(conditionFlags); constant(3).byte(0x74).byte(0x73);
+        constant(0x80000000).byte(0x71);
+        if (code >= 12) {
+          get(conditionFlags); constant(0x40000000).byte(0x71).byte(0x72);
+        }
+        if (code === 10 || code === 12) body.byte(0x45);
+        break;
       case 14: constant(1); break;
       case 15: constant(0); break;
       default: throw new JitError("compile", "Invalid ARM condition");
@@ -1148,7 +1159,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
         load(options.layout.fpscr); constant(0x0fffffff).byte(0x71);
         arg(0); constant(0xf0000000).byte(0x71).byte(0x72);
       }); break;
-      case "A32GetCFlag": bit(0x20000000); break;
+      case "A32GetCFlag": bit(0x20000000).byte(0x45).byte(0x45); break;
       case "A32SetGEFlagsCompressed": mergeFlags(0x000f0000, () => arg(0)); break;
       case "A32SetGEFlags": mergeFlags(0x000f0000, () => {
         for (let flag = 0; flag < 4; ++flag) {
