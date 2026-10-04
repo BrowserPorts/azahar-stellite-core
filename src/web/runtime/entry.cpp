@@ -11,6 +11,8 @@
 #include "audio_core/audio_types.h"
 #include "citra_libretro/citra_libretro.h"
 #include "citra_libretro/core_settings.h"
+#include "common/logging/backend.h"
+#include "common/logging/filter.h"
 #include "core/core.h"
 #include "core/loader/loader.h"
 #include "libretro.h"
@@ -40,9 +42,9 @@ void Log(retro_log_level level, const char* format, ...) {
     std::vsnprintf(message.data(), message.size(), format, args);
     va_end(args);
     if (level >= RETRO_LOG_WARN) {
-        emscripten_console_warn(message.data());
+        emscripten_err(message.data());
     } else {
-        emscripten_console_log(message.data());
+        emscripten_out(message.data());
     }
 }
 
@@ -123,6 +125,7 @@ extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_initialize() {
     retro_set_input_poll(PollInput);
     retro_set_input_state(ReadInput);
     retro_init();
+    Common::Log::SetGlobalFilter(Common::Log::Filter{Common::Log::Level::Info});
     // Resolve the same user paths used at game load before accepting file imports.
     LibRetro::ParseCoreOptions();
     initialized = true;
