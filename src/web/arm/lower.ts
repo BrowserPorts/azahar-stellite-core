@@ -247,12 +247,9 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     if (destination?.cell && destination.fpscr !== undefined) {
       nextBudget(destination.cell, 0n);
       get(1).byte(0x42).signed(0n, 64).byte(0x55).byte(0x04).byte(0x40);
-      // A callback within the block may change its translation mode or incoming link.
-      load(options.layout.registers + 60); constant(destination.pc).byte(0x46);
-      load(options.layout.cpsr); constant(0x0600fe20).byte(0x71);
-      constant(destination.cpsr & 0x0600fe20).byte(0x46).byte(0x71);
+      // Static terminals just wrote PC and CPSR mode bits; FPSCR can change within the block.
       load(options.layout.fpscr); constant(0x07f70000).byte(0x71);
-      constant(destination.fpscr & 0x07f70000).byte(0x46).byte(0x71);
+      constant(destination.fpscr & 0x07f70000).byte(0x46);
       constant(destination.cell).byte(0x28).u32(2).u32(0).byte(0x22).u32(linkSlot);
       body.byte(0x45).byte(0x45).byte(0x71).byte(0x04).byte(0x40);
       tailCall(); body.byte(0x0b).byte(0x0b);
