@@ -249,8 +249,8 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       if (cell) constant(cell).byte(0x28).u32(2).u32(execution.minimumBudget).byte(0xad);
       else body.byte(0x42).signed(minimum, 64);
       // A smaller budget returns to native dispatch without discarding the unused ticks.
+      // Published slots have a positive minimum; an unpublished cell cannot tail-call.
       body.byte(0x5a);
-      get(1).byte(0x42).signed(0n, 64).byte(0x55).byte(0x71);
       return undefined;
     };
     const tailCall = (): undefined => {
@@ -502,8 +502,11 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     }
     return undefined;
   };
-  get(1).byte(0x42).signed(0n, 64).byte(0x57).byte(0x04).byte(0x40);
-  get(1).byte(0x0f).byte(0x0b);
+  // Native dispatch and Wasm links admit only positive budgets.
+  if (!options.execution) {
+    get(1).byte(0x42).signed(0n, 64).byte(0x57).byte(0x04).byte(0x40);
+    get(1).byte(0x0f).byte(0x0b);
+  }
   if (block.condition !== 14) {
     if (block.conditionFailedPc === undefined || block.conditionFailedCpsr === undefined ||
       block.conditionFailedCycles === undefined) {
