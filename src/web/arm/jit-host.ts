@@ -42,7 +42,7 @@ export class ArmJitHost {
       extendedRegisters === undefined || fpscr === undefined || checkBit === undefined) {
       throw new Error("Invalid ARM JIT state layout");
     }
-    if (layout.length === 6 ? executionAbi !== 3 || !block.sourceCell : Boolean(block.sourceCell)) {
+    if (layout.length === 6 ? executionAbi !== 4 || !block.sourceCell : Boolean(block.sourceCell)) {
       throw new Error("ARM execution ABI does not match the Wasm compiler");
     }
     const bytes = lowerArm(block, {

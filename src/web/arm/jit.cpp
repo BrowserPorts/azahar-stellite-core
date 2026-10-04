@@ -81,9 +81,19 @@ struct alignas(8) ArmState {
     std::atomic<uint32_t>* halt{};
     uint64_t* clock{};
     uint64_t next_budget{};
-    bool budget_valid = false;
+    uint64_t pending_ticks{};
     FastDispatchEntry* fast_dispatch{};
 };
+
+void FlushTicks(ArmState* state) {
+    const auto ticks = std::exchange(state->pending_ticks, 0);
+    state->config->callbacks->AddTicks(ticks);
+}
+
+void RefreshBudget(ArmState* state) {
+    state->next_budget = std::min<uint64_t>(state->config->callbacks->GetTicksRemaining(),
+                                          std::numeric_limits<int64_t>::max());
+}
 
 EM_JS(uint32_t, CompileArmRegion, (const char* json, const uint32_t* layout, const uint32_t* memory_config, uint32_t* bytes), {
     try {
@@ -495,25 +505,20 @@ extern "C" EMSCRIPTEN_KEEPALIVE uint32_t WasmCheckHalt(ArmState* state) {
 extern "C" EMSCRIPTEN_KEEPALIVE void WasmAddTicks(ArmState* state, uint64_t cycles,
                                                 LinkCell* source) {
     source->used = ++*state->clock;
-    state->budget_valid = false;
+    state->pending_ticks += cycles;
+    state->next_budget = cycles < state->next_budget ? state->next_budget - cycles : 0;
 #ifdef AZAHAR_ARM_JIT_STATISTICS
     completed_blocks.fetch_add(1, std::memory_order_relaxed);
 #endif
-    state->config->callbacks->AddTicks(cycles);
 }
 extern "C" EMSCRIPTEN_KEEPALIVE int64_t WasmNextBudget(ArmState* state, uint64_t minimum) {
-    state->next_budget = state->halt->load() ? 0 :
-        std::min<uint64_t>(state->config->callbacks->GetTicksRemaining(),
-                           std::numeric_limits<int64_t>::max());
     if (state->halt->load()) state->next_budget = 0;
-    state->budget_valid = true;
     return state->next_budget >= minimum ? state->next_budget : 0;
 }
 extern "C" EMSCRIPTEN_KEEPALIVE int64_t WasmFinishBlock(ArmState* state, uint64_t cycles,
                                                       LinkCell* source, LinkCell* destination,
                                                       uint64_t minimum) {
     WasmAddTicks(state, cycles, source);
-    // Read the destination bound after tick callbacks have updated the cache.
     return WasmNextBudget(state, destination ? destination->minimum_budget : minimum);
 }
 extern "C" EMSCRIPTEN_KEEPALIVE uint32_t WasmFastDispatch(ArmState* state, uint64_t budget) {
@@ -617,10 +622,14 @@ EXCLUSIVE_MEMORY(32, uint32_t, uint32_t)
 EXCLUSIVE_MEMORY(64, uint64_t, uint64_t)
 #undef EXCLUSIVE_MEMORY
 EMSCRIPTEN_KEEPALIVE void A32CallSupervisor(ArmState* state, uint32_t immediate) {
+    FlushTicks(state);
     state->config->callbacks->CallSVC(immediate);
+    RefreshBudget(state);
 }
 EMSCRIPTEN_KEEPALIVE void A32ExceptionRaised(ArmState* state, uint32_t pc, uint64_t exception) {
+    FlushTicks(state);
     state->config->callbacks->ExceptionRaised(pc, static_cast<Dynarmic::A32::Exception>(exception));
+    RefreshBudget(state);
 }
 EMSCRIPTEN_KEEPALIVE void A32InstructionSynchronizationBarrier(ArmState* state) {
     if (state->config->hook_isb) state->config->callbacks->InstructionSynchronizationBarrierRaised();
@@ -1126,7 +1135,7 @@ struct Jit::Impl {
             }, config.always_little_endian, reinterpret_cast<uintptr_t>(&source), link,
                 config.HasOptimization(OptimizationFlag::FastDispatch) && !step);
             const uint32_t layout[] = {offsetof(ArmState, registers), offsetof(ArmState, cpsr),
-                offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit), 3};
+                offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit), 4};
             const uint32_t memory_config[] = {static_cast<uint32_t>(reinterpret_cast<uintptr_t>(config.page_table)),
                 static_cast<uint32_t>(config.fastmem_pointer.value_or(0)), config.fastmem_pointer.has_value(),
                 static_cast<uint32_t>(config.page_table_pointer_mask_bits), config.absolute_offset_page_table,
@@ -1169,26 +1178,27 @@ struct Jit::Impl {
         if (executing) throw std::logic_error("Recursive ARM JIT execution");
         halt.fetch_and(~static_cast<uint32_t>(HaltReason::CacheInvalidation));
         executing = true;
-        state.budget_valid = false;
+        state.pending_ticks = 0;
         try {
+            if (step) state.next_budget = 1;
+            else RefreshBudget(&state);
             do {
                 if (halt.load()) break;
-                const uint64_t budget = state.budget_valid ? state.next_budget :
-                    config.callbacks->GetTicksRemaining();
-                state.budget_valid = false;
+                const uint64_t budget = state.next_budget;
                 if (!budget) break;
                 const auto limit = step ? 1u : uint32_t(std::min<uint64_t>(budget, 32));
                 const auto entry = GetEntry(limit, step);
-                const auto bounded_budget = std::min<uint64_t>(budget, std::numeric_limits<int64_t>::max());
 #ifdef AZAHAR_ARM_JIT_STATISTICS
                 native_dispatches.fetch_add(1, std::memory_order_relaxed);
 #endif
-                entry(&state, bounded_budget);
+                entry(&state, budget);
                 ReleaseRetired();
             } while (!step);
+            FlushTicks(&state);
         } catch (...) {
             executing = false;
             ReleaseRetired();
+            if (state.pending_ticks) FlushTicks(&state);
             throw;
         }
         executing = false;

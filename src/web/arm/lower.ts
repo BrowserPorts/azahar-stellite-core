@@ -176,7 +176,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     if (destination?.cell && destination.fpscr !== undefined) {
       nextBudget(destination.cell, 0n);
       get(1).byte(0x42).signed(0n, 64).byte(0x55).byte(0x04).byte(0x40);
-      // Tick callbacks may change the translation mode or invalidate an incoming link.
+      // A callback within the block may change its translation mode or incoming link.
       load(options.layout.registers + 60); constant(destination.pc).byte(0x46);
       load(options.layout.cpsr); constant(0x0600fe20).byte(0x71);
       constant(destination.cpsr & 0x0600fe20).byte(0x46).byte(0x71);
