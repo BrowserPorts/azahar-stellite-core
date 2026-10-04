@@ -96,7 +96,7 @@ public:
         }
 
         auto str = FormatLogMessage(entry).append(1, '\n');
-        callback(log_level, str.c_str());
+        callback(log_level, "%s", str.c_str());
     }
 
     void Flush() override {}
