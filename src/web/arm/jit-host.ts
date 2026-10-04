@@ -11,6 +11,7 @@ export interface ArmExecutionStatistics {
   /** Completed blocks beyond native dispatches, including static and indirect Wasm links. */
   linkedBlocks: number;
   budgetReuses: number;
+  /** Native and emitted Wasm dispatch-cache hits. */
   fastDispatchHits: number;
 }
 

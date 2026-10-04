@@ -22,7 +22,7 @@ process.on("exit", () => {
   const reuses = budgetReuses?.();
   if (reuses) console.log(`ARM JIT: ${reuses} cached regions reused with a smaller tick budget`);
   const fast = fastDispatchHits?.();
-  if (fast) console.log(`ARM JIT: ${fast} blocks entered through the Wasm fast dispatcher`);
+  if (fast) console.log(`ARM JIT: ${fast} native and emitted Wasm dispatch-cache hits`);
   const stats = armJit.takeStatistics();
   if (stats.compiledBlocks) console.log(`ARM JIT: ${stats.compiledBlocks} regions, ${stats.generatedBytes} Wasm bytes, ${stats.compileMs.toFixed(2)} ms compilation`);
 });

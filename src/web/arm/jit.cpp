@@ -986,6 +986,8 @@ struct Jit::Impl {
     std::map<RegionKey, LinkCell> links;
     std::vector<Region> retired;
     std::array<FastDispatchEntry, fast_dispatch_size> fast_dispatch{};
+    // Native entry selection also checks the requested translation limit.
+    std::array<uint32_t, fast_dispatch_size> fast_dispatch_limits{};
     uint64_t generated_bytes = 0;
     uint64_t clock = 0;
     bool executing = false;
@@ -1050,18 +1052,33 @@ struct Jit::Impl {
             destination.slot = reinterpret_cast<uintptr_t>(region.entry);
         }
         if (config.HasOptimization(OptimizationFlag::FastDispatch)) {
-            fast_dispatch[FastDispatchIndex(location)] = {
+            const auto index = FastDispatchIndex(location);
+            fast_dispatch[index] = {
                 location, destination.slot, destination.minimum_budget};
+            fast_dispatch_limits[index] = destination.maximum_instructions;
         }
     }
     void Clear() {
         while (!regions.empty()) Retire(regions.begin());
         fast_dispatch.fill({});
+        fast_dispatch_limits.fill(0);
         if (!executing) ReleaseRetired();
     }
     Entry GetEntry(uint32_t limit, bool step) {
         const LocationDescriptor location(state.registers[15], PSR{state.cpsr}, FPSCR{state.fpscr}, step);
         const auto key = std::pair{location.UniqueHash(), limit};
+        if (!step && config.HasOptimization(OptimizationFlag::FastDispatch)) {
+            const auto index = FastDispatchIndex(key.first);
+            const auto& fast = fast_dispatch[index];
+            if (fast.location == key.first && fast.slot && fast.minimum_budget <= limit &&
+                fast_dispatch_limits[index] >= limit) {
+#ifdef AZAHAR_ARM_JIT_STATISTICS
+                fast_dispatch_hits.fetch_add(1, std::memory_order_relaxed);
+#endif
+                // Emitted code records use, and retirement disconnects this slot.
+                return reinterpret_cast<Entry>(fast.slot);
+            }
+        }
         auto cached = regions.end();
         const auto first = regions.lower_bound(key);
         if (first != regions.end() && first->first == key) {
