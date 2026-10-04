@@ -68,14 +68,14 @@
       "configurePreset": "web-dsp-jit",
       "filter": { "include": { "name": "^(teakra_reference_fixtures|tests)$" } },
       "output": { "outputOnFailure": true },
-      "execution": { "noTestsAction": "error" }
+      "execution": { "noTestsAction": "error", "timeout": 1500 }
     },
     {
       "name": "web-dsp-jit-hot",
       "configurePreset": "web-dsp-jit-hot",
       "filter": { "include": { "name": "^(teakra_reference_fixtures|tests)$" } },
       "output": { "outputOnFailure": true },
-      "execution": { "noTestsAction": "error" }
+      "execution": { "noTestsAction": "error", "timeout": 1500 }
     }
   ]
 }
