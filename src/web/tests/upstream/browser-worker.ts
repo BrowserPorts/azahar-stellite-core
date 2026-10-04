@@ -10,6 +10,7 @@ export interface FixtureRequest {
   dispatch: boolean;
   dsp?: boolean;
   regionTier?: boolean;
+  firmware?: { name: string; data: Uint8Array }[];
 }
 export type FixtureReply = { line: string } | { exit: number };
 
@@ -42,8 +43,18 @@ worker.onmessage = async (event: MessageEvent<FixtureRequest>): Promise<undefine
       azaharJitHost: armJit,
       azaharPicaJitHost: new PicaJitHost(event.data.dispatch),
       arguments: event.data.args,
-      preRun: [(module: { _azahar_arm_jit_linked_blocks?: () => bigint }): undefined => {
+      preRun: [(module: { _azahar_arm_jit_linked_blocks?: () => bigint;
+        FS: { createPath(parent: string, path: string, canRead: boolean, canWrite: boolean): string;
+          createDataFile(parent: string, name: string, data: Uint8Array, canRead: boolean, canWrite: boolean): undefined }
+      }): undefined => {
         linkedBlocks = module._azahar_arm_jit_linked_blocks;
+        if (event.data.firmware?.length) {
+          module.FS.createPath("/", "user/sdmc/3ds", true, true);
+          for (const { name, data } of event.data.firmware) {
+            module.FS.createDataFile("/user/sdmc/3ds", name, data, true, false);
+            append(`DSP firmware: ${name}, ${data.byteLength} bytes`);
+          }
+        }
         return undefined;
       }],
       print: append,

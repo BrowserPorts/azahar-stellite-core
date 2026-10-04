@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ArmJitHost } from "../../arm/jit-host";
 import { lowerArm, lowerArmRegion } from "../../arm/lower";
@@ -14,6 +15,9 @@ const dispatch = args.includes("--pica-dispatch");
 const regionTier = args.includes("--arm-region-tier");
 const replayPath = process.env.DYNARMIC_THUMB_IT_REPLAY;
 const replay = replayPath ? await readFile(replayPath) : undefined;
+const firmwareDirectory = process.env.AZAHAR_TEST_DSP_DIR;
+const firmware = firmwareDirectory ? await Promise.all(["dspfirm.cdc", "dspaudio.cdc"].map(async name =>
+  ({ name, data: await readFile(join(firmwareDirectory, name)) }))) : [];
 let linkedBlocks: (() => bigint) | undefined;
 let budgetReuses: (() => bigint) | undefined;
 let fastDispatchHits: (() => bigint) | undefined;
@@ -33,13 +37,22 @@ process.on("exit", () => {
 });
 await createModule({ arguments: args.filter((arg) => arg !== "--pica-dispatch" && arg !== "--arm-region-tier"),
   azaharJitHost: armJit, azaharPicaJitHost: new PicaJitHost(dispatch),
-  preRun: [(module: { FS: { writeFile(path: string, data: Uint8Array): undefined },
+  preRun: [(module: { FS: { writeFile(path: string, data: Uint8Array): undefined;
+    createPath(parent: string, path: string, canRead: boolean, canWrite: boolean): string;
+    createDataFile(parent: string, name: string, data: Uint8Array, canRead: boolean, canWrite: boolean): undefined },
     ENV: Record<string, string>; _azahar_arm_jit_linked_blocks?: () => bigint;
     _azahar_arm_jit_budget_reuses?: () => bigint;
     _azahar_arm_jit_fast_dispatch_hits?: () => bigint }) => {
     linkedBlocks = module._azahar_arm_jit_linked_blocks;
     budgetReuses = module._azahar_arm_jit_budget_reuses;
     fastDispatchHits = module._azahar_arm_jit_fast_dispatch_hits;
+    if (firmware.length) {
+      module.FS.createPath("/", "user/sdmc/3ds", true, true);
+      for (const { name, data } of firmware) {
+        module.FS.createDataFile("/user/sdmc/3ds", name, data, true, false);
+        console.log(`DSP firmware: ${name}, ${data.byteLength} bytes`);
+      }
+    }
     if (replay) {
       module.FS.writeFile("/thumb-it.case", replay);
       module.ENV.DYNARMIC_THUMB_IT_REPLAY = "/thumb-it.case";
