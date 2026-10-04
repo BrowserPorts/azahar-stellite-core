@@ -201,11 +201,9 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
   };
   const chargeTicks = (cycles: number): undefined => {
     const execution = options.execution!;
-    load(execution.clock); set(clockPointer);
-    get(clockPointer); get(clockPointer).byte(0x29).u32(3).u32(0);
-    body.byte(0x42).signed(1n, 64).byte(0x7c).byte(0x22).u32(blockClock);
-    body.byte(0x37).u32(3).u32(0);
-    constant(block.sourceCell!); get(blockClock);
+    // Size-based eviction runs between native entries; linked blocks share their timestamp.
+    constant(block.sourceCell!);
+    load(execution.clock).byte(0x29).u32(3).u32(0);
     body.byte(0x37).u32(3).u32(execution.sourceUsed);
     store(execution.pendingTicks, () => {
       load(execution.pendingTicks, true);

@@ -1095,7 +1095,7 @@ struct Jit::Impl {
 #ifdef AZAHAR_ARM_JIT_STATISTICS
             if (cached->first != key) budget_reuses.fetch_add(1, std::memory_order_relaxed);
 #endif
-            cached->second.source->used = ++clock;
+            cached->second.source->used = clock;
             Publish(key.first, cached->second);
             return cached->second.entry;
         }
@@ -1169,7 +1169,7 @@ struct Jit::Impl {
             region->second.links = std::move(references);
             generated_bytes += bytes;
             source.slot = slot;
-            source.used = ++clock;
+            source.used = clock;
             Publish(key.first, region->second);
             return entry;
         } catch (...) {
@@ -1191,6 +1191,8 @@ struct Jit::Impl {
                 const uint64_t budget = state.next_budget;
                 if (!budget) break;
                 const auto limit = step ? 1u : uint32_t(std::min<uint64_t>(budget, 32));
+                // All blocks reached by this entry share the same cache age.
+                ++clock;
                 const auto entry = GetEntry(limit, step);
 #ifdef AZAHAR_ARM_JIT_STATISTICS
                 native_dispatches.fetch_add(1, std::memory_order_relaxed);
