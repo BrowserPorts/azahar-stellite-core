@@ -211,7 +211,7 @@ vec4 secondary_fragment_color = vec4(0.0);
             const u32 maximum = depth_bits == 16 ? 65535 : 16777215;
             out += fmt::format("gl_FragDepth = floor(clamp(depth, 0.0, 1.0) * {0}.0) / {0}.0;\n",
                                maximum);
-        } else {
+        } else if (bindings != BindingLayout::WebGPU) {
             out += "gl_FragDepth = depth;\n";
         }
         // Round the final fragment color to maintain the PICA's 8 bits of precision
