@@ -43,11 +43,23 @@ function wasmType(type: string): ValueType {
 
 export interface LowerOptions {
   layout: ArmLayout;
+  execution?: ArmExecutionLayout;
   shared: boolean;
   maximumPages: number;
   /** Explicit arithmetic/peripheral helpers exported as raw Wasm functions by the core. */
   helperNames?: ReadonlySet<string>;
   memory?: MemoryOptions;
+}
+
+export interface ArmExecutionLayout {
+  halt: number;
+  clock: number;
+  budget: number;
+  pendingTicks: number;
+  sourceUsed: number;
+  minimumBudget: number;
+  /** Absolute counter address, or zero when execution counting is disabled. */
+  completedBlocks: number;
 }
 
 export interface MemoryOptions {
@@ -60,6 +72,9 @@ export interface MemoryOptions {
 }
 
 export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<ArrayBuffer> {
+  if (Boolean(block.sourceCell) !== Boolean(options.execution)) {
+    throw new JitError("compile", "ARM execution layout does not match the region");
+  }
   const body = new Bytes();
   const imports: FunctionImport[] = [];
   const hasBxWritePc = block.nodes.some((node) => node.op === "A32BXWritePC");
@@ -91,7 +106,9 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     if (block.nodes.some((node) => /^VectorRoundingShiftLeft(S|U)(8|16)$/.test(node.op))) locals.push("v128");
   }
   const linkSlot = locals.length + 2;
-  if (block.sourceCell) locals.push("i32");
+  const clockPointer = linkSlot + 1;
+  const blockClock = linkSlot + 2;
+  if (block.sourceCell) locals.push("i32", "i32", "i64");
   const constant = (value: number): Bytes => body.byte(0x41).signed(BigInt(value), 32);
   const get = (index: number): Bytes => body.byte(0x20).u32(index);
   const set = (index: number): Bytes => body.byte(0x21).u32(index);
@@ -154,18 +171,60 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     return undefined;
   };
   const consume = (cycles: number): Bytes => get(1).byte(0x42).signed(BigInt(cycles), 64).byte(0x7d);
+  const checkHalt = (): undefined => {
+    if (options.execution) {
+      load(options.execution.halt);
+      if (options.shared) body.byte(0xfe).u32(0x10).u32(2).u32(0);
+      else body.byte(0x28).u32(2).u32(0);
+    } else helper("WasmCheckHalt", [], ["i32"], () => undefined);
+    return undefined;
+  };
+  const chargeTicks = (cycles: number): undefined => {
+    const execution = options.execution!;
+    load(execution.clock); set(clockPointer);
+    get(clockPointer); get(clockPointer).byte(0x29).u32(3).u32(0);
+    body.byte(0x42).signed(1n, 64).byte(0x7c).byte(0x22).u32(blockClock);
+    body.byte(0x37).u32(3).u32(0);
+    constant(block.sourceCell!); get(blockClock);
+    body.byte(0x37).u32(3).u32(execution.sourceUsed);
+    store(execution.pendingTicks, () => {
+      load(execution.pendingTicks, true);
+      body.byte(0x42).signed(BigInt(cycles), 64).byte(0x7c);
+    }, true);
+    // Native callbacks can refresh the budget while the block is running.
+    load(execution.budget, true); set(1);
+    store(execution.budget, () => {
+      get(1).byte(0x42).signed(BigInt(cycles), 64).byte(0x56).byte(0x04).byte(0x7e);
+      consume(cycles).byte(0x05).byte(0x42).signed(0n, 64).byte(0x0b).byte(0x22).u32(1);
+    }, true);
+    if (execution.completedBlocks) {
+      constant(execution.completedBlocks);
+      if (options.shared) {
+        body.byte(0x42).signed(1n, 64).byte(0xfe).u32(0x1f).u32(3).u32(0).byte(0x1a);
+      } else {
+        constant(execution.completedBlocks).byte(0x29).u32(3).u32(0);
+        body.byte(0x42).signed(1n, 64).byte(0x7c).byte(0x37).u32(3).u32(0);
+      }
+    }
+    return undefined;
+  };
   const finishBlock = (cycles: number, destination?: Extract<Terminal, { kind: "link" }>,
     fastDispatch = false): undefined => {
     if (!block.sourceCell) {
       consume(cycles).byte(0x0f);
       return undefined;
     }
+    chargeTicks(cycles);
     const nextBudget = (cell: number, minimum: bigint): undefined => {
-      helper("WasmFinishBlock", ["i64", "i32", "i32", "i64"], ["i64"], () => {
-        body.byte(0x42).signed(BigInt(cycles), 64); constant(block.sourceCell!);
-        constant(cell); body.byte(0x42).signed(minimum, 64);
-      });
-      set(1);
+      const execution = options.execution!;
+      checkHalt(); body.byte(0x04).byte(0x40);
+      store(execution.budget, () => body.byte(0x42).signed(0n, 64), true);
+      body.byte(0x42).signed(0n, 64); set(1); body.byte(0x0b);
+      get(1);
+      if (cell) constant(cell).byte(0x28).u32(2).u32(execution.minimumBudget).byte(0xad);
+      else body.byte(0x42).signed(minimum, 64);
+      body.byte(0x54).byte(0x04).byte(0x40);
+      body.byte(0x42).signed(0n, 64); set(1); body.byte(0x0b);
       return undefined;
     };
     const tailCall = (): undefined => {
@@ -192,10 +251,6 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       set(linkSlot);
       get(linkSlot).byte(0x04).byte(0x40);
       tailCall(); body.byte(0x0b).byte(0x0b);
-    } else {
-      helper("WasmAddTicks", ["i64", "i32"], [], () => {
-        body.byte(0x42).signed(BigInt(cycles), 64); constant(block.sourceCell!);
-      });
     }
     body.byte(0x42).signed(0n, 64).byte(0x0f);
     return undefined;
@@ -380,7 +435,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
         terminal(term.then); body.byte(0x05); terminal(term.else); body.byte(0x0b);
         break;
       case "check-halt":
-        helper("WasmCheckHalt", [], ["i32"], () => undefined);
+        checkHalt();
         body.byte(0x45).byte(0x04).byte(0x40);
         terminal(term.else); body.byte(0x0b);
         finishBlock(block.cycles);

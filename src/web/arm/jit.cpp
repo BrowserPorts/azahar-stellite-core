@@ -65,6 +65,7 @@ size_t FastDispatchIndex(uint64_t location) {
 }
 #ifdef AZAHAR_ARM_JIT_STATISTICS
 std::atomic<uint64_t> native_dispatches{0}, completed_blocks{0};
+static_assert(sizeof(completed_blocks) == sizeof(uint64_t) && alignof(decltype(completed_blocks)) >= 8);
 std::atomic<uint64_t> budget_reuses{0};
 std::atomic<uint64_t> fast_dispatch_hits{0};
 #endif
@@ -105,7 +106,7 @@ EM_JS(uint32_t, CompileArmRegion, (const char* json, const uint32_t* layout, con
         }
         const memory = HEAPU32.slice(memory_config >> 2, (memory_config >> 2) + 7);
         const result = Module["azaharJitHost"].compile(UTF8ToString(json),
-            HEAPU32.slice(layout >> 2, (layout >> 2) + 6), wasmMemory,
+            HEAPU32.slice(layout >> 2, (layout >> 2) + 13), wasmMemory,
             wasmExports["__indirect_function_table"], Module["azaharJitHelpers"], {
                 pageTable: memory[0], ...(memory[2] ? { fastmem: memory[1] } : {}),
                 pointerMaskBits: memory[3], absoluteOffset: Boolean(memory[4]),
@@ -501,25 +502,6 @@ template <class Type> v128_t SaturatingUnsignedVectorShift(ArmState* state, v128
 // Generated code imports these raw Wasm functions, avoiding JavaScript on memory access.
 extern "C" EMSCRIPTEN_KEEPALIVE uint32_t WasmCheckHalt(ArmState* state) {
     return state->halt->load();
-}
-extern "C" EMSCRIPTEN_KEEPALIVE void WasmAddTicks(ArmState* state, uint64_t cycles,
-                                                LinkCell* source) {
-    source->used = ++*state->clock;
-    state->pending_ticks += cycles;
-    state->next_budget = cycles < state->next_budget ? state->next_budget - cycles : 0;
-#ifdef AZAHAR_ARM_JIT_STATISTICS
-    completed_blocks.fetch_add(1, std::memory_order_relaxed);
-#endif
-}
-extern "C" EMSCRIPTEN_KEEPALIVE int64_t WasmNextBudget(ArmState* state, uint64_t minimum) {
-    if (state->halt->load()) state->next_budget = 0;
-    return state->next_budget >= minimum ? state->next_budget : 0;
-}
-extern "C" EMSCRIPTEN_KEEPALIVE int64_t WasmFinishBlock(ArmState* state, uint64_t cycles,
-                                                      LinkCell* source, LinkCell* destination,
-                                                      uint64_t minimum) {
-    WasmAddTicks(state, cycles, source);
-    return WasmNextBudget(state, destination ? destination->minimum_budget : minimum);
 }
 extern "C" EMSCRIPTEN_KEEPALIVE uint32_t WasmFastDispatch(ArmState* state, uint64_t budget) {
     if (!budget || state->halt->load()) return 0;
@@ -1135,7 +1117,15 @@ struct Jit::Impl {
             }, config.always_little_endian, reinterpret_cast<uintptr_t>(&source), link,
                 config.HasOptimization(OptimizationFlag::FastDispatch) && !step);
             const uint32_t layout[] = {offsetof(ArmState, registers), offsetof(ArmState, cpsr),
-                offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit), 4};
+                offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit), 5,
+                offsetof(ArmState, halt), offsetof(ArmState, clock), offsetof(ArmState, next_budget),
+                offsetof(ArmState, pending_ticks), offsetof(LinkCell, used), offsetof(LinkCell, minimum_budget),
+#ifdef AZAHAR_ARM_JIT_STATISTICS
+                reinterpret_cast<uintptr_t>(&completed_blocks)
+#else
+                0
+#endif
+            };
             const uint32_t memory_config[] = {static_cast<uint32_t>(reinterpret_cast<uintptr_t>(config.page_table)),
                 static_cast<uint32_t>(config.fastmem_pointer.value_or(0)), config.fastmem_pointer.has_value(),
                 static_cast<uint32_t>(config.page_table_pointer_mask_bits), config.absolute_offset_page_table,
