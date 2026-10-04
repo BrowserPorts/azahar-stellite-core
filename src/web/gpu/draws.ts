@@ -16,6 +16,11 @@ interface TextureBindingGroup {
   group: GPUBindGroup;
 }
 
+interface DrawUpload {
+  buffer: GPUBuffer;
+  bytes: Uint8Array<ArrayBuffer>;
+}
+
 interface DrawPipeline {
   pipeline: GPURenderPipeline;
   groups: readonly GPUBindGroupLayout[];
@@ -46,6 +51,7 @@ export class GraphicsDraws {
   #temporary: (GPUTexture | GPUBuffer)[] = [];
   #drawCount = 0;
   #uploadBytes = 0;
+  #upload: DrawUpload | undefined;
   #luts: readonly GPUBuffer[];
   #empty: GPUTexture;
   #emptyShadow: GPUBuffer;
@@ -101,6 +107,10 @@ export class GraphicsDraws {
     }
     const compiled = await this.pipeline(draw, colorFormat, color?.format, depth?.format);
     this.checkOpen();
+    const alignment = this.device.limits.minUniformBufferOffsetAlignment;
+    const aligned = (bytes: number): number => Math.ceil(bytes / alignment) * alignment;
+    const upload = this.uploadBuffer(aligned(draw.vertices.byteLength) + aligned(draw.vertexUniforms.byteLength) +
+      aligned(draw.fragmentUniforms.byteLength) + 2 * aligned(16));
     const encoder = this.#encoder ??= this.device.createCommandEncoder({ label: "Azahar PICA draws" });
     const temporary: (GPUTexture | GPUBuffer)[] = [];
     try {
@@ -115,30 +125,21 @@ export class GraphicsDraws {
         encoder.copyTextureToTexture({ texture: color, mipLevel: state.colorLevel }, { texture: attachment },
           [Math.min(width, originalWidth), Math.min(height, originalHeight)]);
       }
-      const alignment = this.device.limits.minUniformBufferOffsetAlignment;
-      const aligned = (bytes: number): number => Math.ceil(bytes / alignment) * alignment;
-      const data = this.device.createBuffer({ label: "Azahar triangle batch and uniforms",
-        size: aligned(draw.vertices.byteLength) + aligned(draw.vertexUniforms.byteLength) +
-          aligned(draw.fragmentUniforms.byteLength) + aligned(16) + 16,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.UNIFORM, mappedAtCreation: true });
-      temporary.push(data);
-      const mapped = new Uint8Array(data.getMappedRange());
-      let offset = 0;
-      const upload = (bytes: Uint8Array<ArrayBuffer>): GPUBufferBinding => {
-        const binding = { buffer: data, offset, size: bytes.byteLength };
-        mapped.set(bytes, offset);
+      let offset = this.#uploadBytes;
+      const store = (bytes: Uint8Array<ArrayBuffer>): GPUBufferBinding => {
+        const binding = { buffer: upload.buffer, offset, size: bytes.byteLength };
+        upload.bytes.set(bytes, offset);
         offset += aligned(bytes.byteLength);
         return binding;
       };
       // Uniform ranges share the vertex upload without exposing alignment padding to bindings.
-      const vertex = upload(draw.vertices);
-      const vs = upload(draw.vertexUniforms);
-      const fs = upload(draw.fragmentUniforms);
+      const vertex = store(draw.vertices);
+      const vs = store(draw.vertexUniforms);
+      const fs = store(draw.fragmentUniforms);
       const [vx, vy, vw, vh] = state.viewport;
-      const transform = upload(new Uint8Array(new Float32Array([vw / width, -vh / height,
+      const transform = store(new Uint8Array(new Float32Array([vw / width, -vh / height,
         (2 * vx + vw) / width - 1, 1 - (2 * vy + vh) / height]).buffer));
-      const dimensions = upload(new Uint8Array(new Uint32Array([width, height, 0, 0]).buffer));
-      data.unmap();
+      const dimensions = store(new Uint8Array(new Uint32Array([width, height, 0, 0]).buffer));
       let shadow = this.#emptyShadow;
       if (state.shadow) { shadow = this.shadows.buffer(encoder, attachment!, colorLevel); temporary.push(shadow); }
       const uniformGroup = this.device.createBindGroup({ layout: compiled.groups[0]!, entries: [
@@ -205,7 +206,7 @@ export class GraphicsDraws {
       // Keep every resource alive until the encoder has been submitted.
       this.#temporary.push(...temporary);
       temporary.length = 0;
-      this.#uploadBytes += data.size;
+      this.#uploadBytes = offset;
       if (++this.#drawCount >= 16 || this.#uploadBytes >= 1024 * 1024) this.flush();
     } catch (error) {
       // A failed draw can leave an unfinished pass in the shared encoder.
@@ -220,10 +221,16 @@ export class GraphicsDraws {
     const encoder = this.#encoder;
     if (!encoder) return undefined;
     const temporary = this.#temporary;
+    const upload = this.#upload!;
+    const size = this.#uploadBytes;
     this.#encoder = undefined; this.#temporary = [];
     this.#drawCount = 0; this.#uploadBytes = 0;
-    try { this.device.queue.submit([encoder.finish()]); }
-    finally { for (const resource of temporary) resource.destroy(); }
+    try {
+      const commands = encoder.finish();
+      // Queue order keeps earlier submissions ahead of the next upload into this buffer.
+      this.device.queue.writeBuffer(upload.buffer, 0, upload.bytes.subarray(0, size));
+      this.device.queue.submit([commands]);
+    } finally { for (const resource of temporary) resource.destroy(); }
     return undefined;
   }
 
@@ -232,6 +239,20 @@ export class GraphicsDraws {
     for (const resource of this.#temporary) resource.destroy();
     this.#temporary = []; this.#drawCount = 0; this.#uploadBytes = 0;
     return undefined;
+  }
+
+  private uploadBuffer(size: number): DrawUpload {
+    if (size > this.device.limits.maxBufferSize) throw new Error("Native triangle upload exceeds the WebGPU buffer limit");
+    if (this.#uploadBytes + size > (this.#upload?.bytes.byteLength ?? 0)) this.flush();
+    if (!this.#upload || size > this.#upload.bytes.byteLength) {
+      const capacity = Math.max(1024 * 1024, size);
+      const bytes = new Uint8Array(capacity);
+      const buffer = this.device.createBuffer({ label: "Azahar triangle batches and uniforms", size: capacity,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      this.#upload?.buffer.destroy();
+      this.#upload = { buffer, bytes };
+    }
+    return this.#upload;
   }
 
   private readsDestination(state: NativeDrawState, colorFormat: number): boolean {
@@ -395,6 +416,7 @@ export class GraphicsDraws {
     this.discard();
     this.#closed = true; this.#pipelines.clear(); this.#lastPipeline = undefined;
     this.#views = new WeakMap();
+    this.#upload?.buffer.destroy(); this.#upload = undefined;
     for (const buffer of this.#luts) buffer.destroy();
     this.#empty.destroy(); this.#emptyShadow.destroy();
     return undefined;
