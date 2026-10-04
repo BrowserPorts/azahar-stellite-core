@@ -8,7 +8,7 @@ set_target_properties(azahar_pica_shader_generator PROPERTIES
     OUTPUT_NAME "azahar-pica-shaders" SUFFIX ".mjs"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
 target_link_options(azahar_pica_shader_generator PRIVATE
-    --no-entry -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createAzaharPicaShaders
+    --no-entry --emit-symbol-map -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createAzaharPicaShaders
     -sENVIRONMENT=web,worker,node -sDYNAMIC_EXECUTION=0
     -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=4194304 -sEXIT_RUNTIME=0
     "-sEXPORTED_RUNTIME_METHODS=['HEAPU8','UTF8ToString']"
@@ -25,7 +25,7 @@ set_target_properties(azahar_browser PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
 target_link_options(azahar_browser PRIVATE
     "SHELL:--js-library \"${CMAKE_CURRENT_SOURCE_DIR}/file-system.js\""
-    --no-entry -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createAzaharCore
+    --no-entry --emit-symbol-map -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createAzaharCore
     -sENVIRONMENT=web,worker,node -sDYNAMIC_EXECUTION=0
     -sINITIAL_MEMORY=536870912 -sMAXIMUM_MEMORY=2147483648 -sALLOW_MEMORY_GROWTH=1
     -sSTACK_SIZE=4194304 -sPTHREAD_POOL_SIZE=4 -sEXIT_RUNTIME=0
