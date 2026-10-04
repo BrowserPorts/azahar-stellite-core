@@ -160,19 +160,21 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       consume(cycles).byte(0x0f);
       return undefined;
     }
-    helper("WasmAddTicks", ["i64", "i32"], [], () => {
-      body.byte(0x42).signed(BigInt(cycles), 64); constant(block.sourceCell!);
-    });
+    const nextBudget = (cell: number, minimum: bigint): undefined => {
+      helper("WasmFinishBlock", ["i64", "i32", "i32", "i64"], ["i64"], () => {
+        body.byte(0x42).signed(BigInt(cycles), 64); constant(block.sourceCell!);
+        constant(cell); body.byte(0x42).signed(minimum, 64);
+      });
+      set(1);
+      return undefined;
+    };
     const tailCall = (): undefined => {
       get(0); get(1); get(linkSlot);
-      const signature = imports.findIndex((item) => item.name === "WasmNextBudget");
-      body.byte(0x13).u32(signature).byte(0);
+      body.byte(0x13).u32(0).byte(0);
       return undefined;
     };
     if (destination?.cell && destination.fpscr !== undefined) {
-      helper("WasmNextBudget", ["i64"], ["i64"], () =>
-        constant(destination.cell!).byte(0x28).u32(2).u32(16).byte(0xad));
-      set(1);
+      nextBudget(destination.cell, 0n);
       get(1).byte(0x42).signed(0n, 64).byte(0x55).byte(0x04).byte(0x40);
       // Tick callbacks may change the translation mode or invalidate an incoming link.
       load(options.layout.registers + 60); constant(destination.pc).byte(0x46);
@@ -184,13 +186,16 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       body.byte(0x45).byte(0x45).byte(0x71).byte(0x04).byte(0x40);
       tailCall(); body.byte(0x0b).byte(0x0b);
     } else if (fastDispatch) {
-      helper("WasmNextBudget", ["i64"], ["i64"], () => body.byte(0x42).signed(1n, 64));
-      set(1);
+      nextBudget(0, 1n);
       get(1).byte(0x42).signed(0n, 64).byte(0x55).byte(0x04).byte(0x40);
       helper("WasmFastDispatch", ["i64"], ["i32"], () => get(1));
       set(linkSlot);
       get(linkSlot).byte(0x04).byte(0x40);
       tailCall(); body.byte(0x0b).byte(0x0b);
+    } else {
+      helper("WasmAddTicks", ["i64", "i32"], [], () => {
+        body.byte(0x42).signed(BigInt(cycles), 64); constant(block.sourceCell!);
+      });
     }
     body.byte(0x42).signed(0n, 64).byte(0x0f);
     return undefined;

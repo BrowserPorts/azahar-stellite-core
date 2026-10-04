@@ -501,7 +501,6 @@ extern "C" EMSCRIPTEN_KEEPALIVE void WasmAddTicks(ArmState* state, uint64_t cycl
 #endif
     state->config->callbacks->AddTicks(cycles);
 }
-// The signature also supplies the type used by generated return_call_indirect instructions.
 extern "C" EMSCRIPTEN_KEEPALIVE int64_t WasmNextBudget(ArmState* state, uint64_t minimum) {
     state->next_budget = state->halt->load() ? 0 :
         std::min<uint64_t>(state->config->callbacks->GetTicksRemaining(),
@@ -509,6 +508,13 @@ extern "C" EMSCRIPTEN_KEEPALIVE int64_t WasmNextBudget(ArmState* state, uint64_t
     if (state->halt->load()) state->next_budget = 0;
     state->budget_valid = true;
     return state->next_budget >= minimum ? state->next_budget : 0;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE int64_t WasmFinishBlock(ArmState* state, uint64_t cycles,
+                                                      LinkCell* source, LinkCell* destination,
+                                                      uint64_t minimum) {
+    WasmAddTicks(state, cycles, source);
+    // Read the destination bound after tick callbacks have updated the cache.
+    return WasmNextBudget(state, destination ? destination->minimum_budget : minimum);
 }
 extern "C" EMSCRIPTEN_KEEPALIVE uint32_t WasmFastDispatch(ArmState* state, uint64_t budget) {
     if (!budget || state->halt->load()) return 0;
@@ -1120,7 +1126,7 @@ struct Jit::Impl {
             }, config.always_little_endian, reinterpret_cast<uintptr_t>(&source), link,
                 config.HasOptimization(OptimizationFlag::FastDispatch) && !step);
             const uint32_t layout[] = {offsetof(ArmState, registers), offsetof(ArmState, cpsr),
-                offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit), 2};
+                offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit), 3};
             const uint32_t memory_config[] = {static_cast<uint32_t>(reinterpret_cast<uintptr_t>(config.page_table)),
                 static_cast<uint32_t>(config.fastmem_pointer.value_or(0)), config.fastmem_pointer.has_value(),
                 static_cast<uint32_t>(config.page_table_pointer_mask_bits), config.absolute_offset_page_table,
