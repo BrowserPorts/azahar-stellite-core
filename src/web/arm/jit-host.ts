@@ -38,18 +38,22 @@ export class ArmJitHost {
     const started = performance.now();
     const block = JSON.parse(json) as ArmBlock;
     const [registers, cpsr, extendedRegisters, fpscr, checkBit, executionAbi] = layout;
-    if ((layout.length !== 5 && layout.length !== 13) || registers === undefined || cpsr === undefined ||
+    if ((layout.length !== 5 && layout.length !== 20) || registers === undefined || cpsr === undefined ||
       extendedRegisters === undefined || fpscr === undefined || checkBit === undefined) {
       throw new Error("Invalid ARM JIT state layout");
     }
-    if (layout.length === 13 ? executionAbi !== 5 || !block.sourceCell : Boolean(block.sourceCell)) {
+    if (layout.length === 20 ? executionAbi !== 6 || !block.sourceCell : Boolean(block.sourceCell)) {
       throw new Error("ARM execution ABI does not match the Wasm compiler");
     }
     const bytes = lowerArm(block, {
       layout: { registers, cpsr, extendedRegisters, fpscr, checkBit },
-      ...(layout.length === 13 ? { execution: {
+      ...(layout.length === 20 ? { execution: {
         halt: layout[6]!, clock: layout[7]!, budget: layout[8]!, pendingTicks: layout[9]!,
         sourceUsed: layout[10]!, minimumBudget: layout[11]!, completedBlocks: layout[12]!,
+        fastDispatch: {
+          pointer: layout[13]!, mask: layout[14]!, strideShift: layout[15]!,
+          location: layout[16]!, slot: layout[17]!, minimumBudget: layout[18]!, hits: layout[19]!,
+        },
       } } : {}),
       shared: memory.buffer instanceof SharedArrayBuffer,
       maximumPages: 65536,

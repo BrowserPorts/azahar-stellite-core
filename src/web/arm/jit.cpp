@@ -60,6 +60,7 @@ struct FastDispatchEntry {
     uint32_t slot = 0;
     uint32_t minimum_budget = 0;
 };
+static_assert(std::has_single_bit(sizeof(FastDispatchEntry)) && std::has_single_bit(fast_dispatch_size));
 size_t FastDispatchIndex(uint64_t location) {
     return ((location >> 1) ^ (location >> 32)) & (fast_dispatch_size - 1);
 }
@@ -106,7 +107,7 @@ EM_JS(uint32_t, CompileArmRegion, (const char* json, const uint32_t* layout, con
         }
         const memory = HEAPU32.slice(memory_config >> 2, (memory_config >> 2) + 7);
         const result = Module["azaharJitHost"].compile(UTF8ToString(json),
-            HEAPU32.slice(layout >> 2, (layout >> 2) + 13), wasmMemory,
+            HEAPU32.slice(layout >> 2, (layout >> 2) + 20), wasmMemory,
             wasmExports["__indirect_function_table"], Module["azaharJitHelpers"], {
                 pageTable: memory[0], ...(memory[2] ? { fastmem: memory[1] } : {}),
                 pointerMaskBits: memory[3], absoluteOffset: Boolean(memory[4]),
@@ -502,18 +503,6 @@ template <class Type> v128_t SaturatingUnsignedVectorShift(ArmState* state, v128
 // Generated code imports these raw Wasm functions, avoiding JavaScript on memory access.
 extern "C" EMSCRIPTEN_KEEPALIVE uint32_t WasmCheckHalt(ArmState* state) {
     return state->halt->load();
-}
-extern "C" EMSCRIPTEN_KEEPALIVE uint32_t WasmFastDispatch(ArmState* state, uint64_t budget) {
-    if (!budget || state->halt->load()) return 0;
-    const Dynarmic::A32::LocationDescriptor location(state->registers[15],
-        Dynarmic::A32::PSR{state->cpsr}, Dynarmic::A32::FPSCR{state->fpscr});
-    const auto hash = location.UniqueHash();
-    const auto& entry = state->fast_dispatch[FastDispatchIndex(hash)];
-    if (entry.location != hash || !entry.slot || budget < entry.minimum_budget) return 0;
-#ifdef AZAHAR_ARM_JIT_STATISTICS
-    fast_dispatch_hits.fetch_add(1, std::memory_order_relaxed);
-#endif
-    return entry.slot;
 }
 extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_arm_jit_statistics_enabled() {
 #ifdef AZAHAR_ARM_JIT_STATISTICS
@@ -1117,11 +1106,19 @@ struct Jit::Impl {
             }, config.always_little_endian, reinterpret_cast<uintptr_t>(&source), link,
                 config.HasOptimization(OptimizationFlag::FastDispatch) && !step);
             const uint32_t layout[] = {offsetof(ArmState, registers), offsetof(ArmState, cpsr),
-                offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit), 5,
+                offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit), 6,
                 offsetof(ArmState, halt), offsetof(ArmState, clock), offsetof(ArmState, next_budget),
                 offsetof(ArmState, pending_ticks), offsetof(LinkCell, used), offsetof(LinkCell, minimum_budget),
 #ifdef AZAHAR_ARM_JIT_STATISTICS
-                reinterpret_cast<uintptr_t>(&completed_blocks)
+                reinterpret_cast<uintptr_t>(&completed_blocks),
+#else
+                0,
+#endif
+                offsetof(ArmState, fast_dispatch), fast_dispatch_size - 1,
+                std::countr_zero(sizeof(FastDispatchEntry)), offsetof(FastDispatchEntry, location),
+                offsetof(FastDispatchEntry, slot), offsetof(FastDispatchEntry, minimum_budget),
+#ifdef AZAHAR_ARM_JIT_STATISTICS
+                reinterpret_cast<uintptr_t>(&fast_dispatch_hits)
 #else
                 0
 #endif

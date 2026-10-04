@@ -60,6 +60,15 @@ export interface ArmExecutionLayout {
   minimumBudget: number;
   /** Absolute counter address, or zero when execution counting is disabled. */
   completedBlocks: number;
+  fastDispatch: {
+    pointer: number;
+    mask: number;
+    strideShift: number;
+    location: number;
+    slot: number;
+    minimumBudget: number;
+    hits: number;
+  };
 }
 
 export interface MemoryOptions {
@@ -179,6 +188,17 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     } else helper("WasmCheckHalt", [], ["i32"], () => undefined);
     return undefined;
   };
+  const incrementCounter = (address: number): undefined => {
+    if (!address) return undefined;
+    constant(address);
+    if (options.shared) {
+      body.byte(0x42).signed(1n, 64).byte(0xfe).u32(0x1f).u32(3).u32(0).byte(0x1a);
+    } else {
+      constant(address).byte(0x29).u32(3).u32(0);
+      body.byte(0x42).signed(1n, 64).byte(0x7c).byte(0x37).u32(3).u32(0);
+    }
+    return undefined;
+  };
   const chargeTicks = (cycles: number): undefined => {
     const execution = options.execution!;
     load(execution.clock); set(clockPointer);
@@ -197,15 +217,7 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
       get(1).byte(0x42).signed(BigInt(cycles), 64).byte(0x56).byte(0x04).byte(0x7e);
       consume(cycles).byte(0x05).byte(0x42).signed(0n, 64).byte(0x0b).byte(0x22).u32(1);
     }, true);
-    if (execution.completedBlocks) {
-      constant(execution.completedBlocks);
-      if (options.shared) {
-        body.byte(0x42).signed(1n, 64).byte(0xfe).u32(0x1f).u32(3).u32(0).byte(0x1a);
-      } else {
-        constant(execution.completedBlocks).byte(0x29).u32(3).u32(0);
-        body.byte(0x42).signed(1n, 64).byte(0x7c).byte(0x37).u32(3).u32(0);
-      }
-    }
+    incrementCounter(execution.completedBlocks);
     return undefined;
   };
   const finishBlock = (cycles: number, destination?: Extract<Terminal, { kind: "link" }>,
@@ -247,9 +259,26 @@ export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<Arr
     } else if (fastDispatch) {
       nextBudget(0, 1n);
       get(1).byte(0x42).signed(0n, 64).byte(0x55).byte(0x04).byte(0x40);
-      helper("WasmFastDispatch", ["i64"], ["i32"], () => get(1));
-      set(linkSlot);
-      get(linkSlot).byte(0x04).byte(0x40);
+      const cache = options.execution!.fastDispatch;
+      // Match Dynarmic's LocationDescriptor, including split Thumb IT-state bits.
+      load(options.layout.cpsr); set(clockPointer);
+      load(options.layout.fpscr); constant(0x07f70000).byte(0x71);
+      get(clockPointer); constant(5).byte(0x76); constant(1).byte(0x71).byte(0x72);
+      get(clockPointer); constant(8).byte(0x76); constant(2).byte(0x71).byte(0x72);
+      get(clockPointer); constant(0xfc00).byte(0x71).byte(0x72);
+      get(clockPointer); constant(17).byte(0x76); constant(0x300).byte(0x71).byte(0x72);
+      body.byte(0xad).byte(0x42).signed(32n, 64).byte(0x86);
+      load(options.layout.registers + 60).byte(0xad).byte(0x84); set(blockClock);
+      load(cache.pointer);
+      get(blockClock).byte(0x42).signed(1n, 64).byte(0x88);
+      get(blockClock).byte(0x42).signed(32n, 64).byte(0x88).byte(0x85).byte(0xa7);
+      constant(cache.mask).byte(0x71); constant(cache.strideShift).byte(0x74).byte(0x6a); set(clockPointer);
+      get(clockPointer).byte(0x29).u32(3).u32(cache.location); get(blockClock).byte(0x51);
+      get(1); get(clockPointer).byte(0x28).u32(2).u32(cache.minimumBudget).byte(0xad).byte(0x5a).byte(0x71);
+      get(clockPointer).byte(0x28).u32(2).u32(cache.slot).byte(0x22).u32(linkSlot);
+      body.byte(0x45).byte(0x45).byte(0x71);
+      checkHalt(); body.byte(0x45).byte(0x71).byte(0x04).byte(0x40);
+      incrementCounter(cache.hits);
       tailCall(); body.byte(0x0b).byte(0x0b);
     }
     body.byte(0x42).signed(0n, 64).byte(0x0f);
