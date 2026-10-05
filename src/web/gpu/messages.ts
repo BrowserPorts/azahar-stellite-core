@@ -5,7 +5,7 @@ import type { TextureRect } from "./blits";
 import type { NativeSampler } from "./samplers";
 import type { ScreenFrame } from "./screens";
 
-export const graphicsProtocolVersion = 1;
+export const graphicsProtocolVersion = 2;
 
 export interface GraphicsAdapterInfo {
   vendor: string;
@@ -35,6 +35,8 @@ export type GraphicsCommand =
   { type: "lookup-table"; table: number; offset: number; bytes: Uint8Array<ArrayBuffer> } |
   { type: "texture-clear"; handle: number; region: TextureRegion; value: readonly number[]; stencil: number } |
   { type: "texture-upload"; handle: number; region: TextureRegion; bytes: Uint8Array<ArrayBuffer> } |
+  { type: "texture-upload-custom"; handle: number; region: TextureRegion; format: number;
+    bytes: Uint8Array<ArrayBuffer> } |
   { type: "texture-download"; handle: number; region: TextureRegion;
     destination: Uint8Array<SharedArrayBuffer>; sequence: number } |
   { type: "close"; id: number };

@@ -32,6 +32,11 @@ EM_JS(void, UploadTexture, (u32 handle, u32 x, u32 y, u32 width, u32 height, u32
     Module["azaharGraphicsHost"].uploadTexture(handle, { x, y, width, height, level, layer: 0 },
         HEAPU8.subarray(data, data + bytes));
 });
+EM_JS(void, UploadCustomTexture, (u32 handle, u32 width, u32 height, u32 level, u32 format,
+                                 const u8* data, u32 bytes), {
+    Module["azaharGraphicsHost"].uploadCustomTexture(handle, { x: 0, y: 0, width, height, level, layer: 0 },
+        format, HEAPU8.subarray(data, data + bytes));
+});
 EM_JS(void, DownloadTexture, (u32 handle, u32 x, u32 y, u32 width, u32 height, u32 level,
                              u8* data, u32 bytes), {
     Module["azaharGraphicsHost"].downloadTexture(handle, { x, y, width, height, level, layer: 0 },
@@ -147,6 +152,7 @@ bool TextureRuntime::BlitTextures(Surface& source, Surface& dest, const TextureB
 
 void TextureRuntime::GenerateMipmaps(Surface& surface) {
     WebGPU::GenerateMipmaps(surface.Handle());
+    if (surface.NormalHandle()) WebGPU::GenerateMipmaps(surface.NormalHandle());
 }
 
 Surface::Surface(TextureRuntime& runtime_, const SurfaceParams& params, const SurfaceFlagBits& flags)
@@ -159,8 +165,8 @@ Surface::Surface(TextureRuntime& runtime_, const SurfaceParams& params, const Su
 
 Surface::Surface(TextureRuntime& runtime_, const SurfaceBase& surface, const Material* material_)
     : SurfaceBase{surface}, runtime{runtime_} {
-    if (material_->format != CustomPixelFormat::RGBA8) {
-        throw std::runtime_error("Compressed custom textures are not available in WebGPU");
+    if (material_->format > CustomPixelFormat::BC7) {
+        throw std::runtime_error("Unsupported custom texture format");
     }
     material = material_;
     custom_format = material->format;
@@ -217,9 +223,9 @@ void Surface::Download(const BufferTextureCopy& copy, const StagingData& staging
 void Surface::UploadCustom(const Material* material_, u32 level) {
     const auto upload = [&](u32 handle, const CustomTexture* texture) {
         if (!texture || !handle) return;
-        if (texture->format != CustomPixelFormat::RGBA8) throw std::runtime_error("Unsupported custom texture format");
-        UploadTexture(handle, 0, 0, texture->width, texture->height, level, texture->data.data(),
-                      static_cast<u32>(texture->data.size()));
+        UploadCustomTexture(handle, texture->width, texture->height, level,
+                            static_cast<u32>(texture->format), texture->data.data(),
+                            static_cast<u32>(texture->data.size()));
     };
     upload(base, material_->Map(MapType::Color));
     upload(normal, material_->Map(MapType::Normal));

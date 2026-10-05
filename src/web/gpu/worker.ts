@@ -53,7 +53,9 @@ async function initialize(fence: SharedArrayBuffer, protocol: number): Promise<u
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
   if (!adapter) throw new Error("No WebGPU adapter is available");
   if (!adapter.features.has("clip-distances")) throw new Error("WebGPU clip distances are required for PICA clipping");
-  device = await adapter.requestDevice({ label: "Azahar graphics", requiredFeatures: ["clip-distances"] });
+  const requiredFeatures: GPUFeatureName[] = ["clip-distances"];
+  if (adapter.features.has("texture-compression-bc")) requiredFeatures.push("texture-compression-bc");
+  device = await adapter.requestDevice({ label: "Azahar graphics", requiredFeatures });
   device.onuncapturederror = (event): undefined => fail(event.error);
   device.lost.then((info) => { if (!closed) fail(new Error(`WebGPU device lost: ${info.message}`)); });
   shaders = await PicaShaders.create(device);
@@ -96,6 +98,9 @@ async function execute(request: GraphicsCommand): Promise<undefined> {
       case "texture-mipmaps": await textures.mipmaps(request.handle); break;
       case "texture-clear": await textures.clear(request.handle, request.region, request.value, request.stencil); break;
       case "texture-upload": await textures.upload(request.handle, request.region, request.bytes); break;
+      case "texture-upload-custom":
+        await textures.uploadCustom(request.handle, request.region, request.format, request.bytes);
+        break;
       case "texture-download": {
         await textures.download(request.handle, request.region, request.destination);
         if (failure) throw new Error(failure);

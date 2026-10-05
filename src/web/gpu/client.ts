@@ -303,6 +303,14 @@ export class GraphicsClient {
     return this.post({ type: "texture-upload", handle, region, bytes });
   }
 
+  uploadCustomTexture(handle: number, region: TextureRegion, format: number,
+    view: Uint8Array<SharedArrayBuffer>): undefined {
+    this.checkOpen();
+    const bytes = this.snapshot(view.byteLength);
+    bytes.set(view);
+    return this.post({ type: "texture-upload-custom", handle, region, format, bytes });
+  }
+
   downloadTexture(handle: number, region: TextureRegion,
     destination: Uint8Array<SharedArrayBuffer>): undefined {
     return this.synchronize("textureReadback",
