@@ -91,18 +91,31 @@ if(EMSCRIPTEN)
         "${TEST_WEB_DIRECTORY}/browser-worker.js")
 
     # Compile the SDK's original OPFS cases, including its cross-session persistence checks.
-    foreach(mode IN ITEMS setup resume)
-        add_executable(wasmfs_opfs_${mode} "${PROJECT_SOURCE_DIR}/externals/emscripten/test/wasmfs/wasmfs_opfs.c")
+    foreach(mode IN ITEMS setup resume errors)
+        set(opfs_source "${PROJECT_SOURCE_DIR}/externals/emscripten/test/wasmfs/wasmfs_opfs.c")
+        if(mode STREQUAL "errors")
+            set(opfs_source "${PROJECT_SOURCE_DIR}/externals/emscripten/test/wasmfs/wasmfs_opfs_errors.c")
+        endif()
+        add_executable(wasmfs_opfs_${mode} "${opfs_source}")
         target_link_libraries(wasmfs_opfs_${mode} PRIVATE emscripten_opfs)
-        string(TOUPPER "${mode}" mode_define)
-        target_compile_definitions(wasmfs_opfs_${mode} PRIVATE WASMFS_${mode_define})
+        if(mode STREQUAL "errors")
+            # The runner already executes main in a dedicated worker. Report the original
+            # asynchronous result through its exit callback instead of the SDK test server.
+            target_compile_definitions(wasmfs_opfs_${mode} PRIVATE REPORT_RESULT=emscripten_force_exit)
+            set(opfs_post_js "${PROJECT_SOURCE_DIR}/externals/emscripten/test/wasmfs/wasmfs_opfs_errors_post.js")
+            target_link_options(wasmfs_opfs_${mode} PRIVATE "SHELL:--post-js \"${opfs_post_js}\"")
+            set_property(TARGET wasmfs_opfs_${mode} APPEND PROPERTY LINK_DEPENDS "${opfs_post_js}")
+        else()
+            string(TOUPPER "${mode}" mode_define)
+            target_compile_definitions(wasmfs_opfs_${mode} PRIVATE WASMFS_${mode_define})
+        endif()
         target_compile_options(wasmfs_opfs_${mode} PRIVATE -UNDEBUG)
         target_link_options(wasmfs_opfs_${mode} PRIVATE
             -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker
             -sPTHREAD_POOL_SIZE=1 -sEXIT_RUNTIME=1 -sDYNAMIC_EXECUTION=0)
         set_target_properties(wasmfs_opfs_${mode} PROPERTIES SUFFIX ".mjs")
     endforeach()
-    add_custom_target(browser_storage_fixtures DEPENDS wasmfs_opfs_setup wasmfs_opfs_resume
+    add_custom_target(browser_storage_fixtures DEPENDS wasmfs_opfs_setup wasmfs_opfs_resume wasmfs_opfs_errors
         "${TEST_WEB_DIRECTORY}/browser-jit.js" "${TEST_WEB_DIRECTORY}/browser-worker.js")
 
     # Build the SDK's original browser audio cases with their native inputs and assertions.

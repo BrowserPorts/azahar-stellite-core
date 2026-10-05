@@ -20,6 +20,21 @@ worker.onmessage = async (event: MessageEvent<FixtureRequest>): Promise<undefine
     worker.postMessage({ line } satisfies FixtureReply);
     return undefined;
   };
+  let finished = false;
+  const finish = (exit: number): undefined => {
+    if (!finished) {
+      finished = true;
+      worker.postMessage({ exit } satisfies FixtureReply);
+    }
+    return undefined;
+  };
+  worker.onunhandledrejection = (event: PromiseRejectionEvent): undefined => {
+    if (!finished) {
+      append(String(event.reason));
+      finish(1);
+    }
+    return undefined;
+  };
   try {
     let dspHost;
     if (event.data.dsp) {
@@ -61,7 +76,7 @@ worker.onmessage = async (event: MessageEvent<FixtureRequest>): Promise<undefine
       printErr: append,
       onAbort: (message: string): undefined => {
         append(message);
-        worker.postMessage({ exit: 1 } satisfies FixtureReply);
+        finish(1);
         return undefined;
       },
       onExit: (exit: number): undefined => {
@@ -69,13 +84,13 @@ worker.onmessage = async (event: MessageEvent<FixtureRequest>): Promise<undefine
         if (count) append(`ARM JIT: ${count} blocks entered through direct Wasm links`);
         const stats = armJit.takeStatistics();
         if (stats.optimizedRegions) append(`ARM JIT: ${stats.optimizedRegions} hot regions compiled with direct Wasm calls`);
-        worker.postMessage({ exit } satisfies FixtureReply);
+        finish(exit);
         return undefined;
       },
     });
   } catch (error) {
     append(String(error));
-    worker.postMessage({ exit: 1 } satisfies FixtureReply);
+    finish(1);
   }
   return undefined;
 };
