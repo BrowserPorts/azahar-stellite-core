@@ -58,7 +58,7 @@
 	url = https://github.com/libsdl-org/SDL
 [submodule "dds-ktx"]
 	path = externals/dds-ktx
-	url = https://github.com/septag/dds-ktx
+    url = https://origin.cursor.com/mov/dds-ktx-stellite.git
 [submodule "openal-soft"]
 	path = externals/openal-soft
 	url = https://github.com/azahar-emu/openal-soft

@@ -5,7 +5,7 @@ import type { TextureRect } from "./blits";
 import type { NativeSampler } from "./samplers";
 import type { ScreenFrame } from "./screens";
 
-export const graphicsProtocolVersion = 2;
+export const graphicsProtocolVersion = 3;
 
 export interface GraphicsAdapterInfo {
   vendor: string;

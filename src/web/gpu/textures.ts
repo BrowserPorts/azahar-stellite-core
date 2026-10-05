@@ -18,6 +18,18 @@ export interface TextureSurface {
   readonly bytesPerPixel: number;
 }
 
+// Entries are indexed by VideoCore::CustomPixelFormat minus one; RGBA8 uses the ordinary upload.
+const compressedCustomFormats = [
+  { format: "bc1-rgba-unorm", blockWidth: 4, blockHeight: 4, bytesPerBlock: 8 },
+  { format: "bc3-rgba-unorm", blockWidth: 4, blockHeight: 4, bytesPerBlock: 16 },
+  { format: "bc5-rg-unorm", blockWidth: 4, blockHeight: 4, bytesPerBlock: 16 },
+  { format: "bc7-rgba-unorm", blockWidth: 4, blockHeight: 4, bytesPerBlock: 16 },
+  { format: "astc-4x4-unorm", blockWidth: 4, blockHeight: 4, bytesPerBlock: 16 },
+  { format: "astc-6x6-unorm", blockWidth: 6, blockHeight: 6, bytesPerBlock: 16 },
+  // Native ASTC8 is an 8x6 format in both the DDS/KTX loader and native renderers.
+  { format: "astc-8x6-unorm", blockWidth: 8, blockHeight: 6, bytesPerBlock: 16 },
+] as const;
+
 const uploadShader = `
 struct Params { region: vec4u, format: u32 }
 @group(0) @binding(0) var<storage, read> pixels: array<u32>;
@@ -267,29 +279,28 @@ export class GraphicsTextures {
     this.validateRegion(dest, region);
     if (dest.nativeFormat !== 0) throw new Error("Custom textures require an RGBA8 surface");
     if (format === 0) return this.upload(id, region, bytes);
-    // These values match VideoCore::CustomPixelFormat, independently of native surface formats.
-    const formats: readonly GPUTextureFormat[] = ["bc1-rgba-unorm", "bc3-rgba-unorm", "bc5-rg-unorm", "bc7-rgba-unorm"];
-    const compressedFormat = formats[format - 1];
-    if (!Number.isInteger(format) || !compressedFormat) throw new Error("Unsupported custom texture format");
-    if (!this.device.features.has("texture-compression-bc")) {
-      throw new Error("This WebGPU adapter does not support BC replacement textures");
+    const info = compressedCustomFormats[format - 1];
+    if (!Number.isInteger(format) || !info) throw new Error("Unsupported custom texture format");
+    const feature = format >= 5 ? "texture-compression-astc" : "texture-compression-bc";
+    if (!this.device.features.has(feature)) {
+      throw new Error(`This WebGPU adapter does not support ${info.format} replacement textures`);
     }
-    const columns = Math.ceil(region.width / 4), rows = Math.ceil(region.height / 4);
-    const bytesPerBlock = format === 1 ? 8 : 16;
+    const { blockWidth, blockHeight, bytesPerBlock } = info;
+    const columns = Math.ceil(region.width / blockWidth), rows = Math.ceil(region.height / blockHeight);
     if (bytes.byteLength !== columns * rows * bytesPerBlock) throw new Error("Invalid compressed texture upload size");
-    const width = columns * 4, height = rows * 4;
+    const width = columns * blockWidth, height = rows * blockHeight;
     if (width > this.device.limits.maxTextureDimension2D || height > this.device.limits.maxTextureDimension2D) {
       throw new Error("Compressed texture exceeds the WebGPU texture size limit");
     }
     // Decode once on the GPU into the mutable surface used by mipmaps and cache copies.
-    // Block padding stays outside the source rectangle, including mip levels smaller than 4x4.
+    // Block padding stays outside the source rectangle, including mip levels smaller than a block.
     const texture = this.device.createTexture({ label: "Azahar compressed replacement upload",
-      size: [width, height], format: compressedFormat,
+      size: [width, height], format: info.format,
       usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING });
     try {
       this.device.queue.writeTexture({ texture }, bytes,
         { bytesPerRow: columns * bytesPerBlock, rowsPerImage: rows }, [width, height]);
-      await this.blitter.blit({ texture, nativeFormat: 0, format: compressedFormat, bytesPerPixel: 0 }, dest,
+      await this.blitter.blit({ texture, nativeFormat: 0, format: info.format, bytesPerPixel: 0 }, dest,
         { left: 0, bottom: 0, right: region.width, top: region.height, level: 0, layer: 0 },
         { left: region.x, bottom: region.y, right: region.x + region.width, top: region.y + region.height,
           level: region.level, layer: region.layer }, false);

@@ -165,7 +165,7 @@ Surface::Surface(TextureRuntime& runtime_, const SurfaceParams& params, const Su
 
 Surface::Surface(TextureRuntime& runtime_, const SurfaceBase& surface, const Material* material_)
     : SurfaceBase{surface}, runtime{runtime_} {
-    if (material_->format > CustomPixelFormat::BC7) {
+    if (material_->format > CustomPixelFormat::ASTC8) {
         throw std::runtime_error("Unsupported custom texture format");
     }
     material = material_;

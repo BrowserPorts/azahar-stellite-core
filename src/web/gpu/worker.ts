@@ -54,7 +54,9 @@ async function initialize(fence: SharedArrayBuffer, protocol: number): Promise<u
   if (!adapter) throw new Error("No WebGPU adapter is available");
   if (!adapter.features.has("clip-distances")) throw new Error("WebGPU clip distances are required for PICA clipping");
   const requiredFeatures: GPUFeatureName[] = ["clip-distances"];
-  if (adapter.features.has("texture-compression-bc")) requiredFeatures.push("texture-compression-bc");
+  for (const feature of ["texture-compression-bc", "texture-compression-astc"] as const) {
+    if (adapter.features.has(feature)) requiredFeatures.push(feature);
+  }
   device = await adapter.requestDevice({ label: "Azahar graphics", requiredFeatures });
   device.onuncapturederror = (event): undefined => fail(event.error);
   device.lost.then((info) => { if (!closed) fail(new Error(`WebGPU device lost: ${info.message}`)); });
