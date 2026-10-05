@@ -1034,12 +1034,22 @@ FIXED_CONVERSION(FPDoubleToFixedU64, uint64_t, uint64_t, 64, true)
 FP_ARITHMETIC(FP_HELPER_DEFINITION, 32, uint32_t)
 FP_ARITHMETIC(FP_HELPER_DEFINITION, 64, uint64_t)
 #undef FP_HELPER_DEFINITION
+#define FP_CONVERSIONS(emit) \
+    emit(FPSingleToDouble, uint64_t, uint32_t) \
+    emit(FPDoubleToSingle, uint32_t, uint64_t) \
+    emit(FPHalfToSingle, uint32_t, uint16_t) \
+    emit(FPHalfToDouble, uint64_t, uint16_t) \
+    emit(FPSingleToHalf, uint16_t, uint32_t) \
+    emit(FPDoubleToHalf, uint16_t, uint64_t)
 // These helpers only add FPSCR exception flags; registers and processor modes are preserved.
 // With valid IR operands, only enabled FP traps can interrupt their execution.
 #define FP_HELPER_NAME(result_type, name, parameters, ...) #name " "
+#define FP_CONVERSION_NAME(name, result_type, input_type) #name " "
 constexpr char fp_status_helpers[] =
     FP_ARITHMETIC(FP_HELPER_NAME, 32, uint32_t)
-    FP_ARITHMETIC(FP_HELPER_NAME, 64, uint64_t);
+    FP_ARITHMETIC(FP_HELPER_NAME, 64, uint64_t)
+    FP_CONVERSIONS(FP_CONVERSION_NAME);
+#undef FP_CONVERSION_NAME
 #undef FP_HELPER_NAME
 #undef FP_ARITHMETIC
 #define FP_SELECT(name, type, maximum, numeric) \
@@ -1064,13 +1074,9 @@ FP_SELECT(FPMinNumeric64, uint64_t, false, true)
             return Dynarmic::FP::FPConvert<result_type>(VfpInput(state, value, fpcr, fpsr), fpcr, static_cast<Dynarmic::FP::RoundingMode>(rounding), fpsr); \
         }); \
     }
-FP_CONVERT(FPSingleToDouble, uint64_t, uint32_t)
-FP_CONVERT(FPDoubleToSingle, uint32_t, uint64_t)
-FP_CONVERT(FPHalfToSingle, uint32_t, uint16_t)
-FP_CONVERT(FPHalfToDouble, uint64_t, uint16_t)
-FP_CONVERT(FPSingleToHalf, uint16_t, uint32_t)
-FP_CONVERT(FPDoubleToHalf, uint16_t, uint64_t)
+FP_CONVERSIONS(FP_CONVERT)
 #undef FP_CONVERT
+#undef FP_CONVERSIONS
 #define FP_FROM_FIXED(name, result_type, input_type, integer_type) \
     EMSCRIPTEN_KEEPALIVE result_type name(ArmState* state, input_type value, uint32_t fractional_bits, uint32_t rounding) { \
         return FromFixed<result_type>(state, static_cast<integer_type>(value), fractional_bits, rounding); \
