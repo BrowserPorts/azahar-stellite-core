@@ -132,9 +132,6 @@ export function lowerArmRegion(blocks: readonly ArmBlock[], links: ReadonlyMap<n
   }
   // The table entry retains the native ABI; only internal functions receive cached state.
   const body = new Bytes();
-  // Internal calls share this entry and keep the same cache age.
-  body.byte(0x41).signed(BigInt(blocks[0]!.sourceCell!), 32).byte(0x20).u32(3)
-    .byte(0x37).u32(3).u32(options.execution.sourceUsed);
   for (let parameter = 0; parameter < 4; parameter++) body.byte(0x20).u32(parameter);
   for (const offset of region.state) body.byte(0x20).u32(0).byte(0x28).u32(2).u32(offset);
   body.byte(0x12).u32(region.imports.length + 1);
@@ -333,10 +330,8 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   };
   const chargeTicks = (cycles: number): undefined => {
     const execution = options.execution!;
-    if (!region) {
-      constant(block.sourceCell!); get(3);
-      body.byte(0x37).u32(3).u32(execution.sourceUsed);
-    }
+    constant(block.sourceCell!); get(3);
+    body.byte(0x37).u32(3).u32(execution.sourceUsed);
     get(2).byte(0x42).signed(BigInt(cycles), 64).byte(0x7c); set(2);
     // Linked regions carry the remaining budget in their i64 parameter.
     get(1).byte(0x42).signed(BigInt(cycles), 64).byte(0x56).byte(0x04).byte(0x7e);
