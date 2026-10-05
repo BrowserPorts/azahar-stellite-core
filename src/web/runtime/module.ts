@@ -32,6 +32,8 @@ export interface AzaharModule {
   _azahar_import_user_file(path: number, size: bigint): number;
   _azahar_content_id(path: number): number;
   _azahar_initialize(): number;
+  _azahar_core_options(): number;
+  _azahar_set_core_option(key: number, value: number): number;
   _azahar_load_game(path: number): number;
   _azahar_program_id(): number;
   _azahar_run_frame(): number;

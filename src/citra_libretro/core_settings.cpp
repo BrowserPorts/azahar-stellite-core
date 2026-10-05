@@ -144,7 +144,7 @@ static constexpr retro_core_option_v2_category option_categories[] = {
 
 static constexpr retro_core_option_v2_definition option_definitions[] = {
     // CPU Category
-#ifndef IOS
+#if !defined(IOS) && !defined(__EMSCRIPTEN__)
     {
         config::cpu::use_cpu_jit,
         "Enable CPU JIT",
@@ -162,6 +162,7 @@ static constexpr retro_core_option_v2_definition option_definitions[] = {
         config::enabled
     },
 #endif
+#ifndef __EMSCRIPTEN__
     {
         config::cpu::use_fastinterp,
         "Use Fast Interpreter",
@@ -177,6 +178,7 @@ static constexpr retro_core_option_v2_definition option_definitions[] = {
         },
         config::enabled
     },
+#endif
     {
         config::cpu::cpu_clock_percentage,
         "CPU Clock Speed",
@@ -257,7 +259,7 @@ static constexpr retro_core_option_v2_definition option_definitions[] = {
             { "Simplified Chinese", "Simplified Chinese" },
             { nullptr, nullptr }
         },
-        "english"
+        "English"
     },
 
     // Audio Category
@@ -318,7 +320,7 @@ static constexpr retro_core_option_v2_definition option_definitions[] = {
 #endif
             { nullptr, nullptr }
         },
-        "auto"
+        "Auto"
     },
     {
         config::graphics::use_hw_shader,
@@ -335,7 +337,7 @@ static constexpr retro_core_option_v2_definition option_definitions[] = {
         },
         config::enabled
     },
-#ifndef IOS
+#if !defined(IOS) && !defined(__EMSCRIPTEN__)
     {
         config::graphics::use_shader_jit,
         "Enable Shader JIT",
@@ -849,14 +851,20 @@ void RegisterCoreOptions(void) {
 
 static void ParseCpuOptions(void) {
     Settings::values.use_cpu_jit =
-#ifdef IOS
+#if defined(__EMSCRIPTEN__)
+        true;
+#elif defined(IOS)
         false;
 #else
         LibRetro::FetchVariable(config::cpu::use_cpu_jit, config::enabled) == config::enabled;
 #endif
 
     Settings::values.use_fastinterp =
+#ifdef __EMSCRIPTEN__
+        false;
+#else
         LibRetro::FetchVariable(config::cpu::use_fastinterp, config::enabled) == config::enabled;
+#endif
 
     auto cpu_clock = LibRetro::FetchVariable(config::cpu::cpu_clock_percentage, "100");
     Settings::values.cpu_clock_percentage = std::stoi(cpu_clock);
@@ -992,7 +1000,9 @@ static void ParseGraphicsOptions(void) {
                                                              config::enabled) == config::enabled;
 
     Settings::values.use_shader_jit =
-#ifdef IOS
+#if defined(__EMSCRIPTEN__)
+        true;
+#elif defined(IOS)
         false;
 #else
         LibRetro::FetchVariable(config::graphics::use_shader_jit, config::enabled) ==

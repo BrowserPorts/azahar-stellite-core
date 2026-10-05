@@ -25,6 +25,17 @@ export interface InputState {
   touchPressed: boolean;
 }
 
+/** Options and legal values supplied by Azahar's native frontend definitions. */
+export interface CoreOption {
+  key: string;
+  value: string;
+  defaultValue: string;
+  label: string;
+  description: string;
+  category: string;
+  values: { value: string; label: string }[];
+}
+
 /** Native frame averages and browser interval totals, including frame pacing time. */
 export interface PerformanceStats {
   /** Successful native frame calls since the previous snapshot. */
@@ -82,7 +93,7 @@ export class BrowserSession {
         azaharAudio: (pointer, frames, sampleRate) => output.audio(core.HEAP16.subarray(pointer >>> 1,
           (pointer >>> 1) + frames * 2), sampleRate),
       });
-      if (core._azahar_web_abi() !== 12) throw new Error("Unsupported Azahar browser ABI");
+      if (core._azahar_web_abi() !== 13) throw new Error("Unsupported Azahar browser ABI");
       if (!core._azahar_mount_storage()) throw new Error("Azahar could not mount OPFS user storage");
       if (!core._azahar_initialize()) throw new Error("Azahar initialization failed");
       return new BrowserSession(core, storage, armJit, graphics);
@@ -200,6 +211,35 @@ export class BrowserSession {
       typeof value.touchPressed !== "boolean") throw new Error("Invalid input state");
     this.core._azahar_set_input(value.buttons, value.circleX, value.circleY,
       value.cstickX, value.cstickY, value.touchX, value.touchY, Number(value.touchPressed));
+    return undefined;
+  }
+
+  options(): CoreOption[] {
+    this.checkOpen();
+    const pointer = this.core._azahar_core_options();
+    if (!pointer) throw new Error("Azahar core options are unavailable");
+    return JSON.parse(this.core.UTF8ToString(pointer)) as CoreOption[];
+  }
+
+  setOption(key: string, value: string): undefined {
+    this.checkOpen();
+    if (typeof key !== "string" || typeof value !== "string" ||
+      !key || !value || key.length > 256 || value.length > 256 || /\0/.test(key + value)) {
+      throw new Error("Invalid core option key or value");
+    }
+    const keyPointer = this.core.stringToNewUTF8(key);
+    if (!keyPointer) throw new Error("Azahar could not allocate the option key");
+    let valuePointer = 0;
+    try {
+      valuePointer = this.core.stringToNewUTF8(value);
+      if (!valuePointer) throw new Error("Azahar could not allocate the option value");
+      if (!this.core._azahar_set_core_option(keyPointer, valuePointer)) {
+        throw new Error(`Unsupported value for core option ${key}`);
+      }
+    } finally {
+      if (valuePointer) this.core._free(valuePointer);
+      this.core._free(keyPointer);
+    }
     return undefined;
   }
 

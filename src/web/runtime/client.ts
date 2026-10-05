@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { SessionEvent, SessionRequest, SessionResult } from "./messages";
-import type { InputState, PerformanceStats } from "./session";
+import type { CoreOption, InputState, PerformanceStats } from "./session";
+export type { CoreOption } from "./session";
 import { BrowserAudioOutput } from "./audio-output";
 export { BrowserAudioOutput } from "./audio-output";
 export type { AudioOutputStatistics } from "./audio-output";
@@ -146,10 +147,25 @@ export class AzaharClient {
     await this.request({ type: "input", state }); return undefined;
   }
 
+  /** Native option descriptions include any game restart requirements. */
+  async options(): Promise<CoreOption[]> {
+    const result = await this.request({ type: "options" });
+    if (!Array.isArray(result)) throw new Error("Invalid core options returned by Azahar");
+    return result;
+  }
+
+  /** Applies at game load or the next frame; restart-only settings require a new session. */
+  async setOption(key: string, value: string): Promise<undefined> {
+    await this.request({ type: "set-option", key, value });
+    return undefined;
+  }
+
   /** Read and reset performance counters at an emulation frame boundary. */
   async performance(): Promise<PerformanceStats> {
     const result = await this.request({ type: "performance" });
-    if (!result || typeof result !== "object") throw new Error("Invalid performance snapshot returned by Azahar");
+    if (!result || typeof result !== "object" || Array.isArray(result)) {
+      throw new Error("Invalid performance snapshot returned by Azahar");
+    }
     return result;
   }
 

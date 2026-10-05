@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { InputState, PerformanceStats } from "./session";
+import type { CoreOption, InputState, PerformanceStats } from "./session";
 import type { AudioTransport } from "./audio-ring";
 
-export type SessionResult = string | number | PerformanceStats | undefined;
+export type SessionResult = string | number | PerformanceStats | CoreOption[] | undefined;
 
 export type SessionRequest = { id: number } & (
   { type: "load"; file: File } |
   { type: "import-user-file"; file: File; path: string } |
   { type: "surface"; canvas: OffscreenCanvas } |
   { type: "audio-output"; transport: AudioTransport } |
-  { type: "start" | "pause" | "advance-frame" | "close" | "performance" } |
+  { type: "start" | "pause" | "advance-frame" | "close" | "performance" | "options" } |
+  { type: "set-option"; key: string; value: string } |
   { type: "save" | "restore"; slot: number } |
   { type: "input"; state: InputState }
 );

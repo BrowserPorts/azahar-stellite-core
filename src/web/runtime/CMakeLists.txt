@@ -16,7 +16,7 @@ target_link_options(azahar_pica_shader_generator PRIVATE
 
 add_executable(azahar_browser entry.cpp file-system.cpp)
 azahar_enable_dsp_runtime(azahar_browser)
-target_link_libraries(azahar_browser PRIVATE citra_libretro libretro Boost::boost fmt::fmt cryptopp emscripten_opfs)
+target_link_libraries(azahar_browser PRIVATE citra_libretro libretro Boost::boost fmt::fmt cryptopp emscripten_opfs json-headers)
 target_include_directories(azahar_browser PRIVATE "${PROJECT_BINARY_DIR}/src"
     "${EMSCRIPTEN_ROOT_PATH}/system/lib/wasmfs")
 set_property(TARGET azahar_browser APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/file-system.js")

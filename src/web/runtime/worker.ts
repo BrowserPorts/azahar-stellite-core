@@ -133,6 +133,8 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
           session.runFrame();
           break;
         case "input": session.input(request.state); break;
+        case "options": result = session.options(); break;
+        case "set-option": session.setOption(request.key, request.value); break;
         case "performance": result = session.performance(); break;
         case "save":
         case "restore": {

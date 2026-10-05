@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <array>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <map>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <json.hpp>
 #include <emscripten.h>
 #include <emscripten/console.h>
 #include "audio_core/audio_types.h"
@@ -20,6 +24,8 @@
 
 namespace {
 std::map<std::string, std::string> options;
+std::map<std::string, const retro_core_option_v2_definition*> option_definitions;
+bool options_changed = false;
 std::array<std::int16_t, 16> buttons{};
 std::array<std::array<std::int16_t, 2>, 2> sticks{};
 std::array<std::int16_t, 3> pointer{};
@@ -59,7 +65,10 @@ bool Environment(unsigned command, void* data) {
         for (; definition->key; ++definition) {
             const auto* value = definition->default_value ? definition->default_value
                                                          : definition->values[0].value;
-            if (value) options.emplace(definition->key, value);
+            if (value) {
+                options.emplace(definition->key, value);
+                option_definitions.emplace(definition->key, definition);
+            }
         }
         return true;
     }
@@ -70,7 +79,7 @@ bool Environment(unsigned command, void* data) {
         return variable.value != nullptr;
     }
     case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
-        *static_cast<bool*>(data) = false;
+        *static_cast<bool*>(data) = std::exchange(options_changed, false);
         return true;
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
     case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
@@ -115,7 +124,46 @@ int16_t ReadInput(unsigned port, unsigned device, unsigned index, unsigned id) {
 } // namespace
 
 extern "C" EMSCRIPTEN_KEEPALIVE std::uint32_t azahar_web_abi() {
-    return 12;
+    return 13;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_core_options() {
+    if (!initialized) return nullptr;
+    auto result = nlohmann::json::array();
+    for (const auto& [key, definition] : option_definitions) {
+        auto values = nlohmann::json::array();
+        for (const auto& value : definition->values) {
+            if (!value.value) break;
+            values.push_back({{"value", value.value},
+                              {"label", value.label ? value.label : value.value}});
+        }
+        result.push_back({{"key", key}, {"value", options.at(key)},
+                          {"defaultValue", definition->default_value ? definition->default_value
+                                                                     : definition->values[0].value},
+                          {"label", definition->desc ? definition->desc : key.c_str()},
+                          {"description", definition->info ? definition->info : ""},
+                          {"category", definition->category_key ? definition->category_key : ""},
+                          {"values", std::move(values)}});
+    }
+    static std::string text;
+    text = result.dump();
+    return text.c_str();
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_set_core_option(const char* key, const char* value) {
+    if (!initialized || !key || !value) return false;
+    const auto definition = option_definitions.find(key);
+    if (definition == option_definitions.end()) return false;
+    const auto& values = definition->second->values;
+    if (std::none_of(std::begin(values), std::end(values), [value](const auto& candidate) {
+            return candidate.value && std::string_view{candidate.value} == value;
+        })) return false;
+    auto& current = options.at(key);
+    if (current != value) {
+        current = value;
+        options_changed = true;
+    }
+    return true;
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE double azahar_frame_rate() {
@@ -189,6 +237,8 @@ extern "C" EMSCRIPTEN_KEEPALIVE void azahar_shutdown() {
     loaded = false;
     initialized = false;
     options.clear();
+    option_definitions.clear();
+    options_changed = false;
     buttons = {};
     sticks = {};
     pointer = {};
