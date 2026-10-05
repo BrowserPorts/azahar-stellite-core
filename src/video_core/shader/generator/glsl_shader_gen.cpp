@@ -170,8 +170,10 @@ std::string_view MakeLoadPrefix(AttribLoadFlags flag) {
 }
 
 std::string GenerateVertexShader(const ShaderSetup& setup, const PicaVSConfig& config,
-                                 const ExtraVSConfig& extra, bool webgpu_viewport) {
+                                 const ExtraVSConfig& extra, bool webgpu_viewport,
+                                 u32* input_register_mask) {
     const bool separable_shader = extra.separable_shader;
+    if (input_register_mask) *input_register_mask = 0;
 
     std::string out;
     if (separable_shader) {
@@ -211,6 +213,7 @@ std::string GenerateVertexShader(const ShaderSetup& setup, const PicaVSConfig& c
     // input attributes declaration
     for (std::size_t i = 0; i < used_regs.size(); ++i) {
         if (used_regs[i]) {
+            if (input_register_mask) *input_register_mask |= 1U << i;
             const auto flags = extra.load_flags[i];
             const std::string_view prefix = MakeLoadPrefix(flags);
             out +=

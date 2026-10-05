@@ -4,10 +4,15 @@ import { GlslangCompiler } from "./glslang";
 import { NativeShaders } from "./native-shaders";
 import { ShaderCompiler } from "./shader-compiler";
 
+interface VertexProgram {
+  module: GPUShaderModule;
+  layout: GPUVertexBufferLayout;
+}
+
 /** Compiles native PICA configurations and keeps hot fragment programs on the device. */
 export class PicaShaders {
   #fragments = new Map<string, Promise<GPUShaderModule>>();
-  #vertices = new Map<number, GPUShaderModule>();
+  #vertices = new Map<number, VertexProgram>();
   #closed = false;
   readonly configurationSize: number;
   readonly configurationSchema: bigint;
@@ -74,21 +79,30 @@ export class PicaShaders {
     return pending;
   }
 
-  async createVertexProgram(handle: number, source: string): Promise<undefined> {
+  async createVertexProgram(handle: number, source: string, inputMask: number): Promise<undefined> {
     if (this.#closed || !Number.isInteger(handle) || handle <= 0 || this.#vertices.has(handle)) {
       throw new Error("Invalid PICA vertex program handle");
+    }
+    if (!Number.isInteger(inputMask) || inputMask <= 0 || inputMask > 0xffff) {
+      throw new Error("Invalid PICA input register mask");
+    }
+    const attributes: GPUVertexAttribute[] = [];
+    for (let shaderLocation = 0; shaderLocation < 16; shaderLocation++) {
+      if (inputMask & (1 << shaderLocation)) {
+        attributes.push({ shaderLocation, offset: attributes.length * 16, format: "float32x4" });
+      }
     }
     const code = this.glslang.compileWgsl(source, "vertex", this.naga);
     const module = await PicaShaders.createModule(this.device, "Azahar programmable PICA vertex shader", code);
     if (this.#closed) throw new Error("The PICA shader compiler is closed");
-    this.#vertices.set(handle, module);
+    this.#vertices.set(handle, { module, layout: { arrayStride: attributes.length * 16, attributes } });
     return undefined;
   }
 
-  vertexProgram(handle: number): GPUShaderModule {
-    const module = this.#vertices.get(handle);
-    if (!module) throw new Error("Unknown PICA vertex program");
-    return module;
+  vertexProgram(handle: number): VertexProgram {
+    const program = this.#vertices.get(handle);
+    if (!program) throw new Error("Unknown PICA vertex program");
+    return program;
   }
 
   destroyVertexProgram(handle: number): undefined {

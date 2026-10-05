@@ -29,6 +29,10 @@ public:
     TextureRuntime& Runtime() { return runtime; }
 
 private:
+    struct VertexProgram {
+        u32 handle;
+        u32 input_mask;
+    };
     void DrawBatch(std::span<const u8> vertices, u32 program = 0,
                    const Pica::Shader::Generator::VSPicaUniformData* uniforms = nullptr);
     bool DrawProgrammable(bool is_indexed);
@@ -40,7 +44,7 @@ private:
     std::array<Common::Vec2f, 24 * 256 + 128> lighting_lut{};
     std::array<Common::Vec2f, 128 * 3> proctex_lut{};
     std::array<Common::Vec4f, 256 * 2> proctex_color{};
-    std::unordered_map<Pica::Shader::Generator::PicaVSConfig, u32> vertex_programs;
+    std::unordered_map<Pica::Shader::Generator::PicaVSConfig, VertexProgram> vertex_programs;
 };
 
 } // namespace WebGPU

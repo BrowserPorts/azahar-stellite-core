@@ -5,12 +5,6 @@ export const nativeDrawStateBytes = 43 * 4;
 export const nativeVertexUniformBytes = 32;
 export const nativeFragmentUniformBytes = 0x530;
 export const nativePicaUniformBytes = 1616;
-export const programmableVertexLayout: GPUVertexBufferLayout = {
-  arrayStride: 256,
-  attributes: Array.from({ length: 16 }, (_, shaderLocation) => ({
-    shaderLocation, offset: shaderLocation * 16, format: "float32x4" as const,
-  })),
-};
 
 export interface NativeDrawState {
   color: number;

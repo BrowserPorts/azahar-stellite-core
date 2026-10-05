@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { NativeDraw, NativeDrawState } from "./draw-types";
-import { nativePicaUniformBytes, programmableVertexLayout } from "./draw-types";
+import { nativePicaUniformBytes } from "./draw-types";
 import { PicaShaders } from "./pica-shaders";
 import { GraphicsSamplers } from "./samplers";
 import { ShadowPixels } from "./shadow-pixels";
@@ -99,7 +99,7 @@ export class GraphicsDraws {
   async draw(draw: NativeDraw): Promise<undefined> {
     this.checkOpen();
     const state = draw.state;
-    const stride = draw.program ? programmableVertexLayout.arrayStride : this.shaders.vertexLayout.arrayStride;
+    const stride = (draw.program ? this.shaders.vertexProgram(draw.program).layout : this.shaders.vertexLayout).arrayStride;
     if (draw.vertexUniforms.byteLength !== 32 || draw.fragmentUniforms.byteLength !== 0x530 ||
       !draw.vertices.byteLength || draw.vertices.byteLength % (stride * 3) ||
       (draw.program ? draw.picaUniforms?.byteLength !== nativePicaUniformBytes : draw.picaUniforms !== undefined)) {
@@ -419,6 +419,8 @@ export class GraphicsDraws {
 
   private async createPipeline(draw: NativeDraw, colorFormat: number, color?: GPUTextureFormat, depth?: GPUTextureFormat): Promise<DrawPipeline> {
     const s = draw.state;
+    const vertex = draw.program ? this.shaders.vertexProgram(draw.program) :
+      { module: this.shaders.vertex, layout: this.shaders.vertexLayout };
     const depthFormat = depth ? depth === "depth16unorm" ? 1 : 2 : 0;
     const fragment = await this.shaders.fragment(draw.configuration,
       Number(!!s.normal) | (colorFormat << 1) | (depthFormat << 4));
@@ -456,8 +458,7 @@ export class GraphicsDraws {
       failOp: stencilOps[s.stencilFail]!, depthFailOp: stencilOps[s.stencilDepthFail]!, passOp: stencilOps[s.stencilPass]! } : { compare: "always" };
     const pipeline = await this.device.createRenderPipelineAsync({ label: "Azahar PICA pipeline",
       layout: this.device.createPipelineLayout({ bindGroupLayouts: groups }),
-      vertex: { module: draw.program ? this.shaders.vertexProgram(draw.program) : this.shaders.vertex,
-        entryPoint: "main", buffers: [draw.program ? programmableVertexLayout : this.shaders.vertexLayout] },
+      vertex: { module: vertex.module, entryPoint: "main", buffers: [vertex.layout] },
       fragment: { module: fragment, entryPoint: "main", targets: color ? [{ format: color,
         writeMask: s.shadow || (!s.blend && s.logicOp === 6) ? 0 : s.colorMask,
         ...(s.blend && !s.shadow ? { blend: { color: blend(s.rgbEquation, s.rgbSource, s.rgbDest, this.rgbEmulated(s, colorFormat)),

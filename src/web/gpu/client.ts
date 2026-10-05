@@ -191,10 +191,10 @@ export class GraphicsClient {
     return this.post({ type: "sampler-destroy", handle });
   }
 
-  createVertexProgram(source: string): number {
+  createVertexProgram(source: string, inputMask: number): number {
     const handle = ++this.#nextVertexProgram;
     if (handle > 0xffffffff) throw new Error("PICA vertex program handles exhausted");
-    this.post({ type: "vertex-program-create", handle, source });
+    this.post({ type: "vertex-program-create", handle, source, inputMask });
     return handle;
   }
 

@@ -46,8 +46,8 @@ EM_JS(void, DrawTriangles, (const DrawState* state, const u8* config, u32 config
        HEAPU8.subarray(vs, vs + 32), HEAPU8.subarray(fs, fs + 0x530), program,
        uniforms ? HEAPU8.subarray(uniforms, uniforms + 1616) : undefined);
 });
-EM_JS(u32, CreateVertexProgram, (const char* source), {
-    return Module["azaharGraphicsHost"].createVertexProgram(UTF8ToString(source));
+EM_JS(u32, CreateVertexProgram, (const char* source, u32 input_mask), {
+    return Module["azaharGraphicsHost"].createVertexProgram(UTF8ToString(source), input_mask);
 });
 EM_JS(void, DestroyVertexProgram, (u32 program), {
     Module["azaharGraphicsHost"].destroyVertexProgram(program);
@@ -201,56 +201,77 @@ bool Rasterizer::DrawProgrammable(bool is_indexed) {
         extra.separable_shader = true;
         extra.sanitize_mul = true;
         extra.load_flags.fill(AttribLoadFlags::Float);
-        const auto source = GLSL::GenerateVertexShader(pica.vs_setup, config, extra, true);
-        const u32 program = source.empty() ? 0 :
-            CreateVertexProgram(("#version 450\n" + source).c_str());
+        VertexProgram program{};
+        const auto source = GLSL::GenerateVertexShader(pica.vs_setup, config, extra, true,
+                                                       &program.input_mask);
+        // Keep a vertex stride even when the program reads no input registers.
+        if (!program.input_mask) program.input_mask = 1;
+        program.handle = source.empty() ? 0 :
+            CreateVertexProgram(("#version 450\n" + source).c_str(), program.input_mask);
         if (vertex_programs.size() >= 512) ClearPrograms();
         found = vertex_programs.emplace(config, program).first;
     }
-    if (!found->second) return false;
+    const auto& program = found->second;
+    if (!program.handle) return false;
 
-    using InputVertex = std::array<Common::Vec4f, 16>;
-    static_assert(sizeof(InputVertex) == 256);
+    const u32 input_count = std::popcount(program.input_mask);
+    std::array<u32, 16> register_attributes;
+    register_attributes.fill(16);
+    for (u32 attr = 0; attr <= regs.vs.max_input_attribute_index; ++attr) {
+        register_attributes[regs.vs.GetRegisterForAttribute(attr)] = attr;
+    }
+    std::array<u32, 16> packed_attributes{};
+    for (u32 mask = program.input_mask, slot = 0; mask; mask &= mask - 1, ++slot) {
+        packed_attributes[slot] = register_attributes[std::countr_zero(mask)];
+    }
     const auto& attributes = pipeline.vertex_attributes;
     const PAddr base = attributes.GetPhysicalBaseAddress();
     const auto* indices = memory.GetPhysicalPointer(base + pipeline.index_array.offset);
     if (is_indexed && !indices) return true;
     const Pica::VertexLoader loader{memory, pipeline, true};
-    std::vector<InputVertex> inputs(pipeline.num_vertices);
+    std::vector<Common::Vec4f> inputs;
+    ASSERT(pipeline.num_vertices <= inputs.max_size() / input_count);
+    inputs.resize(static_cast<std::size_t>(pipeline.num_vertices) * input_count);
     for (u32 index = 0; index < pipeline.num_vertices; ++index) {
         const u32 vertex = is_indexed ? (pipeline.index_array.format ?
             reinterpret_cast<const u16*>(indices)[index] : indices[index]) :
             index + pipeline.vertex_offset;
         Pica::AttributeBuffer attributes_in{};
         loader.LoadVertex(base, index, vertex, attributes_in, pica.input_default_attributes);
-        for (u32 attr = 0; attr <= regs.vs.max_input_attribute_index; ++attr) {
-            auto& input = inputs[index][regs.vs.GetRegisterForAttribute(attr)];
+        for (u32 slot = 0; slot < input_count; ++slot) {
+            const u32 attr = packed_attributes[slot];
+            if (attr == 16) continue;
+            auto& input = inputs[index * input_count + slot];
             for (u32 component = 0; component < 4; ++component) {
                 input[component] = attributes_in[attr][component].ToFloat32();
             }
         }
     }
-    std::vector<InputVertex> triangles;
+    std::vector<Common::Vec4f> triangles;
     if (!triangle_list) {
-        triangles.reserve((inputs.size() - 2) * 3);
-        for (u32 index = 2; index < inputs.size(); ++index) {
+        ASSERT(pipeline.num_vertices - 2 <= triangles.max_size() / 3 / input_count);
+        triangles.reserve(static_cast<std::size_t>(pipeline.num_vertices - 2) * 3 * input_count);
+        for (u32 index = 2; index < pipeline.num_vertices; ++index) {
             const bool strip = pipeline.triangle_topology == Topology::Strip;
             const u32 first = strip ? index - 2 + (index & 1) : 0;
             const u32 second = strip ? index - 1 - (index & 1) : index - 1;
-            triangles.insert(triangles.end(), {inputs[first], inputs[second], inputs[index]});
+            for (const u32 vertex : {first, second, index}) {
+                const auto begin = inputs.begin() + vertex * input_count;
+                triangles.insert(triangles.end(), begin, begin + input_count);
+            }
         }
     }
     const auto& vertices = triangle_list ? inputs : triangles;
     VSPicaUniformData uniforms{};
     uniforms.SetFromRegs(pica.vs_setup);
-    DrawBatch({reinterpret_cast<const u8*>(vertices.data()), vertices.size() * sizeof(InputVertex)},
-              found->second, &uniforms);
+    DrawBatch({reinterpret_cast<const u8*>(vertices.data()), vertices.size() * sizeof(Common::Vec4f)},
+              program.handle, &uniforms);
     return true;
 }
 
 void Rasterizer::ClearPrograms() {
     for (const auto& [config, program] : vertex_programs) {
-        if (program) DestroyVertexProgram(program);
+        if (program.handle) DestroyVertexProgram(program.handle);
     }
     vertex_programs.clear();
 }
