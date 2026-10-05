@@ -215,6 +215,8 @@ export class GraphicsClient {
     const fsOffset = vsOffset + nativeVertexUniformBytes;
     const vertexOffset = fsOffset + nativeFragmentUniformBytes;
     const size = vertexOffset + vertices.byteLength;
+    if (!program && this.appendTriangles(state, configuration, vertexUniforms, fragmentUniforms,
+      vertices, vertexOffset)) return undefined;
     // Batch storage snapshots every native input before heap and register writes resume.
     const snapshot = this.snapshot(size + (picaUniforms?.byteLength ?? 0));
     const bytes = snapshot.subarray(0, size);
@@ -228,6 +230,38 @@ export class GraphicsClient {
     this.post({ type: "draw", bytes, program, ...(uniforms ? { picaUniforms: uniforms } : {}) });
     if (program) this.#programmableDraws++;
     return undefined;
+  }
+
+  private appendTriangles(state: Uint8Array<SharedArrayBuffer>, configuration: Uint8Array<SharedArrayBuffer>,
+    vertexUniforms: Uint8Array<SharedArrayBuffer>, fragmentUniforms: Uint8Array<SharedArrayBuffer>,
+    vertices: Uint8Array<SharedArrayBuffer>, vertexOffset: number): boolean {
+    const previous = this.#commands[this.#commands.length - 1];
+    if (previous?.type !== "draw" || previous.program || !this.#snapshots ||
+      previous.bytes.buffer !== this.#snapshots.buffer || vertexOffset % 4 || vertices.byteLength % 4 ||
+      !vertices.byteLength || previous.bytes.byteLength <= vertexOffset ||
+      previous.bytes.byteOffset + previous.bytes.byteLength !== this.#snapshotBytes ||
+      this.#snapshotBytes + vertices.byteLength > this.#snapshots.byteLength) return false;
+    const header = new Uint32Array(previous.bytes.buffer, previous.bytes.byteOffset, vertexOffset / 4);
+    // Feedback snapshots and shadow conversions observe each original draw boundary.
+    if (header[34]) return false;
+    for (const binding of [27, 28, 29, 33]) {
+      const texture = header[binding];
+      if (texture && (texture === header[0] || texture === header[1])) return false;
+    }
+    let offset = 0;
+    for (const source of [state, configuration, vertexUniforms, fragmentUniforms]) {
+      if (source.byteOffset % 4 || source.byteLength % 4) return false;
+      const words = new Uint32Array(source.buffer, source.byteOffset, source.byteLength / 4);
+      for (let i = 0; i < words.length; ++i) if (words[i] !== header[offset + i]) return false;
+      offset += words.length;
+    }
+    // Only extend the last unsubmitted snapshot, retaining triangle order and immutable state.
+    const bytes = this.snapshot(vertices.byteLength);
+    bytes.set(vertices);
+    previous.bytes = new Uint8Array(previous.bytes.buffer, previous.bytes.byteOffset,
+      previous.bytes.byteLength + vertices.byteLength);
+    if (this.#batchBytes >= 256 * 1024) this.flush();
+    return true;
   }
 
   lookupTable(table: number, offset: number, view: Uint8Array<SharedArrayBuffer>): undefined {
