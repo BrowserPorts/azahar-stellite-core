@@ -108,7 +108,7 @@ export class BrowserSession {
         azaharAudio: (pointer, frames, sampleRate) => output.audio(core.HEAP16.subarray(pointer >>> 1,
           (pointer >>> 1) + frames * 2), sampleRate),
       });
-      if (core._azahar_web_abi() !== 15) throw new Error("Unsupported Azahar browser ABI");
+      if (core._azahar_web_abi() !== 16) throw new Error("Unsupported Azahar browser ABI");
       if (!core._azahar_mount_storage()) throw new Error("Azahar could not mount OPFS user storage");
       if (!core._azahar_initialize()) throw new Error("Azahar initialization failed");
       return new BrowserSession(core, storage, armJit, graphics, microphone);

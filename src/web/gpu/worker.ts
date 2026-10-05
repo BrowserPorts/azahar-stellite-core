@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { GraphicsCommand, GraphicsEvent, GraphicsRequest } from "./messages";
-import { fenceByteLength, fenceErrorOffset } from "./messages";
+import { fenceByteLength, fenceErrorOffset, graphicsProtocolVersion } from "./messages";
 import { PicaShaders } from "./pica-shaders";
 import { WebGpuPresenter } from "./presenter";
 import { GraphicsTextures } from "./textures";
@@ -44,7 +44,8 @@ function fail(error: unknown, id?: number): undefined {
   return undefined;
 }
 
-async function initialize(fence: SharedArrayBuffer): Promise<undefined> {
+async function initialize(fence: SharedArrayBuffer, protocol: number): Promise<undefined> {
+  if (protocol !== graphicsProtocolVersion) throw new Error("Incompatible WebGPU client protocol");
   if (control || fence.byteLength !== fenceByteLength) throw new Error("Invalid graphics initialization");
   control = new Int32Array(fence, 0, 3);
   errorBytes = new Uint8Array(fence, fenceErrorOffset);
@@ -62,7 +63,7 @@ async function initialize(fence: SharedArrayBuffer): Promise<undefined> {
   screens = await GraphicsScreens.create(device, textures);
   if (failure) throw new Error(failure);
   const info = adapter.info;
-  post({ type: "ready", configurationSize: shaders.configurationSize,
+  post({ type: "ready", protocol: graphicsProtocolVersion, configurationSize: shaders.configurationSize,
     configurationSchema: shaders.configurationSchema, adapter: {
       vendor: info.vendor, architecture: info.architecture, device: info.device,
       description: info.description, isFallbackAdapter: info.isFallbackAdapter,
@@ -74,7 +75,7 @@ async function execute(request: GraphicsCommand): Promise<undefined> {
   try {
     if (closed) throw new Error("The graphics worker is closed");
     if (failure) throw new Error(failure);
-    if (request.type === "initialize") return await initialize(request.fence);
+    if (request.type === "initialize") return await initialize(request.fence, request.protocol);
     if (!device || !shaders || !textures || !samplers || !draws || !screens || !control) throw new Error("WebGPU is unavailable");
     // Submit prior draws before a queue write, resource mutation, presentation, or fence.
     if (request.type !== "draw") draws.flush();
@@ -82,7 +83,7 @@ async function execute(request: GraphicsCommand): Promise<undefined> {
       case "vertex-program-create": await shaders.createVertexProgram(request.handle, request.source, request.inputMask); break;
       case "vertex-program-destroy": shaders.destroyVertexProgram(request.handle); break;
       case "draw": await draws.draw(unpackNativeDraw(request.bytes, shaders.configurationSize,
-        request.program, request.picaUniforms)); break;
+        request.program, request.picaUniforms, request.indices)); break;
       case "lookup-table": draws.lookupTable(request.table, request.offset, request.bytes); break;
       case "sampler-create": samplers.create(request.handle, request.params); break;
       case "sampler-destroy": samplers.destroy(request.handle); break;

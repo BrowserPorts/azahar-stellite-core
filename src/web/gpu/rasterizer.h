@@ -34,8 +34,9 @@ private:
         u32 input_mask;
     };
     void DrawBatch(std::span<const u8> vertices, u32 program = 0,
-                   const Pica::Shader::Generator::VSPicaUniformData* uniforms = nullptr);
-    bool DrawProgrammable(bool is_indexed);
+                   const Pica::Shader::Generator::VSPicaUniformData* uniforms = nullptr,
+                   std::span<const u32> indices = {});
+    bool DrawProgrammable(bool is_indexed, const VertexArrayInfo& vertex_info);
     void ClearPrograms();
     void SyncLookupTables();
     u32 TextureCube(const Pica::TexturingRegs::FullTextureConfig& texture);

@@ -49,13 +49,14 @@ export interface NativeDraw {
   state: NativeDrawState;
   configuration: Uint8Array<ArrayBuffer>;
   vertices: Uint8Array<ArrayBuffer>;
+  indices: Uint8Array<ArrayBuffer> | undefined;
   vertexUniforms: Uint8Array<ArrayBuffer>;
   fragmentUniforms: Uint8Array<ArrayBuffer>;
 }
 
 /** Reads a single transferred snapshot without copying its shader or vertex payloads. */
 export function unpackNativeDraw(bytes: Uint8Array<ArrayBuffer>, configurationSize: number,
-  program = 0, picaUniforms?: Uint8Array<ArrayBuffer>): NativeDraw {
+  program = 0, picaUniforms?: Uint8Array<ArrayBuffer>, indices?: Uint8Array<ArrayBuffer>): NativeDraw {
   const vsOffset = nativeDrawStateBytes + configurationSize;
   const fsOffset = vsOffset + nativeVertexUniformBytes;
   const vertexOffset = fsOffset + nativeFragmentUniformBytes;
@@ -64,7 +65,7 @@ export function unpackNativeDraw(bytes: Uint8Array<ArrayBuffer>, configurationSi
   const u = new Uint32Array(bytes.buffer, bytes.byteOffset, 43);
   const viewport = new Int32Array(bytes.buffer, bytes.byteOffset + 35 * 4, 4);
   return {
-    program, picaUniforms,
+    program, picaUniforms, indices,
     state: {
       color: u[0]!, depth: u[1]!, colorLevel: u[2]!, depthLevel: u[3]!,
       cull: u[4]!, flipped: u[5] !== 0, colorMask: u[6]!, depthWrite: u[7] !== 0, depthCompare: u[8]!,

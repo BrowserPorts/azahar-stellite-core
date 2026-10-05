@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { GraphicsAdapterInfo, GraphicsCommand, GraphicsEvent, GraphicsRequest } from "./messages";
-import { fenceByteLength, fenceErrorOffset } from "./messages";
+import { fenceByteLength, fenceErrorOffset, graphicsProtocolVersion } from "./messages";
 import type { TextureRegion } from "./textures";
 import type { TextureRect } from "./blits";
 import type { NativeSampler } from "./samplers";
@@ -23,6 +23,10 @@ export interface GraphicsStatistics {
   submittedCommands: number;
   submittedBatches: number;
   programmableDraws: number;
+  indexedDraws: number;
+  /** Native vertex and index payload bytes copied into draw snapshots, excluding padding. */
+  vertexBytes: number;
+  indexBytes: number;
   /** Interval totals by the operation that stopped the emulation worker. */
   fences: {
     textureReadback: GraphicsFenceStatistics;
@@ -46,6 +50,9 @@ export class GraphicsClient {
   #submittedCommands = 0;
   #submittedBatches = 0;
   #programmableDraws = 0;
+  #indexedDraws = 0;
+  #vertexBytes = 0;
+  #indexBytes = 0;
   #nextVertexProgram = 0;
   #closed = false;
   #hasSurface = false;
@@ -69,6 +76,9 @@ export class GraphicsClient {
       worker.onmessage = (event: MessageEvent<GraphicsEvent>): undefined => {
         const response = event.data;
         if (response.type === "ready") {
+          if (response.protocol !== graphicsProtocolVersion) {
+            return this.fail(new Error("Incompatible WebGPU worker protocol"), reject, onError);
+          }
           this.#adapter = response.adapter;
           this.configurationSize = response.configurationSize;
           this.configurationSchema = response.configurationSchema;
@@ -97,7 +107,7 @@ export class GraphicsClient {
     const worker = new Worker(new URL("./azahar-gpu-worker.js", import.meta.url), { type: "module" });
     const client = new GraphicsClient(worker, onError);
     try {
-      client.post({ type: "initialize", fence: client.#fence });
+      client.post({ type: "initialize", fence: client.#fence, protocol: graphicsProtocolVersion });
       await client.#ready;
       return client;
     } catch (error) { worker.terminate(); throw error; }
@@ -142,10 +152,15 @@ export class GraphicsClient {
     }
     const submittedCommands = this.#submittedCommands, submittedBatches = this.#submittedBatches;
     const programmableDraws = this.#programmableDraws;
+    const indexedDraws = this.#indexedDraws, vertexBytes = this.#vertexBytes, indexBytes = this.#indexBytes;
     this.#programmableDraws = 0;
+    this.#indexedDraws = 0;
+    this.#vertexBytes = 0;
+    this.#indexBytes = 0;
     this.#submittedCommands = 0;
     this.#submittedBatches = 0;
-    return { adapter: { ...this.#adapter }, fenceWaitMs, fenceCount, fences, submittedCommands, submittedBatches, programmableDraws };
+    return { adapter: { ...this.#adapter }, fenceWaitMs, fenceCount, fences, submittedCommands, submittedBatches,
+      programmableDraws, indexedDraws, vertexBytes, indexBytes };
   }
 
   screens(frame: ScreenFrame): boolean {
@@ -204,11 +219,12 @@ export class GraphicsClient {
 
   draw(state: Uint8Array<SharedArrayBuffer>, configuration: Uint8Array<SharedArrayBuffer>, vertices: Uint8Array<SharedArrayBuffer>,
     vertexUniforms: Uint8Array<SharedArrayBuffer>, fragmentUniforms: Uint8Array<SharedArrayBuffer>,
-    program = 0, picaUniforms?: Uint8Array<SharedArrayBuffer>): undefined {
+    program = 0, picaUniforms?: Uint8Array<SharedArrayBuffer>, indices?: Uint8Array<SharedArrayBuffer>): undefined {
     this.checkOpen();
     if (state.byteLength !== nativeDrawStateBytes || configuration.byteLength !== this.configurationSize ||
       vertexUniforms.byteLength !== nativeVertexUniformBytes || fragmentUniforms.byteLength !== nativeFragmentUniformBytes ||
-      (program !== 0 ? picaUniforms?.byteLength !== nativePicaUniformBytes : picaUniforms !== undefined)) {
+      (program !== 0 ? picaUniforms?.byteLength !== nativePicaUniformBytes : picaUniforms !== undefined) ||
+      (indices && (!program || !indices.byteLength || indices.byteLength % 12))) {
       throw new Error("Invalid native draw layout");
     }
     const vsOffset = nativeDrawStateBytes + configuration.byteLength;
@@ -216,19 +232,28 @@ export class GraphicsClient {
     const vertexOffset = fsOffset + nativeFragmentUniformBytes;
     const size = vertexOffset + vertices.byteLength;
     if (!program && this.appendTriangles(state, configuration, vertexUniforms, fragmentUniforms,
-      vertices, vertexOffset)) return undefined;
+      vertices, vertexOffset)) {
+      this.#vertexBytes += vertices.byteLength;
+      return undefined;
+    }
     // Batch storage snapshots every native input before heap and register writes resume.
-    const snapshot = this.snapshot(size + (picaUniforms?.byteLength ?? 0));
+    const indexOffset = size + (picaUniforms?.byteLength ?? 0);
+    const snapshot = this.snapshot(indexOffset + (indices?.byteLength ?? 0));
     const bytes = snapshot.subarray(0, size);
     bytes.set(state);
     bytes.set(configuration, nativeDrawStateBytes);
     bytes.set(vertexUniforms, vsOffset);
     bytes.set(fragmentUniforms, fsOffset);
     bytes.set(vertices, vertexOffset);
-    const uniforms = picaUniforms ? snapshot.subarray(size) : undefined;
+    const uniforms = picaUniforms ? snapshot.subarray(size, indexOffset) : undefined;
     uniforms?.set(picaUniforms!);
-    this.post({ type: "draw", bytes, program, ...(uniforms ? { picaUniforms: uniforms } : {}) });
+    const elements = indices ? snapshot.subarray(indexOffset) : undefined;
+    elements?.set(indices!);
+    this.post({ type: "draw", bytes, program, ...(uniforms ? { picaUniforms: uniforms } : {}),
+      ...(elements ? { indices: elements } : {}) });
     if (program) this.#programmableDraws++;
+    if (indices) { this.#indexedDraws++; this.#indexBytes += indices.byteLength; }
+    this.#vertexBytes += vertices.byteLength;
     return undefined;
   }
 

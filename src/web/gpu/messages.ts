@@ -5,6 +5,8 @@ import type { TextureRect } from "./blits";
 import type { NativeSampler } from "./samplers";
 import type { ScreenFrame } from "./screens";
 
+export const graphicsProtocolVersion = 1;
+
 export interface GraphicsAdapterInfo {
   vendor: string;
   architecture: string;
@@ -14,7 +16,7 @@ export interface GraphicsAdapterInfo {
 }
 
 export type GraphicsCommand =
-  { type: "initialize"; fence: SharedArrayBuffer } |
+  { type: "initialize"; fence: SharedArrayBuffer; protocol: number } |
   { type: "surface"; id: number; canvas: OffscreenCanvas } |
   { type: "video"; bytes: Uint8Array<ArrayBuffer>; width: number; height: number; pitch: number } |
   { type: "screens"; frame: ScreenFrame } |
@@ -28,7 +30,8 @@ export type GraphicsCommand =
   { type: "sampler-destroy"; handle: number } |
   { type: "vertex-program-create"; handle: number; source: string; inputMask: number } |
   { type: "vertex-program-destroy"; handle: number } |
-  { type: "draw"; bytes: Uint8Array<ArrayBuffer>; program: number; picaUniforms?: Uint8Array<ArrayBuffer> } |
+  { type: "draw"; bytes: Uint8Array<ArrayBuffer>; program: number;
+    picaUniforms?: Uint8Array<ArrayBuffer>; indices?: Uint8Array<ArrayBuffer> } |
   { type: "lookup-table"; table: number; offset: number; bytes: Uint8Array<ArrayBuffer> } |
   { type: "texture-clear"; handle: number; region: TextureRegion; value: readonly number[]; stencil: number } |
   { type: "texture-upload"; handle: number; region: TextureRegion; bytes: Uint8Array<ArrayBuffer> } |
@@ -41,7 +44,7 @@ export interface GraphicsRequest {
 }
 
 export type GraphicsEvent =
-  { type: "ready"; configurationSize: number; configurationSchema: bigint; adapter: GraphicsAdapterInfo } |
+  { type: "ready"; protocol: number; configurationSize: number; configurationSchema: bigint; adapter: GraphicsAdapterInfo } |
   { type: "presented" } |
   { type: "reply"; id: number } |
   { type: "error"; message: string; id?: number };

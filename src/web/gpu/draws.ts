@@ -101,7 +101,9 @@ export class GraphicsDraws {
     const state = draw.state;
     const stride = (draw.program ? this.shaders.vertexProgram(draw.program).layout : this.shaders.vertexLayout).arrayStride;
     if (draw.vertexUniforms.byteLength !== 32 || draw.fragmentUniforms.byteLength !== 0x530 ||
-      !draw.vertices.byteLength || draw.vertices.byteLength % (stride * 3) ||
+      !draw.vertices.byteLength || draw.vertices.byteLength % stride ||
+      (draw.indices ? !draw.program || !draw.indices.byteLength || draw.indices.byteLength % 12 :
+        draw.vertices.byteLength % (stride * 3)) ||
       (draw.program ? draw.picaUniforms?.byteLength !== nativePicaUniformBytes : draw.picaUniforms !== undefined)) {
       throw new Error("Invalid native triangle batch");
     }
@@ -125,7 +127,8 @@ export class GraphicsDraws {
     this.checkOpen();
     const alignment = this.device.limits.minUniformBufferOffsetAlignment;
     const aligned = (bytes: number): number => Math.ceil(bytes / alignment) * alignment;
-    const upload = this.uploadBuffer(aligned(draw.vertices.byteLength) + aligned(draw.vertexUniforms.byteLength) +
+    const upload = this.uploadBuffer(aligned(draw.vertices.byteLength) + aligned(draw.indices?.byteLength ?? 0) +
+      aligned(draw.vertexUniforms.byteLength) +
       aligned(draw.fragmentUniforms.byteLength) + aligned(draw.picaUniforms?.byteLength ?? 0) + 2 * aligned(16));
     const encoder = this.#encoder ??= this.device.createCommandEncoder({ label: "Azahar PICA draws" });
     const temporary: (GPUTexture | GPUBuffer)[] = [];
@@ -151,6 +154,7 @@ export class GraphicsDraws {
       };
       // Uniform ranges share the vertex upload without exposing alignment padding to bindings.
       const vertex = store(draw.vertices);
+      const index = draw.indices ? store(draw.indices) : undefined;
       const vs = store(draw.vertexUniforms);
       const fs = store(draw.fragmentUniforms);
       const pica = draw.picaUniforms ? store(draw.picaUniforms) : undefined;
@@ -198,7 +202,7 @@ export class GraphicsDraws {
         this.view(state.normal ? this.textures.get(state.normal).texture : this.#empty),
         state.normal ? this.samplers.get(state.samplers[0]) : this.#utilitySampler,
         this.view(dest)], !state.shadow && !destRead);
-      const count = draw.vertices.byteLength / stride;
+      const count = draw.indices ? draw.indices.byteLength / 4 : draw.vertices.byteLength / stride;
       // Logic ops and min/max blend factors read the result of preceding primitives.
       const step = destRead ? 3 : count;
       for (let first = 0; first < count; first += step) {
@@ -210,6 +214,7 @@ export class GraphicsDraws {
         }
         const pass = this.renderPass(encoder, attachment, colorLevel, depth, state.depthLevel);
         pass.setPipeline(compiled.pipeline); pass.setVertexBuffer(0, vertex.buffer, vertex.offset, vertex.size);
+        if (index) pass.setIndexBuffer(index.buffer, "uint32", index.offset, index.size);
         pass.setBindGroup(0, uniformGroup, this.#uniformOffsets, draw.program ? 0 : 1, draw.program ? 4 : 3);
         pass.setBindGroup(1, textureGroup);
         pass.setBindGroup(2, utilityGroup, this.#uniformOffsets, 4, 1);
@@ -217,7 +222,8 @@ export class GraphicsDraws {
         const blendColor = state.blendColor >>> 0;
         pass.setBlendConstant({ r: (blendColor & 255) / 255, g: ((blendColor >>> 8) & 255) / 255,
           b: ((blendColor >>> 16) & 255) / 255, a: (blendColor >>> 24) / 255 });
-        pass.draw(step, 1, first);
+        if (index) pass.drawIndexed(step, 1, first);
+        else pass.draw(step, 1, first);
       }
       // Copies and shadow conversions use separate resource scopes, including subsequent draws.
       if (temporary.length) this.endPass();
@@ -295,7 +301,7 @@ export class GraphicsDraws {
       const capacity = Math.max(1024 * 1024, size);
       const bytes = new Uint8Array(capacity);
       const buffer = this.device.createBuffer({ label: "Azahar triangle batches and uniforms", size: capacity,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.INDEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
       this.#upload?.buffer.destroy();
       this.#upload = { buffer, bytes };
     }

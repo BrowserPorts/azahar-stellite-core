@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <bit>
+#include <limits>
 #include <emscripten.h>
 #include "video_core/pica/pica_core.h"
 #include "video_core/pica/vertex_loader.h"
@@ -40,11 +42,12 @@ EM_JS(void, UploadLookupTable, (u32 table, u32 offset, const u8* pointer, u32 si
 });
 EM_JS(void, DrawTriangles, (const DrawState* state, const u8* config, u32 config_size,
                            const u8* vertices, u32 vertex_bytes, const u8* vs, const u8* fs,
-                           u32 program, const u8* uniforms), {
+                           u32 program, const u8* uniforms, const u32* indices, u32 index_bytes), {
     Module["azaharGraphicsHost"].draw(HEAPU8.subarray(state, state + 43 * 4),
        HEAPU8.subarray(config, config + config_size), HEAPU8.subarray(vertices, vertices + vertex_bytes),
        HEAPU8.subarray(vs, vs + 32), HEAPU8.subarray(fs, fs + 0x530), program,
-       uniforms ? HEAPU8.subarray(uniforms, uniforms + 1616) : undefined);
+       uniforms ? HEAPU8.subarray(uniforms, uniforms + 1616) : undefined,
+       index_bytes ? HEAPU8.subarray(indices, indices + index_bytes) : undefined);
 });
 EM_JS(u32, CreateVertexProgram, (const char* source, u32 input_mask), {
     return Module["azaharGraphicsHost"].createVertexProgram(UTF8ToString(source), input_mask);
@@ -76,7 +79,8 @@ Rasterizer::~Rasterizer() {
 }
 
 void Rasterizer::DrawBatch(std::span<const u8> vertices, u32 program,
-                          const Pica::Shader::Generator::VSPicaUniformData* uniforms) {
+                          const Pica::Shader::Generator::VSPicaUniformData* uniforms,
+                          std::span<const u32> indices) {
     SyncDrawUniforms();
     const auto& fb = regs.framebuffer;
     const auto& om = fb.output_merger;
@@ -147,7 +151,8 @@ void Rasterizer::DrawBatch(std::span<const u8> vertices, u32 program,
     WebGPU::DrawTriangles(&state, reinterpret_cast<const u8*>(&config), sizeof(config),
                           vertices.data(), static_cast<u32>(vertices.size()),
                           reinterpret_cast<const u8*>(&vs_data), reinterpret_cast<const u8*>(&fs_data),
-                          program, reinterpret_cast<const u8*>(uniforms));
+                          program, reinterpret_cast<const u8*>(uniforms), indices.data(),
+                          static_cast<u32>(indices.size_bytes()));
 }
 
 bool Rasterizer::AccelerateDrawBatch(bool is_indexed) {
@@ -163,13 +168,13 @@ bool Rasterizer::AccelerateDrawBatch(bool is_indexed) {
         cache.FlushRegion(address, count * loader.byte_count);
     }
 
-    if (DrawProgrammable(is_indexed)) return true;
+    if (DrawProgrammable(is_indexed, vertices)) return true;
     pica.LoadVertices(is_indexed, true);
     DrawTriangles();
     return true;
 }
 
-bool Rasterizer::DrawProgrammable(bool is_indexed) {
+bool Rasterizer::DrawProgrammable(bool is_indexed, const VertexArrayInfo& vertex_info) {
     using namespace Pica::Shader::Generator;
     using Topology = Pica::PipelineRegs::TriangleTopology;
     const auto& pipeline = regs.pipeline;
@@ -229,43 +234,63 @@ bool Rasterizer::DrawProgrammable(bool is_indexed) {
     const auto* indices = memory.GetPhysicalPointer(base + pipeline.index_array.offset);
     if (is_indexed && !indices) return true;
     const Pica::VertexLoader loader{memory, pipeline, true};
+    constexpr u32 unused_vertex = std::numeric_limits<u32>::max();
+    std::vector<u32> vertex_slots;
+    if (is_indexed) {
+        // Compact only the referenced vertices; sparse 16-bit indices need no empty GPU slots.
+        vertex_slots.resize(vertex_info.vs_input_index_max - vertex_info.vs_input_index_min + 1,
+                            unused_vertex);
+    }
+    std::vector<u32> draw_order(is_indexed ? pipeline.num_vertices : 0);
     std::vector<Common::Vec4f> inputs;
     ASSERT(pipeline.num_vertices <= inputs.max_size() / input_count);
-    inputs.resize(static_cast<std::size_t>(pipeline.num_vertices) * input_count);
+    const u32 capacity = is_indexed ? std::min<u32>(pipeline.num_vertices, vertex_slots.size()) :
+                                     pipeline.num_vertices;
+    inputs.reserve(static_cast<std::size_t>(capacity) * input_count);
     for (u32 index = 0; index < pipeline.num_vertices; ++index) {
         const u32 vertex = is_indexed ? (pipeline.index_array.format ?
             reinterpret_cast<const u16*>(indices)[index] : indices[index]) :
             index + pipeline.vertex_offset;
+        if (is_indexed) {
+            auto& slot = vertex_slots[vertex - vertex_info.vs_input_index_min];
+            if (slot != unused_vertex) {
+                draw_order[index] = slot;
+                continue;
+            }
+            slot = static_cast<u32>(inputs.size() / input_count);
+            draw_order[index] = slot;
+        }
+        const auto offset = inputs.size();
+        inputs.resize(offset + input_count);
         Pica::AttributeBuffer attributes_in{};
         loader.LoadVertex(base, index, vertex, attributes_in, pica.input_default_attributes);
         for (u32 slot = 0; slot < input_count; ++slot) {
             const u32 attr = packed_attributes[slot];
             if (attr == 16) continue;
-            auto& input = inputs[index * input_count + slot];
+            auto& input = inputs[offset + slot];
             for (u32 component = 0; component < 4; ++component) {
                 input[component] = attributes_in[attr][component].ToFloat32();
             }
         }
     }
-    std::vector<Common::Vec4f> triangles;
+    std::vector<u32> triangles;
     if (!triangle_list) {
-        ASSERT(pipeline.num_vertices - 2 <= triangles.max_size() / 3 / input_count);
-        triangles.reserve(static_cast<std::size_t>(pipeline.num_vertices - 2) * 3 * input_count);
+        ASSERT(pipeline.num_vertices - 2 <= triangles.max_size() / 3);
+        triangles.reserve(static_cast<std::size_t>(pipeline.num_vertices - 2) * 3);
         for (u32 index = 2; index < pipeline.num_vertices; ++index) {
             const bool strip = pipeline.triangle_topology == Topology::Strip;
             const u32 first = strip ? index - 2 + (index & 1) : 0;
             const u32 second = strip ? index - 1 - (index & 1) : index - 1;
             for (const u32 vertex : {first, second, index}) {
-                const auto begin = inputs.begin() + vertex * input_count;
-                triangles.insert(triangles.end(), begin, begin + input_count);
+                triangles.push_back(is_indexed ? draw_order[vertex] : vertex);
             }
         }
     }
-    const auto& vertices = triangle_list ? inputs : triangles;
+    const auto& elements = triangle_list ? draw_order : triangles;
     VSPicaUniformData uniforms{};
     uniforms.SetFromRegs(pica.vs_setup);
-    DrawBatch({reinterpret_cast<const u8*>(vertices.data()), vertices.size() * sizeof(Common::Vec4f)},
-              program.handle, &uniforms);
+    DrawBatch({reinterpret_cast<const u8*>(inputs.data()), inputs.size() * sizeof(Common::Vec4f)},
+              program.handle, &uniforms, elements);
     return true;
 }
 
