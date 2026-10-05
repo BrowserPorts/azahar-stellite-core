@@ -201,6 +201,11 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   const dispatchPointer = linkSlot + 1;
   const dispatchLocation = linkSlot + 2;
   if (block.sourceCell) locals.push("i32", "i32", "i64");
+  const fpTrapFlags = options.execution &&
+    block.nodes.filter((node) => options.fpStatusHelpers?.has(node.op)).length > 1
+    ? locals.length + parameterCount : undefined;
+  if (fpTrapFlags !== undefined) locals.push("i32");
+  let fpTrapFlagsValid = false;
   const constant = (value: number): Bytes => body.byte(0x41).signed(BigInt(value), 32);
   const get = (index: number): Bytes => body.byte(0x20).u32(index);
   const set = (index: number): Bytes => body.byte(0x21).u32(index);
@@ -260,10 +265,20 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
     if (!preservesRegisters) {
       knownCpsrMode = undefined;
       knownFpscrMode = undefined;
+      fpTrapFlagsValid = false;
     }
     // Scalar FP helpers only record flags when all exception traps are disabled.
     if (preservesRegisters && options.execution) {
-      load(options.layout.fpscr).byte(0x41).signed(0x9f00n, 32).byte(0x71).byte(0x04).byte(0x40);
+      if (fpTrapFlags !== undefined && fpTrapFlagsValid) get(fpTrapFlags);
+      else {
+        load(options.layout.fpscr).byte(0x41).signed(0x9f00n, 32).byte(0x71);
+        if (fpTrapFlags !== undefined) {
+          // Pure FP helpers accumulate status flags without changing trap enables.
+          body.byte(0x22).u32(fpTrapFlags);
+          fpTrapFlagsValid = true;
+        }
+      }
+      body.byte(0x04).byte(0x40);
     }
     // Callbacks and enabled FP traps must see all ticks and cached registers.
     if (options.execution) store(options.execution.pendingTicks, () => get(2), true);
@@ -1190,6 +1205,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       case "A32CoprocInternalOperation": case "A32CoprocLoadWords": case "A32CoprocStoreWords": {
         knownCpsrMode = undefined;
         knownFpscrMode = undefined;
+        fpTrapFlagsValid = false;
         const binding = node.binding;
         if (!binding) throw new JitError("compile", "Coprocessor is missing its compiled binding");
         if (binding.kind === "callback") {
@@ -1232,6 +1248,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       case "A32GetFpscr": load(options.layout.fpscr); break;
       case "A32SetFpscr":
         knownFpscrMode = undefined;
+        fpTrapFlagsValid = false;
         store(options.layout.fpscr, () => arg(0)); break;
       case "A32GetFpscrNZCV": load(options.layout.fpscr); constant(0xf0000000).byte(0x71); break;
       case "A32SetFpscrNZCV": store(options.layout.fpscr, () => {
