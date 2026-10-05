@@ -442,19 +442,32 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
     const width = bits / 8;
     const fallback = (): undefined => helper(node.op, node.args.map(argType), read ? [wasmType(node.type)] : [],
       () => node.args.forEach(argument));
-    // Ordered accesses stay in the core; NORMAL (0) is the ordinary RAM path.
+    const access = immediate(node.args[read ? 2 : 3]!);
+    const atomic = access === 4;
+    // NORMAL (0) and ATOMIC (4) use mapped RAM; ordered accesses stay in the core.
     if (!config || (!config.pageTable && config.fastmem === undefined) ||
-      immediate(node.args[read ? 2 : 3]!) !== 0) return fallback();
+      (access !== 0 && !atomic)) return fallback();
     const address = (): undefined => argument(node.args[1]!);
     const direct = (): undefined => {
       get(memoryPointer);
       if (!read) argument(node.args[2]!);
-      const opcode = read ? { 8: 0x2d, 16: 0x2f, 32: 0x28, 64: 0x29 }[bits] :
-        { 8: 0x3a, 16: 0x3b, 32: 0x36, 64: 0x37 }[bits];
-      body.byte(opcode!).u32(0).u32(0);
+      if (atomic && options.shared) {
+        const opcode = read ? { 8: 0x12, 16: 0x13, 32: 0x10, 64: 0x11 }[bits] :
+          { 8: 0x19, 16: 0x1a, 32: 0x17, 64: 0x18 }[bits];
+        body.byte(0xfe).u32(opcode!).u32(Math.log2(width)).u32(0);
+      } else {
+        const opcode = read ? { 8: 0x2d, 16: 0x2f, 32: 0x28, 64: 0x29 }[bits] :
+          { 8: 0x3a, 16: 0x3b, 32: 0x36, 64: 0x37 }[bits];
+        body.byte(opcode!).u32(0).u32(0);
+      }
       return undefined;
     };
     const branch = (): undefined => {
+      // Atomics require natural alignment in both guest and host memory.
+      if (atomic && width > 1) {
+        get(memoryPointer); address(); body.byte(0x72);
+        constant(width - 1).byte(0x71).byte(0x45).byte(0x71);
+      }
       body.byte(0x04).byte(read ? bits === 64 ? 0x7e : 0x7f : 0x40);
       direct(); body.byte(0x05); fallback(); body.byte(0x0b);
       return undefined;
