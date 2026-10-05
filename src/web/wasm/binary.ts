@@ -68,6 +68,8 @@ export interface FunctionImport {
 }
 
 export interface ModuleOptions {
+  /** Optional function label in the Wasm name section. */
+  name?: string;
   imports?: FunctionImport[];
   shared: boolean;
   maximumPages: number;
@@ -75,7 +77,7 @@ export interface ModuleOptions {
   locals: ValueType[];
   body: Bytes;
   table?: boolean;
-  functions?: readonly { signature?: FunctionType; locals: ValueType[]; body: Bytes }[];
+  functions?: readonly { name?: string; signature?: FunctionType; locals: ValueType[]; body: Bytes }[];
 }
 
 /** All generated regions share the emulator heap and export one Wasm entry. */
@@ -132,5 +134,13 @@ export function regionModule(options: ModuleOptions): Uint8Array<ArrayBuffer> {
     code.u32(body.data.length).append(body.data);
   }
   module.section(10, code);
+  if (options.name || options.functions?.some(definition => definition.name)) {
+    const namedFunctions = functions.flatMap((definition, index) => definition.name
+      ? [{ index: imports.length + index, name: definition.name }] : []);
+    const names = new Bytes().u32(imports.length + namedFunctions.length);
+    imports.forEach((definition, index) => names.u32(index).name(`${definition.module}.${definition.name}`));
+    for (const definition of namedFunctions) names.u32(definition.index).name(definition.name);
+    module.section(0, new Bytes().name("name").section(1, names));
+  }
   return module.finish();
 }

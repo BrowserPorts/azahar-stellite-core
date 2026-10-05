@@ -46,6 +46,8 @@ export interface LowerOptions {
   execution?: ArmExecutionLayout;
   shared: boolean;
   maximumPages: number;
+  /** Attach guest locations to Wasm functions in instrumented builds. */
+  functionNames?: boolean;
   /** Explicit arithmetic/peripheral helpers exported as raw Wasm functions by the core. */
   helperNames?: ReadonlySet<string>;
   /** Native helpers preserve registers and modes, adding only FPSCR exception flags.
@@ -135,7 +137,7 @@ export function lowerArmRegion(blocks: readonly ArmBlock[], links: ReadonlyMap<n
   body.byte(0x12).u32(region.imports.length + 1);
   const entry: ModuleOptions = { ...functions[0]!, signature: {
     params: ["i32", "i64", "i64", "i64"], results: ["i64"],
-  }, locals: [], body };
+  }, locals: [], body, ...(functions[0]!.name ? { name: `${functions[0]!.name}_region_entry` } : {}) };
   return regionModule({ ...entry, functions: [entry, ...functions], imports: region.imports });
 }
 
@@ -1386,6 +1388,11 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   // Every terminal path returns or tail-calls, including both branches of a conditional exit.
   body.byte(0x00);
   return { imports, shared: options.shared, maximumPages: options.maximumPages,
+    ...(options.functionNames && block.startPc !== undefined ? {
+      name: `arm_pc_${block.startPc.toString(16).padStart(8, "0")}` +
+        `_cpsr_${(block.startCpsr ?? 0).toString(16).padStart(8, "0")}` +
+        `_fpscr_${(block.startFpscr ?? 0).toString(16).padStart(8, "0")}`,
+    } : {}),
     signature: { params, results: ["i64"] }, locals, body,
     table: Boolean(block.sourceCell) };
 }

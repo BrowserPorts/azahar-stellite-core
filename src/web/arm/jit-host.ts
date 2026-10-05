@@ -62,6 +62,7 @@ export class ArmJitHost {
     }
     const options: LowerOptions = {
       layout: { registers, cpsr, extendedRegisters, fpscr, checkBit },
+      functionNames: layout.length === 19 && layout[11] !== 0,
       ...(layout.length === 19 ? { execution: {
         halt: layout[6]!, budget: layout[7]!, pendingTicks: layout[8]!,
         sourceUsed: layout[9]!, minimumBudget: layout[10]!, completedBlocks: layout[11]!,

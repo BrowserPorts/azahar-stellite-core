@@ -19,6 +19,7 @@ export interface ArmBlock {
   sourceCell?: number;
   cycles: number;
   condition: number;
+  startPc?: number;
   startCpsr?: number;
   startFpscr?: number;
   endCpsr: number;

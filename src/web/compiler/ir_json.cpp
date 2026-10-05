@@ -100,6 +100,7 @@ std::string SerializeArmBlock(const Dynarmic::IR::Block& block,
     const auto start_cpsr = start_location.CPSR().Value();
     const auto end_cpsr = Dynarmic::A32::LocationDescriptor(block.EndLocation()).CPSR().Value();
     stream << "{\"cycles\":" << block.CycleCount() << ",\"condition\":" << static_cast<int>(block.GetCondition())
+           << ",\"startPc\":" << start_location.PC()
            << ",\"startCpsr\":" << start_cpsr
            << ",\"startFpscr\":" << start_location.FPSCR().Value()
            << ",\"endCpsr\":" << (end_cpsr & ~(always_little_endian ? 0x200u : 0u));
