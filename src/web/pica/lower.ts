@@ -43,7 +43,7 @@ export class PicaEmitter {
 
   get(local: number): this { this.body.byte(0x20).u32(local); return this; }
   set(local: number): this { this.body.byte(0x21).u32(local); return this; }
-  constant(value: number): this { this.body.byte(0x41).signed(BigInt(value), 32); return this; }
+  constant(value: number): this { this.body.byte(0x41).i32(value); return this; }
   simd(op: number): this { this.body.byte(0xfd).u32(op); return this; }
 
   address(base: number, offset: number): this {

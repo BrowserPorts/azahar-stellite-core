@@ -26,6 +26,20 @@ export class Bytes {
     return this;
   }
 
+  i32(value: number): this {
+    if (!Number.isInteger(value)) throw new RangeError("Invalid signed Wasm integer");
+    let remaining = value | 0;
+    let more = true;
+    while (more) {
+      const next = remaining & 127;
+      remaining >>= 7;
+      more = !((remaining === 0 && (next & 64) === 0) ||
+        (remaining === -1 && (next & 64) !== 0));
+      this.byte(next | (more ? 128 : 0));
+    }
+    return this;
+  }
+
   signed(value: bigint, bits: 32 | 64): this {
     let remaining = BigInt.asIntN(bits, value);
     let more = true;

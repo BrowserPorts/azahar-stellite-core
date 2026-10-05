@@ -207,7 +207,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   if (fpTrapFlags !== undefined) locals.push("i32");
   let fpTrapFlagsValid = false;
   let fpMagnitude: number | undefined;
-  const constant = (value: number): Bytes => body.byte(0x41).signed(BigInt(value), 32);
+  const constant = (value: number): Bytes => body.byte(0x41).i32(value);
   const get = (index: number): Bytes => body.byte(0x20).u32(index);
   const set = (index: number): Bytes => body.byte(0x21).u32(index);
   const simd = (opcode: number): Bytes => body.byte(0xfd).u32(opcode);
@@ -257,7 +257,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   const loadFPTrapFlags = (): undefined => {
     if (fpTrapFlags !== undefined && fpTrapFlagsValid) get(fpTrapFlags);
     else {
-      load(options.layout.fpscr).byte(0x41).signed(0x9f00n, 32).byte(0x71);
+      load(options.layout.fpscr).byte(0x41).i32(0x9f00).byte(0x71);
       if (fpTrapFlags !== undefined) {
         // Pure FP helpers accumulate status flags without changing trap enables.
         body.byte(0x22).u32(fpTrapFlags);
@@ -294,7 +294,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
     return undefined;
   };
   const bit = (mask: number): Bytes => load(options.layout.cpsr).byte(0x41)
-    .signed(BigInt(mask), 32).byte(0x71);
+    .i32(mask).byte(0x71);
   let conditionFlags: number | undefined;
   const condition = (code: number): undefined => {
     switch (code) {
