@@ -69,7 +69,12 @@ struct LibRetroInput::Impl {
         // and on ARM64 without memory barriers in the FIFO, it may never
         // see the new data. 128 samples is conservative enough to succeed
         // in one pass.
+#ifdef __EMSCRIPTEN__
+        // Shared browser capture is nonblocking; drain up to the full native ring each frame.
+        read_buffer.resize(4096);
+#else
         read_buffer.resize(128);
+#endif
     }
 
     ~Impl() {
@@ -176,7 +181,11 @@ void LibRetroInput::StartSampling(const InputParameters& params) {
     // Give the audio hardware a few frames to start delivering data before
     // we attempt a (blocking) read_mic call. Without this, the very first
     // read can hang because the CoreAudio callback hasn't fired yet.
+#ifdef __EMSCRIPTEN__
+    impl->warmup_frames = 0;
+#else
     impl->warmup_frames = 10;
+#endif
     LOG_INFO(Audio, "LibRetro microphone sampling started at {} Hz, {} bit", params.sample_rate,
              params.sample_size);
 }

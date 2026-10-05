@@ -107,7 +107,7 @@ if(EMSCRIPTEN)
 
     # Build the SDK's original browser audio cases with their native inputs and assertions.
     set(AUDIO_WEB_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/audio-fixtures")
-    foreach(audio_case IN ITEMS audio_context_sample_rate audioworklet audioworklet_in_out_stereo)
+    foreach(audio_case IN ITEMS audio_context_sample_rate audioworklet audioworklet_in_out_stereo audioworklet_in_out_mono)
         add_executable(wasm_audio_${audio_case}
             "${PROJECT_SOURCE_DIR}/externals/emscripten/test/webaudio/${audio_case}.c")
         target_compile_options(wasm_audio_${audio_case} PRIVATE -UNDEBUG)
@@ -124,7 +124,8 @@ if(EMSCRIPTEN)
             RUNTIME_OUTPUT_DIRECTORY "${AUDIO_WEB_DIRECTORY}")
     endforeach()
     set(AUDIO_WEB_ASSETS)
-    foreach(audio_file IN ITEMS emscripten-beat.mp3 emscripten-bass.mp3)
+    foreach(audio_file IN ITEMS emscripten-beat.mp3 emscripten-bass.mp3
+        emscripten-beat-mono.mp3 emscripten-bass-mono.mp3)
         set(audio_asset "${AUDIO_WEB_DIRECTORY}/audio_files/${audio_file}")
         set(audio_input "${PROJECT_SOURCE_DIR}/externals/emscripten/test/webaudio/audio_files/${audio_file}")
         add_custom_command(OUTPUT "${audio_asset}"
@@ -135,7 +136,7 @@ if(EMSCRIPTEN)
     endforeach()
     add_custom_target(browser_audio_fixtures DEPENDS
         wasm_audio_audio_context_sample_rate wasm_audio_audioworklet wasm_audio_audioworklet_in_out_stereo
-        ${AUDIO_WEB_ASSETS})
+        wasm_audio_audioworklet_in_out_mono ${AUDIO_WEB_ASSETS})
 
     # Preserve the SDK's original motion/event registration and listener lifetime cases.
     foreach(input_case IN ITEMS html5_core html5_remove_event_listener)

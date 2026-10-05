@@ -6,6 +6,7 @@ import { PicaJitHost } from "../pica/jit-host";
 import type { GraphicsClient, GraphicsStatistics } from "../gpu/client";
 import type { AzaharModule, AzaharModuleFactory } from "./module";
 import { OpfsSaveStates } from "./save-states";
+import { MicrophoneConsumer } from "./microphone-ring";
 import { UserStorageLock } from "./storage-lock";
 
 export interface SessionOutput {
@@ -78,7 +79,8 @@ export class BrowserSession {
   };
 
   private constructor(readonly core: AzaharModule, private readonly storage: UserStorageLock,
-    private readonly armJit: ArmJitHost, private readonly graphics: GraphicsClient) {}
+    private readonly armJit: ArmJitHost, private readonly graphics: GraphicsClient,
+    readonly microphone: MicrophoneConsumer) {}
 
   static async create(factory: AzaharModuleFactory, output: SessionOutput,
     graphics: GraphicsClient): Promise<BrowserSession> {
@@ -87,9 +89,13 @@ export class BrowserSession {
     }
     const storage = await UserStorageLock.acquire();
     const armJit = new ArmJitHost();
+    const microphone = new MicrophoneConsumer();
     try {
       const core = await factory({
         azaharJitHost: armJit,
+        azaharMicrophoneActive: active => microphone.active(active),
+        azaharMicrophoneRead: (pointer, count) => microphone.read(core.HEAP16.subarray(
+          pointer >>> 1, (pointer >>> 1) + count)),
         azaharPicaJitHost: new PicaJitHost(),
         azaharGraphicsHost: graphics,
         print: output.log,
@@ -102,10 +108,10 @@ export class BrowserSession {
         azaharAudio: (pointer, frames, sampleRate) => output.audio(core.HEAP16.subarray(pointer >>> 1,
           (pointer >>> 1) + frames * 2), sampleRate),
       });
-      if (core._azahar_web_abi() !== 14) throw new Error("Unsupported Azahar browser ABI");
+      if (core._azahar_web_abi() !== 15) throw new Error("Unsupported Azahar browser ABI");
       if (!core._azahar_mount_storage()) throw new Error("Azahar could not mount OPFS user storage");
       if (!core._azahar_initialize()) throw new Error("Azahar initialization failed");
-      return new BrowserSession(core, storage, armJit, graphics);
+      return new BrowserSession(core, storage, armJit, graphics, microphone);
     } catch (error) { storage.close(); throw error; }
   }
 
@@ -286,6 +292,7 @@ export class BrowserSession {
     if (this.#closed) return undefined;
     this.#closed = true;
     try {
+      this.microphone.close();
       this.core._azahar_shutdown();
       if (this.#gamePath) this.core._azahar_unmount_game_file(this.#gamePath);
     } finally {

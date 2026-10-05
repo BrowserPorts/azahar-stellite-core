@@ -36,6 +36,7 @@ function pause(): undefined {
   frameTasks?.abort();
   frameTasks = undefined;
   audio?.clear();
+  session?.microphone.running(false);
   return undefined;
 }
 
@@ -66,7 +67,9 @@ function start(): undefined {
   if (!session) throw new Error("Azahar is unavailable");
   audio?.clear();
   // Let the command handler report a failed first frame to its caller.
-  session.runFrame();
+  session.microphone.running(true);
+  try { session.runFrame(); }
+  catch (error) { session.microphone.running(false); throw error; }
   frameTasks = new AbortController();
   running = true;
   nextFrame = performance.now() + frameInterval;
@@ -117,6 +120,7 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
           await graphics.surface(request.canvas);
           break;
         }
+        case "microphone-input": session.microphone.attach(request.transport); break;
         case "audio-output": {
           if (audio) throw new Error("Browser audio is already connected");
           if (request.transport.sampleRate !== session.core._azahar_audio_sample_rate()) {
@@ -130,7 +134,9 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
         case "pause": pause(); break;
         case "advance-frame":
           if (running) throw new Error("Pause Azahar before advancing a frame");
-          session.runFrame();
+          session.microphone.running(true);
+          try { session.runFrame(); }
+          finally { session.microphone.running(false); }
           break;
         case "input": session.input(request.state); break;
         case "motion": session.motion(request.state); break;
@@ -147,6 +153,7 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
             completed = true;
           } finally {
             if (resume && (completed || request.type === "save")) {
+              session.microphone.running(true);
               frameTasks = new AbortController();
               running = true; nextFrame = performance.now(); frame();
             }

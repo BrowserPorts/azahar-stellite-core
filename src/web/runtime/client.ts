@@ -4,6 +4,8 @@ import type { SessionEvent, SessionRequest, SessionResult } from "./messages";
 import type { CoreOption, InputState, MotionState, PerformanceStats } from "./session";
 export type { CoreOption, MotionState } from "./session";
 import { BrowserAudioOutput } from "./audio-output";
+import { BrowserMicrophoneInput } from "./microphone-input";
+export { BrowserMicrophoneInput } from "./microphone-input";
 import { BrowserMotionInput } from "./motion-input";
 export { BrowserAudioOutput } from "./audio-output";
 export { BrowserMotionInput } from "./motion-input";
@@ -38,6 +40,10 @@ export class AzaharClient {
   #motion: BrowserMotionInput | undefined;
   #motionController: AbortController | undefined;
   #motionConnection: Promise<BrowserMotionInput> | undefined;
+  #microphone: BrowserMicrophoneInput | undefined;
+  #microphoneController: AbortController | undefined;
+  #microphoneConnection: Promise<BrowserMicrophoneInput> | undefined;
+  #microphoneClosing: Promise<undefined> | undefined;
   #sampleRate = 0;
   #rejectReady: ((error: Error) => unknown) | undefined;
 
@@ -133,6 +139,32 @@ export class AzaharClient {
     return connection;
   }
 
+  /** Request microphone access from a user gesture after ready. Uses Auto/Frontend input. */
+  async connectMicrophone(): Promise<BrowserMicrophoneInput> {
+    if (!this.#initialized || this.#disposed || this.#closing) throw new Error("Azahar is not ready for microphone input");
+    if (this.#microphoneConnection || (this.#microphone && !this.#microphone.closed)) {
+      throw new Error("Browser microphone is already connected");
+    }
+    const controller = new AbortController();
+    this.#microphoneController = controller;
+    const connection = (async () => {
+      let microphone: BrowserMicrophoneInput | undefined;
+      try {
+        microphone = await BrowserMicrophoneInput.create(message => this.output.error(message), controller.signal);
+        await this.request({ type: "microphone-input", transport: microphone.transport });
+        if (microphone.closed) throw new Error("The microphone closed while connecting");
+        if (this.#closing || this.#disposed) throw new Error("The Azahar session is closing");
+        this.#microphone = microphone;
+        return microphone;
+      } catch (error) {
+        await microphone?.close();
+        throw error;
+      } finally { this.#microphoneConnection = undefined; }
+    })();
+    this.#microphoneConnection = connection;
+    return connection;
+  }
+
   async start(): Promise<undefined> {
     await this.#audio?.resume();
     await this.request({ type: "start" });
@@ -218,9 +250,11 @@ export class AzaharClient {
   close(): Promise<undefined> {
     if (this.#closing) return this.#closing;
     this.#motionController?.abort();
+    this.#microphoneController?.abort();
     if (this.#disposed) return Promise.all([
       this.#audioClosing, this.#audioConnection?.catch(() => undefined),
       this.#motionConnection?.catch(() => undefined),
+      this.#microphoneConnection?.catch(() => undefined), this.#microphone?.close(),
     ]).then(() => undefined);
     if (!this.#initialized) {
       this.#closing = Promise.resolve(undefined);
@@ -233,6 +267,8 @@ export class AzaharClient {
         this.dispose(new Error("The Azahar session is closed"));
         await this.#audioConnection?.catch(() => undefined);
         await this.#motionConnection?.catch(() => undefined);
+        await this.#microphoneConnection?.catch(() => undefined);
+        await this.#microphoneClosing;
         await this.#audioClosing;
       });
     return this.#closing;
@@ -263,6 +299,9 @@ export class AzaharClient {
     this.#worker.terminate();
     this.#connectingAudio?.abort();
     this.#motionController?.abort();
+    this.#microphoneController?.abort();
+    this.#microphoneClosing = this.#microphone?.close();
+    this.#microphoneClosing?.catch(error => this.output.error(String(error)));
     this.#audioClosing = this.#audio?.close();
     this.#audioClosing?.catch(error => this.output.error(String(error)));
     for (const pending of this.#pending.values()) pending.reject(error);

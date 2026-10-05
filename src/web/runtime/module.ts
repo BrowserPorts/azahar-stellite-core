@@ -69,6 +69,8 @@ export interface AzaharModuleOptions {
   print: (line: string) => unknown;
   printErr: (line: string) => unknown;
   azaharVideo: (pointer: number, width: number, height: number, pitch: number) => unknown;
+  azaharMicrophoneRead?: (pointer: number, count: number) => number;
+  azaharMicrophoneActive?: (active: boolean) => unknown;
   azaharAudio: (pointer: number, frames: number, sampleRate: number) => unknown;
 }
 
