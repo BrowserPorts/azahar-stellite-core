@@ -349,8 +349,13 @@ template <class Bits> Bits MultiplyFP(Bits lhs, Bits rhs,
     const Bits left_exponent = lhs & Info::exponent_mask;
     const Bits right_exponent = rhs & Info::exponent_mask;
     const bool sign = ((lhs ^ rhs) & Info::sign_mask) != 0;
-    if (left_exponent && left_exponent != Info::exponent_mask &&
-        right_exponent && right_exponent != Info::exponent_mask) {
+    const bool left_normal = left_exponent && left_exponent != Info::exponent_mask;
+    const bool right_normal = right_exponent && right_exponent != Info::exponent_mask;
+    // Finite normal values and signed zeros produce an exact signed-zero product.
+    if ((left_normal && !(rhs & ~Info::sign_mask)) ||
+        (right_normal && !(lhs & ~Info::sign_mask)) ||
+        !((lhs | rhs) & ~Info::sign_mask)) return Info::Zero(sign);
+    if (left_normal && right_normal) {
         using Float = std::conditional_t<sizeof(Bits) == 4, float, double>;
         const Float left_value = std::bit_cast<Float>(lhs);
         const Float right_value = std::bit_cast<Float>(rhs);
