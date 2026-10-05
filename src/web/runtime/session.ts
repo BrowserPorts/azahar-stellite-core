@@ -27,6 +27,8 @@ export interface InputState {
 
 /** Native frame averages and browser interval totals, including frame pacing time. */
 export interface PerformanceStats {
+  /** Successful native frame calls since the previous snapshot. */
+  completedFrames: number;
   systemFps: number;
   gameFps: number;
   emulationSpeed: number;
@@ -46,6 +48,7 @@ export interface PerformanceStats {
 /** All native entry points are called between frames on the emulation worker. */
 export class BrowserSession {
   #states: OpfsSaveStates | undefined;
+  #completedFrames = 0;
   #loaded = false;
   #closed = false;
   #gamePath = 0;
@@ -138,6 +141,7 @@ export class BrowserSession {
   runFrame(): undefined {
     this.checkLoaded();
     if (!this.core._azahar_run_frame()) throw new Error("Azahar stopped running");
+    this.#completedFrames++;
     return undefined;
   }
 
@@ -149,7 +153,10 @@ export class BrowserSession {
     }
     const values = new Float64Array(this.core.HEAPU8.buffer, pointer, 9);
     if (!values.every(Number.isFinite)) throw new Error("Invalid native performance counters");
+    const completedFrames = this.#completedFrames;
+    this.#completedFrames = 0;
     return {
+      completedFrames,
       systemFps: values[0]!, gameFps: values[1]!, emulationSpeed: values[2]!,
       vblankMs: values[3]! * 1000, hleSvcMs: values[4]! * 1000,
       hleIpcMs: values[5]! * 1000, gpuCommandMs: values[6]! * 1000,

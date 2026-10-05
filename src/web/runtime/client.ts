@@ -137,6 +137,11 @@ export class AzaharClient {
     await this.#audio?.suspend();
     return undefined;
   }
+  /** Advance one native frame while paused. */
+  async advanceFrame(): Promise<undefined> {
+    await this.request({ type: "advance-frame" });
+    return undefined;
+  }
   async input(state: InputState): Promise<undefined> {
     await this.request({ type: "input", state }); return undefined;
   }

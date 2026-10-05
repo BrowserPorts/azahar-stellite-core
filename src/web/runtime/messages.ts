@@ -10,7 +10,7 @@ export type SessionRequest = { id: number } & (
   { type: "import-user-file"; file: File; path: string } |
   { type: "surface"; canvas: OffscreenCanvas } |
   { type: "audio-output"; transport: AudioTransport } |
-  { type: "start" | "pause" | "close" | "performance" } |
+  { type: "start" | "pause" | "advance-frame" | "close" | "performance" } |
   { type: "save" | "restore"; slot: number } |
   { type: "input"; state: InputState }
 );

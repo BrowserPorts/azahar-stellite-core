@@ -127,6 +127,10 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
         }
         case "start": start(); break;
         case "pause": pause(); break;
+        case "advance-frame":
+          if (running) throw new Error("Pause Azahar before advancing a frame");
+          session.runFrame();
+          break;
         case "input": session.input(request.state); break;
         case "performance": result = session.performance(); break;
         case "save":
