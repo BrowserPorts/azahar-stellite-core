@@ -41,7 +41,7 @@ struct TerminalWriter final : boost::static_visitor<std::string> {
         return "{\"kind\":\"dispatch\"}";
     }
     std::string operator()(const Dynarmic::IR::Term::PopRSBHint&) const {
-        return "{\"kind\":\"dispatch\"}";
+        return fast_dispatch ? "{\"kind\":\"fast-dispatch\"}" : "{\"kind\":\"dispatch\"}";
     }
     std::string operator()(const Dynarmic::IR::Term::FastDispatchHint&) const {
         return fast_dispatch ? "{\"kind\":\"fast-dispatch\"}" : "{\"kind\":\"dispatch\"}";
