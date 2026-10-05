@@ -40,6 +40,8 @@ export class GraphicsClient {
   #commands: GraphicsCommand[] = [];
   #transfers: Transferable[] = [];
   #batchBytes = 0;
+  #snapshots: Uint8Array<ArrayBuffer> | undefined;
+  #snapshotBytes = 0;
   #submittedCommands = 0;
   #submittedBatches = 0;
   #closed = false;
@@ -195,30 +197,29 @@ export class GraphicsClient {
     const fsOffset = vsOffset + nativeVertexUniformBytes;
     const vertexOffset = fsOffset + nativeFragmentUniformBytes;
     const size = vertexOffset + vertices.byteLength;
-    this.accountBytes(size);
-    // One owned buffer snapshots every native input before heap and register writes resume.
-    const bytes = new Uint8Array(size);
+    // Batch storage snapshots every native input before heap and register writes resume.
+    const bytes = this.snapshot(size);
     bytes.set(state);
     bytes.set(configuration, nativeDrawStateBytes);
     bytes.set(vertexUniforms, vsOffset);
     bytes.set(fragmentUniforms, fsOffset);
     bytes.set(vertices, vertexOffset);
-    this.post({ type: "draw", bytes }, [bytes.buffer]);
+    this.post({ type: "draw", bytes });
     return undefined;
   }
 
   lookupTable(table: number, offset: number, view: Uint8Array<SharedArrayBuffer>): undefined {
     this.checkOpen();
-    this.accountBytes(view.byteLength);
-    const bytes = view.slice();
-    return this.post({ type: "lookup-table", table, offset, bytes }, [bytes.buffer]);
+    const bytes = this.snapshot(view.byteLength);
+    bytes.set(view);
+    return this.post({ type: "lookup-table", table, offset, bytes });
   }
 
   uploadTexture(handle: number, region: TextureRegion, view: Uint8Array<SharedArrayBuffer>): undefined {
     this.checkOpen();
-    this.accountBytes(view.byteLength);
-    const bytes = view.slice();
-    return this.post({ type: "texture-upload", handle, region, bytes }, [bytes.buffer]);
+    const bytes = this.snapshot(view.byteLength);
+    bytes.set(view);
+    return this.post({ type: "texture-upload", handle, region, bytes });
   }
 
   downloadTexture(handle: number, region: TextureRegion,
@@ -262,6 +263,22 @@ export class GraphicsClient {
     return undefined;
   }
 
+  private snapshot(size: number): Uint8Array<ArrayBuffer> {
+    const aligned = Math.ceil(size / 4) * 4;
+    if (this.#snapshots && this.#snapshotBytes + aligned > this.#snapshots.byteLength) this.flush();
+    if (!this.#snapshots) {
+      // Leave headroom beyond the 256 KiB flush threshold.
+      const capacity = Math.max(512 * 1024, aligned);
+      this.accountBytes(capacity);
+      this.#snapshots = new Uint8Array(capacity);
+      this.#transfers.push(this.#snapshots.buffer);
+    }
+    const bytes = this.#snapshots.subarray(this.#snapshotBytes, this.#snapshotBytes + size);
+    this.#snapshotBytes += aligned;
+    this.#batchBytes += size;
+    return bytes;
+  }
+
   async close(): Promise<undefined> {
     if (this.#closed) return undefined;
     try { if (!this.#failure) await this.request((id) => ({ type: "close", id })); }
@@ -273,6 +290,8 @@ export class GraphicsClient {
       this.#commands = [];
       this.#transfers = [];
       this.#batchBytes = 0;
+      this.#snapshots = undefined;
+      this.#snapshotBytes = 0;
     }
     return undefined;
   }
@@ -309,6 +328,8 @@ export class GraphicsClient {
     this.#commands = [];
     this.#transfers = [];
     this.#batchBytes = 0;
+    this.#snapshots = undefined;
+    this.#snapshotBytes = 0;
     return undefined;
   }
 
