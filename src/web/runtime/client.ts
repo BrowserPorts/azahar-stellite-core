@@ -279,7 +279,10 @@ export class AzaharClient {
     if (this.#closing) throw new Error("The Azahar session is closing");
     await this.ready;
     if (this.#disposed) throw new Error("The Azahar session is closed");
-    if (this.#pending.size >= 64) throw new Error("The Azahar command queue is full");
+    // Closing must drain accepted commands and run native shutdown even at capacity.
+    if (this.#pending.size >= 64 && request.type !== "close") {
+      throw new Error("The Azahar command queue is full");
+    }
     const id = this.#nextId++;
     return new Promise((resolve, reject) => {
       this.#pending.set(id, { resolve, reject });
