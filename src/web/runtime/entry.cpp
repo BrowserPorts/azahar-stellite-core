@@ -158,7 +158,10 @@ extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_run_frame() {
 
 extern "C" EMSCRIPTEN_KEEPALIVE const double* azahar_performance_stats() {
     if (!initialized || !loaded) return nullptr;
-    const auto stats = Core::System::GetInstance().GetAndResetPerfStats();
+    auto& system = Core::System::GetInstance();
+    const auto stats = system.GetAndResetPerfStats();
+    // The next frame must not include time paused before this statistics window.
+    if (system.perf_stats) system.perf_stats->BeginSystemFrame();
     static std::array<double, 9> values{};
     values = {stats.system_fps, stats.game_fps, stats.emulation_speed,
               stats.time_vblank_interval, stats.time_hle_svc, stats.time_hle_ipc,
