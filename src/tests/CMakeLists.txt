@@ -104,6 +104,38 @@ if(EMSCRIPTEN)
     endforeach()
     add_custom_target(browser_storage_fixtures DEPENDS wasmfs_opfs_setup wasmfs_opfs_resume
         "${TEST_WEB_DIRECTORY}/browser-jit.js" "${TEST_WEB_DIRECTORY}/browser-worker.js")
+
+    # Build the SDK's original browser audio cases with their native inputs and assertions.
+    set(AUDIO_WEB_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/audio-fixtures")
+    foreach(audio_case IN ITEMS audio_context_sample_rate audioworklet audioworklet_in_out_stereo)
+        add_executable(wasm_audio_${audio_case}
+            "${PROJECT_SOURCE_DIR}/externals/emscripten/test/webaudio/${audio_case}.c")
+        target_compile_options(wasm_audio_${audio_case} PRIVATE -UNDEBUG)
+        target_link_options(wasm_audio_${audio_case} PRIVATE
+            -sENVIRONMENT=web -sEXIT_RUNTIME=1 -sASSERTIONS=1 -sINVOKE_RUN=0
+            "-sEXPORTED_RUNTIME_METHODS=['callMain']")
+        if(NOT audio_case STREQUAL "audio_context_sample_rate")
+            target_compile_definitions(wasm_audio_${audio_case} PRIVATE TEST_AND_EXIT)
+            target_link_options(wasm_audio_${audio_case} PRIVATE -sAUDIO_WORKLET=1 -sWASM_WORKERS=1)
+        else()
+            target_link_options(wasm_audio_${audio_case} PRIVATE -lwebaudio.js)
+        endif()
+        set_target_properties(wasm_audio_${audio_case} PROPERTIES SUFFIX ".html"
+            RUNTIME_OUTPUT_DIRECTORY "${AUDIO_WEB_DIRECTORY}")
+    endforeach()
+    set(AUDIO_WEB_ASSETS)
+    foreach(audio_file IN ITEMS emscripten-beat.mp3 emscripten-bass.mp3)
+        set(audio_asset "${AUDIO_WEB_DIRECTORY}/audio_files/${audio_file}")
+        set(audio_input "${PROJECT_SOURCE_DIR}/externals/emscripten/test/webaudio/audio_files/${audio_file}")
+        add_custom_command(OUTPUT "${audio_asset}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${AUDIO_WEB_DIRECTORY}/audio_files"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${audio_input}" "${audio_asset}"
+            DEPENDS "${audio_input}" VERBATIM)
+        list(APPEND AUDIO_WEB_ASSETS "${audio_asset}")
+    endforeach()
+    add_custom_target(browser_audio_fixtures DEPENDS
+        wasm_audio_audio_context_sample_rate wasm_audio_audioworklet wasm_audio_audioworklet_in_out_stereo
+        ${AUDIO_WEB_ASSETS})
 else()
     add_test(NAME tests COMMAND tests)
 endif()
