@@ -109,7 +109,8 @@
 	url = https://github.com/cryptopp-modern/cryptopp-modern.git
 [submodule "naga"]
     path = externals/wgpu
-    url = https://github.com/gfx-rs/wgpu.git
+    url = https://origin.cursor.com/mov/wgpu-stellite-web.git
+    branch = main
 [submodule "externals/emscripten"]
     path = externals/emscripten
     url = https://origin.cursor.com/mov/emscripten-stellite-wasm.git
