@@ -80,6 +80,7 @@ TEST_CASE("DSP LLE Sanity", "[audio_core][lle]") {
         request.encode_aac_init.unknown4 = 0;
         request.encode_aac_init.unknown5 = rand();
         request.encode_aac_init.unknown6 = rand();
+        const auto request_data = request.data;
         lle.PipeWrite(AudioCore::DspPipe::Binary, buffer);
         lle.SetSemaphore(0x4000);
 
@@ -96,6 +97,6 @@ TEST_CASE("DSP LLE Sanity", "[audio_core][lle]") {
         AudioCore::HLE::BinaryMessage& resp =
             *reinterpret_cast<AudioCore::HLE::BinaryMessage*>(buffer.data());
         REQUIRE(resp.header.result == AudioCore::HLE::ResultStatus::Success);
-        REQUIRE(resp.data == request.data);
+        REQUIRE(resp.data == request_data);
     }
 }
