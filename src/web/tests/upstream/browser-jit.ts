@@ -25,7 +25,7 @@ const firmware = firmwareDirectory ? await Promise.all(["dspfirm.cdc", "dspaudio
   return { name, data: new Uint8Array(await response.arrayBuffer()) };
 })) : [];
 if (storage !== null && storage !== "setup" && storage !== "resume") throw new Error("Invalid OPFS fixture mode");
-const fixtureUrl = new URL(dsp ? "./teakra_reference_fixtures.mjs" : storage ? `./wasmfs_opfs_${storage}.mjs` : core ? "./tests.mjs" : fuzz ? "./dynarmic_arm_fuzz_fixtures.mjs" : recordings ? "./dynarmic_vfp_recordings.mjs" :
+const fixtureUrl = new URL(dsp && !core ? "./teakra_reference_fixtures.mjs" : storage ? `./wasmfs_opfs_${storage}.mjs` : core ? "./tests.mjs" : fuzz ? "./dynarmic_arm_fuzz_fixtures.mjs" : recordings ? "./dynarmic_vfp_recordings.mjs" :
   "./dynarmic_arm_jit_fixtures.mjs", import.meta.url);
 const worker = new Worker(new URL("./browser-worker.js", import.meta.url), { type: "module" });
 worker.onmessage = (event: MessageEvent<FixtureReply>): undefined => {
