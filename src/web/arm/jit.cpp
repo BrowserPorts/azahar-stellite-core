@@ -391,14 +391,17 @@ template <class Bits> Bits MultiplyFP(Bits lhs, Bits rhs,
                 const int comparison = (rounded > exact) - (rounded < exact);
                 return RoundNative(result, sign, sign ? -comparison : comparison, fpcr, fpsr);
             } else {
-                using Wide = __uint128_t;
-                const auto left = UnpackNormal(lhs);
-                const auto right = UnpackNormal(rhs);
-                const auto output = UnpackNormal(result);
-                const Wide exact = Wide{left.mantissa} * right.mantissa;
-                const Wide rounded = Wide{output.mantissa} <<
-                    (normalized_point_position + output.exponent - left.exponent - right.exponent);
-                return RoundNative(result, sign, (rounded > exact) - (rounded < exact), fpcr, fpsr);
+                const uint64_t left = (lhs & Info::mantissa_mask) | Info::implicit_leading_bit;
+                const uint64_t right = (rhs & Info::mantissa_mask) | Info::implicit_leading_bit;
+                const uint64_t output = (result & Info::mantissa_mask) | Info::implicit_leading_bit;
+                const int shift = static_cast<int>(exponent >> Info::explicit_mantissa_width) -
+                    static_cast<int>(left_exponent >> Info::explicit_mantissa_width) -
+                    static_cast<int>(right_exponent >> Info::explicit_mantissa_width) +
+                    Info::exponent_bias + Info::explicit_mantissa_width;
+                // The nearest product's error is at most 2^52 in significand-product units.
+                // Its signed value survives subtraction using only the low 64 product bits.
+                const int64_t error = std::bit_cast<int64_t>((output << shift) - left * right);
+                return RoundNative(result, sign, (error > 0) - (error < 0), fpcr, fpsr);
             }
         }
     }
