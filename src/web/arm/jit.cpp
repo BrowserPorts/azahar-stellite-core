@@ -339,6 +339,26 @@ template <class Bits, bool Subtract> Bits AddFP(Bits lhs, Bits rhs,
                 return RoundNative(result, (result & Info::sign_mask) != 0, comparison, fpcr, fpsr);
             }
         }
+    } else if constexpr (sizeof(Bits) == 8) {
+        const Bits binade = Bits{1} << Info::explicit_mantissa_width;
+        // Keep all TwoSum intermediates below the overflow binade.
+        if (left_normal && right_normal && left_exponent < Info::exponent_mask - binade &&
+            right_exponent < Info::exponent_mask - binade) {
+            const double left_value = std::bit_cast<double>(lhs);
+            const double right_value = std::bit_cast<double>(right_operand);
+            const double rounded = left_value + right_value;
+            const Bits result = std::bit_cast<Bits>(rounded);
+            const Bits exponent = result & Info::exponent_mask;
+            if (exponent > binade && exponent < Info::exponent_mask - binade) {
+                // Knuth TwoSum recovers the exact addition/subtraction residual in binary64.
+                const double right_part = rounded - left_value;
+                const double residual = (left_value - (rounded - right_part)) +
+                                        (right_value - right_part);
+                int comparison = (residual < 0) - (residual > 0);
+                if (result & Info::sign_mask) comparison = -comparison;
+                return RoundNative(result, (result & Info::sign_mask) != 0, comparison, fpcr, fpsr);
+            }
+        }
     }
     return FPMulAdd(lhs, rhs, FPValue<Bits, Subtract, 0, 1>(), fpcr, fpsr);
 }
