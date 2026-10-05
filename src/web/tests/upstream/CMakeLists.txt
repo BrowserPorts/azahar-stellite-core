@@ -169,6 +169,7 @@ else()
 endif()
 add_custom_target(upstream_fixtures DEPENDS azahar_portable_fixtures dynarmic_fp_fixtures
     teakra_reference_fixtures test_verifier)
+include(cubeb-resampler.cmake)
 
 if(EMSCRIPTEN)
     find_program(BUN_EXECUTABLE NAMES bun REQUIRED)

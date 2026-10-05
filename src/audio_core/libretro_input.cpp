@@ -3,11 +3,13 @@
 // Refer to the license.txt file included.
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstring>
 #include <mutex>
 #include <optional>
 #include <vector>
+#include <speex/speex_resampler.h>
 #include "audio_core/libretro_input.h"
 #include "citra_libretro/environment.h"
 #include "common/logging/log.h"
@@ -33,6 +35,8 @@ struct LibRetroInput::Impl {
     // RetroArch's internal resampler path, which has a convergence bug when
     // downsampling (ratio < 1). We resample ourselves in Read() instead.
     u32 native_sample_rate = 0;
+    std::unique_ptr<SpeexResamplerState, decltype(&speex_resampler_destroy)> resampler{
+        nullptr, speex_resampler_destroy};
 
     // Ring buffer for thread-safe sample storage
     // Capacity: 4096 samples should be plenty for buffering between frames
@@ -156,6 +160,10 @@ void LibRetroInput::StartSampling(const InputParameters& params) {
     if (IsSampling()) {
         return;
     }
+    if (!params.sample_rate || (params.sample_size != 8 && params.sample_size != 16)) {
+        LOG_ERROR(Audio, "Unsupported microphone sample format");
+        return;
+    }
 
     // LibRetro only provides signed 16-bit PCM samples
     // We'll convert to the requested format in Read()
@@ -169,6 +177,20 @@ void LibRetroInput::StartSampling(const InputParameters& params) {
     if (!impl->EnsureMicrophoneOpen()) {
         LOG_WARNING(Audio, "Cannot start sampling: microphone not available");
         return;
+    }
+
+    // A new recording starts with fresh filter history and no samples from the previous rate.
+    impl->sample_buffer.Pop();
+    impl->resampler.reset();
+    if (impl->native_sample_rate != params.sample_rate) {
+        int error = RESAMPLER_ERR_SUCCESS;
+        impl->resampler.reset(speex_resampler_init(1, impl->native_sample_rate, params.sample_rate,
+                                                 SPEEX_RESAMPLER_QUALITY_VOIP, &error));
+        if (!impl->resampler || error != RESAMPLER_ERR_SUCCESS) {
+            LOG_ERROR(Audio, "Cannot create microphone resampler: {}", speex_resampler_strerror(error));
+            impl->resampler.reset();
+            return;
+        }
     }
 
     // Enable the microphone (transitions from idle to recording)
@@ -262,24 +284,26 @@ Samples LibRetroInput::Read() {
         return {};
     }
 
-    // Resample from native device rate to the rate the 3DS mic service expects
-    if (impl->native_sample_rate != 0 && impl->native_sample_rate != parameters.sample_rate) {
-        double ratio = static_cast<double>(parameters.sample_rate) / impl->native_sample_rate;
-        auto output_count = static_cast<std::size_t>(raw_samples.size() * ratio);
-        if (output_count == 0) {
-            return {};
-        }
-        std::vector<s16> resampled(output_count);
-        for (std::size_t i = 0; i < output_count; i++) {
-            double src_pos = i / ratio;
-            auto idx = static_cast<std::size_t>(src_pos);
-            double frac = src_pos - idx;
-            if (idx + 1 < raw_samples.size()) {
-                resampled[i] =
-                    static_cast<s16>(raw_samples[idx] * (1.0 - frac) + raw_samples[idx + 1] * frac);
-            } else {
-                resampled[i] = raw_samples[std::min(idx, raw_samples.size() - 1)];
+    // Keep fractional position and filter history across reads, including small input chunks.
+    if (impl->resampler) {
+        std::vector<s16> resampled;
+        resampled.reserve(raw_samples.size());
+        std::array<s16, 4096> chunk;
+        std::size_t consumed = 0;
+        while (consumed < raw_samples.size()) {
+            spx_uint32_t input_count = static_cast<spx_uint32_t>(raw_samples.size() - consumed);
+            spx_uint32_t output_count = static_cast<spx_uint32_t>(chunk.size());
+            const int error = speex_resampler_process_int(
+                impl->resampler.get(), 0, raw_samples.data() + consumed, &input_count,
+                chunk.data(), &output_count);
+            if (error != RESAMPLER_ERR_SUCCESS || (!input_count && !output_count)) {
+                LOG_ERROR(Audio, "Microphone resampling failed (status {}, consumed {}, produced {})",
+                          error, input_count, output_count);
+                StopSampling();
+                return {};
             }
+            consumed += input_count;
+            resampled.insert(resampled.end(), chunk.begin(), chunk.begin() + output_count);
         }
         raw_samples = std::move(resampled);
     }

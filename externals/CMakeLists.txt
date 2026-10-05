@@ -308,6 +308,10 @@ if (ENABLE_CUBEB)
     endif()
 endif()
 
+if(ENABLE_LIBRETRO)
+    add_subdirectory(speex-resampler EXCLUDE_FROM_ALL)
+endif()
+
 # DiscordRPC
 if (ENABLE_DISCORD_RPC)
     # rapidjson used by discord-rpc is old and doesn't correctly detect endianness for some platforms.
