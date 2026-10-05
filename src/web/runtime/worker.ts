@@ -24,6 +24,7 @@ const report = (error: unknown, id?: number): undefined => {
 
 let running = false;
 let nextFrame = 0;
+let frameInterval = 0;
 let frameTasks: AbortController | undefined;
 let session: BrowserSession | undefined;
 let graphics: GraphicsClient | undefined;
@@ -54,7 +55,7 @@ function frame(): undefined {
     session.runFrame();
     const now = performance.now();
     // Drop accumulated wall-clock debt when background throttling resumes.
-    nextFrame = Math.max(nextFrame + 1000 / 60, now - 1000 / 60);
+    nextFrame = Math.max(nextFrame + frameInterval, now - frameInterval);
     scheduleFrame(Math.max(0, nextFrame - now));
   } catch (error) { pause(); report(error); }
   return undefined;
@@ -68,8 +69,8 @@ function start(): undefined {
   session.runFrame();
   frameTasks = new AbortController();
   running = true;
-  nextFrame = performance.now() + 1000 / 60;
-  scheduleFrame(1000 / 60);
+  nextFrame = performance.now() + frameInterval;
+  scheduleFrame(frameInterval);
   return undefined;
 }
 
@@ -162,5 +163,6 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
 
 commands = initialize().then((value) => {
   session = value;
+  frameInterval = 1000 / value.core._azahar_frame_rate();
   post({ type: "ready", sampleRate: value.core._azahar_audio_sample_rate() });
 }).catch(report);

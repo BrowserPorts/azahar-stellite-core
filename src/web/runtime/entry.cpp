@@ -14,6 +14,7 @@
 #include "common/logging/backend.h"
 #include "common/logging/filter.h"
 #include "core/core.h"
+#include "core/core_timing.h"
 #include "core/loader/loader.h"
 #include "libretro.h"
 
@@ -114,7 +115,11 @@ int16_t ReadInput(unsigned port, unsigned device, unsigned index, unsigned id) {
 } // namespace
 
 extern "C" EMSCRIPTEN_KEEPALIVE std::uint32_t azahar_web_abi() {
-    return 11;
+    return 12;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE double azahar_frame_rate() {
+    return SCREEN_REFRESH_RATE;
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE std::uint32_t azahar_audio_sample_rate() {

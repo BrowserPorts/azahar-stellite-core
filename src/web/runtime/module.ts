@@ -17,6 +17,7 @@ export interface AzaharModule {
   addFunction(callback: (...args: number[]) => unknown, signature: string): number;
   removeFunction(pointer: number): unknown;
   _azahar_web_abi(): number;
+  _azahar_frame_rate(): number;
   _azahar_audio_sample_rate(): number;
   _azahar_arm_jit_statistics_enabled(): number;
   _azahar_arm_jit_native_dispatches(): bigint;
