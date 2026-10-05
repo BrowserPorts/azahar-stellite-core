@@ -114,7 +114,11 @@ int16_t ReadInput(unsigned port, unsigned device, unsigned index, unsigned id) {
 } // namespace
 
 extern "C" EMSCRIPTEN_KEEPALIVE std::uint32_t azahar_web_abi() {
-    return 10;
+    return 11;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE std::uint32_t azahar_audio_sample_rate() {
+    return AudioCore::native_sample_rate;
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_initialize() {

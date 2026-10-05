@@ -4,6 +4,7 @@ import type { AzaharModuleFactory } from "./module";
 import type { SessionEvent, SessionRequest, SessionResult } from "./messages";
 import { BrowserSession } from "./session";
 import { GraphicsClient } from "../gpu/client";
+import { AudioProducer } from "./audio-ring";
 
 const worker = self as unknown as DedicatedWorkerGlobalScope & {
   scheduler: {
@@ -26,12 +27,14 @@ let nextFrame = 0;
 let frameTasks: AbortController | undefined;
 let session: BrowserSession | undefined;
 let graphics: GraphicsClient | undefined;
+let audio: AudioProducer | undefined;
 let commands: Promise<unknown> = Promise.resolve();
 
 function pause(): undefined {
   running = false;
   frameTasks?.abort();
   frameTasks = undefined;
+  audio?.clear();
   return undefined;
 }
 
@@ -60,6 +63,7 @@ function frame(): undefined {
 function start(): undefined {
   if (running) return undefined;
   if (!session) throw new Error("Azahar is unavailable");
+  audio?.clear();
   // Let the command handler report a failed first frame to its caller.
   session.runFrame();
   frameTasks = new AbortController();
@@ -85,6 +89,7 @@ async function initialize(): Promise<BrowserSession> {
         return post({ type: "video", bytes, width, height, pitch }, [bytes.buffer]);
       },
       audio: (view, sampleRate) => {
+        if (audio) return audio.write(view, sampleRate);
         const samples = view.slice();
         return post({ type: "audio", samples, sampleRate }, [samples.buffer]);
       },
@@ -111,6 +116,15 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
           await graphics.surface(request.canvas);
           break;
         }
+        case "audio-output": {
+          if (audio) throw new Error("Browser audio is already connected");
+          if (request.transport.sampleRate !== session.core._azahar_audio_sample_rate()) {
+            throw new Error("Browser audio does not match the native sample rate");
+          }
+          audio = new AudioProducer(request.transport);
+          audio.clear();
+          break;
+        }
         case "start": start(); break;
         case "pause": pause(); break;
         case "input": session.input(request.state); break;
@@ -131,7 +145,9 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
           }
           break;
         }
-        case "close": pause(); session.close(); await graphics?.close(); graphics = undefined; break;
+        case "close":
+          pause(); audio?.close(); audio = undefined;
+          session.close(); await graphics?.close(); graphics = undefined; break;
         default: throw new Error("Unknown Azahar session request");
       }
       post({ type: "reply", id: request.id, result });
@@ -142,5 +158,5 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
 
 commands = initialize().then((value) => {
   session = value;
-  post({ type: "ready" });
+  post({ type: "ready", sampleRate: value.core._azahar_audio_sample_rate() });
 }).catch(report);

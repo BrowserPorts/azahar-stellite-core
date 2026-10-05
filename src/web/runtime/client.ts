@@ -2,6 +2,9 @@
 
 import type { SessionEvent, SessionRequest, SessionResult } from "./messages";
 import type { InputState, PerformanceStats } from "./session";
+import { BrowserAudioOutput } from "./audio-output";
+export { BrowserAudioOutput } from "./audio-output";
+export type { AudioOutputStatistics } from "./audio-output";
 
 export interface ClientOutput {
   video(frame: Extract<SessionEvent, { type: "video" }>): unknown;
@@ -25,6 +28,11 @@ export class AzaharClient {
   #initialized = false;
   #disposed = false;
   #closing: Promise<undefined> | undefined;
+  #audio: BrowserAudioOutput | undefined;
+  #audioClosing: Promise<undefined> | undefined;
+  #connectingAudio: AbortController | undefined;
+  #audioConnection: Promise<BrowserAudioOutput> | undefined;
+  #sampleRate = 0;
   #rejectReady: ((error: Error) => unknown) | undefined;
 
   constructor(readonly output: ClientOutput,
@@ -36,6 +44,7 @@ export class AzaharClient {
         const value = event.data;
         switch (value.type) {
           case "ready":
+            this.#sampleRate = value.sampleRate;
             this.#initialized = true;
             this.#rejectReady = undefined;
             resolve(undefined);
@@ -93,8 +102,41 @@ export class AzaharClient {
     return undefined;
   }
 
-  async start(): Promise<undefined> { await this.request({ type: "start" }); return undefined; }
-  async pause(): Promise<undefined> { await this.request({ type: "pause" }); return undefined; }
+  /** Play native PCM on an audio worklet; call from a user gesture after ready.
+   * Connected playback replaces PCM messages to the audio callback. */
+  async connectAudio(): Promise<BrowserAudioOutput> {
+    if (!this.#initialized || this.#disposed || this.#closing) throw new Error("Azahar is not ready for audio");
+    if (this.#audio || this.#connectingAudio) throw new Error("Browser audio is already connected");
+    const controller = new AbortController();
+    this.#connectingAudio = controller;
+    const connection = (async () => {
+      let audio: BrowserAudioOutput | undefined;
+      try {
+        audio = await BrowserAudioOutput.create(this.#sampleRate,
+          message => this.output.error(message), controller.signal);
+        await this.request({ type: "audio-output", transport: audio.transport });
+        if (this.#closing || this.#disposed) throw new Error("The Azahar session is closing");
+        this.#audio = audio;
+        return audio;
+      } catch (error) {
+        await audio?.close();
+        throw error;
+      } finally { this.#connectingAudio = undefined; this.#audioConnection = undefined; }
+    })();
+    this.#audioConnection = connection;
+    return connection;
+  }
+
+  async start(): Promise<undefined> {
+    await this.#audio?.resume();
+    await this.request({ type: "start" });
+    return undefined;
+  }
+  async pause(): Promise<undefined> {
+    await this.request({ type: "pause" });
+    await this.#audio?.suspend();
+    return undefined;
+  }
   async input(state: InputState): Promise<undefined> {
     await this.request({ type: "input", state }); return undefined;
   }
@@ -120,7 +162,9 @@ export class AzaharClient {
 
   close(): Promise<undefined> {
     if (this.#closing) return this.#closing;
-    if (this.#disposed) return Promise.resolve(undefined);
+    if (this.#disposed) return Promise.all([
+      this.#audioClosing, this.#audioConnection?.catch(() => undefined),
+    ]).then(() => undefined);
     if (!this.#initialized) {
       this.#closing = Promise.resolve(undefined);
       this.ready.catch(() => undefined);
@@ -128,7 +172,11 @@ export class AzaharClient {
       return this.#closing;
     }
     this.#closing = this.request({ type: "close" }).then(() => undefined)
-      .finally(() => this.dispose(new Error("The Azahar session is closed")));
+      .finally(async () => {
+        this.dispose(new Error("The Azahar session is closed"));
+        await this.#audioConnection?.catch(() => undefined);
+        await this.#audioClosing;
+      });
     return this.#closing;
   }
 
@@ -155,6 +203,9 @@ export class AzaharClient {
     this.#rejectReady?.(error);
     this.#rejectReady = undefined;
     this.#worker.terminate();
+    this.#connectingAudio?.abort();
+    this.#audioClosing = this.#audio?.close();
+    this.#audioClosing?.catch(error => this.output.error(String(error)));
     for (const pending of this.#pending.values()) pending.reject(error);
     this.#pending.clear();
     return undefined;

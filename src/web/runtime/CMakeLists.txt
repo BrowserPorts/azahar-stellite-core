@@ -36,6 +36,7 @@ find_program(BUN_EXECUTABLE NAMES bun REQUIRED)
 set(WORKER_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-worker.js")
 set(CLIENT_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar.js")
 set(GPU_WORKER_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-gpu-worker.js")
+set(AUDIO_WORKLET_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-audio-worklet.js")
 file(GLOB RUNTIME_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.ts")
 file(GLOB GPU_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../gpu/*.ts")
 add_custom_command(OUTPUT "${WORKER_OUTPUT}"
@@ -54,8 +55,13 @@ add_custom_command(OUTPUT "${GPU_WORKER_OUTPUT}"
 add_custom_command(OUTPUT "${CLIENT_OUTPUT}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/client.ts"
         --target browser --outfile "${CLIENT_OUTPUT}"
-    DEPENDS client.ts messages.ts session.ts
+    DEPENDS client.ts messages.ts session.ts audio-output.ts audio-ring.ts
+    VERBATIM)
+add_custom_command(OUTPUT "${AUDIO_WORKLET_OUTPUT}"
+    COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/audio-worklet.ts"
+        --target browser --outfile "${AUDIO_WORKLET_OUTPUT}"
+    DEPENDS audio-worklet.ts audio-ring.ts
     VERBATIM)
 add_custom_target(azahar_browser_runtime DEPENDS azahar_browser azahar_shader_compiler azahar_glslang
     azahar_pica_shader_generator azahar_dsp_templates
-    "${WORKER_OUTPUT}" "${GPU_WORKER_OUTPUT}" "${CLIENT_OUTPUT}")
+    "${WORKER_OUTPUT}" "${GPU_WORKER_OUTPUT}" "${CLIENT_OUTPUT}" "${AUDIO_WORKLET_OUTPUT}")
