@@ -25,6 +25,15 @@ export interface InputState {
   touchPressed: boolean;
 }
 
+export interface MotionState {
+  /** Device axes: right, up, out; acceleration including gravity in m/s². */
+  acceleration: { x: number; y: number; z: number };
+  /** DeviceMotionEvent rates in degrees/sec: alpha about Z, beta about X, gamma about Y. */
+  rotationRate: { alpha: number; beta: number; gamma: number };
+  /** Counter-clockwise screen rotation from natural orientation, in degrees. */
+  screenAngle: 0 | 90 | 180 | 270;
+}
+
 /** Options and legal values supplied by Azahar's native frontend definitions. */
 export interface CoreOption {
   key: string;
@@ -93,7 +102,7 @@ export class BrowserSession {
         azaharAudio: (pointer, frames, sampleRate) => output.audio(core.HEAP16.subarray(pointer >>> 1,
           (pointer >>> 1) + frames * 2), sampleRate),
       });
-      if (core._azahar_web_abi() !== 13) throw new Error("Unsupported Azahar browser ABI");
+      if (core._azahar_web_abi() !== 14) throw new Error("Unsupported Azahar browser ABI");
       if (!core._azahar_mount_storage()) throw new Error("Azahar could not mount OPFS user storage");
       if (!core._azahar_initialize()) throw new Error("Azahar initialization failed");
       return new BrowserSession(core, storage, armJit, graphics);
@@ -219,6 +228,24 @@ export class BrowserSession {
     const pointer = this.core._azahar_core_options();
     if (!pointer) throw new Error("Azahar core options are unavailable");
     return JSON.parse(this.core.UTF8ToString(pointer)) as CoreOption[];
+  }
+
+  motion(value: MotionState | null): undefined {
+    this.checkOpen();
+    if (value === null) { this.core._azahar_reset_motion(); return undefined; }
+    if (!value?.acceleration || !value.rotationRate || ![0, 90, 180, 270].includes(value.screenAngle)) {
+      throw new Error("Invalid motion state");
+    }
+    const a = value.acceleration;
+    const r = value.rotationRate;
+    if (![a.x, a.y, a.z, r.alpha, r.beta, r.gamma].every(component =>
+      typeof component === "number" && Number.isFinite(component) && Number.isFinite(Math.fround(component)))) {
+      throw new Error("Invalid motion sample");
+    }
+    if (!this.core._azahar_set_motion(a.x, a.y, a.z, r.beta, r.gamma, r.alpha, value.screenAngle / 90)) {
+      throw new Error("Azahar could not update motion input");
+    }
+    return undefined;
   }
 
   setOption(key: string, value: string): undefined {

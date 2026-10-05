@@ -10,6 +10,7 @@
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "common/vector_math.h"
+#include "core/frontend/motion.h"
 #include "jni/ndk_motion.h"
 
 namespace InputManager {
@@ -39,40 +40,6 @@ class NDKMotion final : public Input::MotionDevice {
     static_assert(decltype(acceleration)::is_always_lock_free, "vectors are not lock free");
     std::thread poll_thread;
     std::atomic<bool> stop_polling = false;
-
-    static Vec3<float> TransformAxes(Vec3<float> in) {
-        // 3DS   Y+            Phone     Z+
-        // on    |             laying    |
-        // table |             in        |
-        //       |_______ X-   portrait  |_______ X+
-        //      /              mode     /
-        //     /                       /
-        //    Z-                      Y-
-        Vec3<float> out;
-        out.y = in.z;
-        // rotations are 90 degrees counter-clockwise from portrait
-        switch (screen_rotation) {
-        case 0:
-            out.x = -in.x;
-            out.z = in.y;
-            break;
-        case 1:
-            out.x = in.y;
-            out.z = in.x;
-            break;
-        case 2:
-            out.x = in.x;
-            out.z = -in.y;
-            break;
-        case 3:
-            out.x = -in.y;
-            out.z = -in.x;
-            break;
-        default:
-            UNREACHABLE();
-        }
-        return out;
-    }
 
     void Construct() {
         sensor_manager = ASensorManager_getInstanceForPackage("org.citra.citra_emu");
@@ -110,11 +77,13 @@ class NDKMotion final : public Input::MotionDevice {
         }
         if (new_accel) {
             // convert from m/(s^2) to g and invert
-            acceleration = TransformAxes(*new_accel) / -ASENSOR_STANDARD_GRAVITY;
+            acceleration = Input::TransformMotionAxes(*new_accel, screen_rotation) /
+                           -ASENSOR_STANDARD_GRAVITY;
         }
         if (new_rot) {
             // convert from rad/s to deg/s
-            rotation = TransformAxes(*new_rot) * 180.0f / static_cast<float>(M_PI);
+            rotation = Input::TransformMotionAxes(*new_rot, screen_rotation) * 180.0f /
+                       static_cast<float>(M_PI);
         }
     }
 

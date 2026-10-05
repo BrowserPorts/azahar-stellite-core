@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { CoreOption, InputState, PerformanceStats } from "./session";
+import type { CoreOption, InputState, MotionState, PerformanceStats } from "./session";
 import type { AudioTransport } from "./audio-ring";
 
 export type SessionResult = string | number | PerformanceStats | CoreOption[] | undefined;
@@ -13,6 +13,7 @@ export type SessionRequest = { id: number } & (
   { type: "start" | "pause" | "advance-frame" | "close" | "performance" | "options" } |
   { type: "set-option"; key: string; value: string } |
   { type: "save" | "restore"; slot: number } |
+  { type: "motion"; state: MotionState | null } |
   { type: "input"; state: InputState }
 );
 

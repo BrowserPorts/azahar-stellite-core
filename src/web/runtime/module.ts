@@ -40,6 +40,9 @@ export interface AzaharModule {
   _azahar_performance_stats(): number;
   _azahar_set_input(mask: number, lx: number, ly: number, rx: number, ry: number,
     x: number, y: number, touch: number): unknown;
+  _azahar_set_motion(ax: number, ay: number, az: number, rx: number, ry: number, rz: number,
+    screenRotation: number): number;
+  _azahar_reset_motion(): unknown;
   _azahar_shutdown(): unknown;
   _malloc(bytes: number): number;
   _free(pointer: number): unknown;

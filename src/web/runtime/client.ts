@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { SessionEvent, SessionRequest, SessionResult } from "./messages";
-import type { CoreOption, InputState, PerformanceStats } from "./session";
-export type { CoreOption } from "./session";
+import type { CoreOption, InputState, MotionState, PerformanceStats } from "./session";
+export type { CoreOption, MotionState } from "./session";
 import { BrowserAudioOutput } from "./audio-output";
+import { BrowserMotionInput } from "./motion-input";
 export { BrowserAudioOutput } from "./audio-output";
+export { BrowserMotionInput } from "./motion-input";
 export type { AudioOutputStatistics } from "./audio-output";
 
 export interface ClientOutput {
@@ -33,6 +35,9 @@ export class AzaharClient {
   #audioClosing: Promise<undefined> | undefined;
   #connectingAudio: AbortController | undefined;
   #audioConnection: Promise<BrowserAudioOutput> | undefined;
+  #motion: BrowserMotionInput | undefined;
+  #motionController: AbortController | undefined;
+  #motionConnection: Promise<BrowserMotionInput> | undefined;
   #sampleRate = 0;
   #rejectReady: ((error: Error) => unknown) | undefined;
 
@@ -133,6 +138,30 @@ export class AzaharClient {
     await this.request({ type: "start" });
     return undefined;
   }
+
+  /** Capture device sensors; call from a user gesture after ready. */
+  async connectMotion(): Promise<BrowserMotionInput> {
+    if (!this.#initialized || this.#disposed || this.#closing) throw new Error("Azahar is not ready for motion");
+    if (this.#motionConnection || (this.#motion && !this.#motion.closed)) {
+      throw new Error("Browser motion is already connected");
+    }
+    const controller = new AbortController();
+    this.#motionController = controller;
+    const connection = (async () => {
+      try {
+        const motion = await BrowserMotionInput.create(state => this.motion(state),
+          message => this.output.error(message), controller.signal);
+        if (this.#closing || this.#disposed) {
+          controller.abort();
+          throw new Error("The Azahar session is closing");
+        }
+        this.#motion = motion;
+        return motion;
+      } finally { this.#motionConnection = undefined; }
+    })();
+    this.#motionConnection = connection;
+    return connection;
+  }
   async pause(): Promise<undefined> {
     await this.request({ type: "pause" });
     await this.#audio?.suspend();
@@ -145,6 +174,11 @@ export class AzaharClient {
   }
   async input(state: InputState): Promise<undefined> {
     await this.request({ type: "input", state }); return undefined;
+  }
+
+  /** Supply device-coordinate motion directly, or null to reset to a stationary device. */
+  async motion(state: MotionState | null): Promise<undefined> {
+    await this.request({ type: "motion", state }); return undefined;
   }
 
   /** Native option descriptions include any game restart requirements. */
@@ -183,8 +217,10 @@ export class AzaharClient {
 
   close(): Promise<undefined> {
     if (this.#closing) return this.#closing;
+    this.#motionController?.abort();
     if (this.#disposed) return Promise.all([
       this.#audioClosing, this.#audioConnection?.catch(() => undefined),
+      this.#motionConnection?.catch(() => undefined),
     ]).then(() => undefined);
     if (!this.#initialized) {
       this.#closing = Promise.resolve(undefined);
@@ -196,6 +232,7 @@ export class AzaharClient {
       .finally(async () => {
         this.dispose(new Error("The Azahar session is closed"));
         await this.#audioConnection?.catch(() => undefined);
+        await this.#motionConnection?.catch(() => undefined);
         await this.#audioClosing;
       });
     return this.#closing;
@@ -225,6 +262,7 @@ export class AzaharClient {
     this.#rejectReady = undefined;
     this.#worker.terminate();
     this.#connectingAudio?.abort();
+    this.#motionController?.abort();
     this.#audioClosing = this.#audio?.close();
     this.#audioClosing?.catch(error => this.output.error(String(error)));
     for (const pending of this.#pending.values()) pending.reject(error);

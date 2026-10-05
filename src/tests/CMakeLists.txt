@@ -136,6 +136,20 @@ if(EMSCRIPTEN)
     add_custom_target(browser_audio_fixtures DEPENDS
         wasm_audio_audio_context_sample_rate wasm_audio_audioworklet wasm_audio_audioworklet_in_out_stereo
         ${AUDIO_WEB_ASSETS})
+
+    # Preserve the SDK's original motion/event registration and listener lifetime cases.
+    foreach(input_case IN ITEMS html5_core html5_remove_event_listener)
+        add_executable(wasm_input_${input_case}
+            "${PROJECT_SOURCE_DIR}/externals/emscripten/test/browser/test_${input_case}.c")
+        target_compile_options(wasm_input_${input_case} PRIVATE -UNDEBUG)
+        target_link_options(wasm_input_${input_case} PRIVATE
+            -sENVIRONMENT=web -sEXIT_RUNTIME=1 -sASSERTIONS=1 -sINVOKE_RUN=0
+            "-sEXPORTED_RUNTIME_METHODS=['callMain']")
+        set_target_properties(wasm_input_${input_case} PROPERTIES SUFFIX ".html"
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/input-fixtures")
+    endforeach()
+    add_custom_target(browser_input_fixtures DEPENDS
+        wasm_input_html5_core wasm_input_html5_remove_event_listener)
 else()
     add_test(NAME tests COMMAND tests)
 endif()

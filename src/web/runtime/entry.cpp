@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -19,6 +20,7 @@
 #include "common/logging/filter.h"
 #include "core/core.h"
 #include "core/core_timing.h"
+#include "core/frontend/motion.h"
 #include "core/loader/loader.h"
 #include "libretro.h"
 
@@ -29,6 +31,8 @@ bool options_changed = false;
 std::array<std::int16_t, 16> buttons{};
 std::array<std::array<std::int16_t, 2>, 2> sticks{};
 std::array<std::int16_t, 3> pointer{};
+std::array<float, 6> motion{0.f, -1.f, 0.f, 0.f, 0.f, 0.f};
+std::array<bool, 2> sensors_enabled{};
 bool initialized = false;
 bool loaded = false;
 
@@ -53,6 +57,22 @@ void Log(retro_log_level level, const char* format, ...) {
     } else {
         emscripten_out(message.data());
     }
+}
+
+bool SetSensorState(unsigned port, retro_sensor_action action, unsigned) {
+    if (port != 0) return false;
+    switch (action) {
+    case RETRO_SENSOR_ACCELEROMETER_ENABLE: sensors_enabled[0] = true; return true;
+    case RETRO_SENSOR_ACCELEROMETER_DISABLE: sensors_enabled[0] = false; return true;
+    case RETRO_SENSOR_GYROSCOPE_ENABLE: sensors_enabled[1] = true; return true;
+    case RETRO_SENSOR_GYROSCOPE_DISABLE: sensors_enabled[1] = false; return true;
+    default: return false;
+    }
+}
+
+float ReadSensor(unsigned port, unsigned id) {
+    if (port != 0 || id >= motion.size() || !sensors_enabled[id / 3]) return 0.f;
+    return motion[id];
 }
 
 bool Environment(unsigned command, void* data) {
@@ -87,6 +107,9 @@ bool Environment(unsigned command, void* data) {
         return true;
     case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
         static_cast<retro_log_callback*>(data)->log = Log;
+        return true;
+    case RETRO_ENVIRONMENT_GET_SENSOR_INTERFACE:
+        *static_cast<retro_sensor_interface*>(data) = {SetSensorState, ReadSensor};
         return true;
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
         return *static_cast<retro_pixel_format*>(data) == RETRO_PIXEL_FORMAT_XRGB8888;
@@ -124,7 +147,7 @@ int16_t ReadInput(unsigned port, unsigned device, unsigned index, unsigned id) {
 } // namespace
 
 extern "C" EMSCRIPTEN_KEEPALIVE std::uint32_t azahar_web_abi() {
-    return 13;
+    return 14;
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_core_options() {
@@ -230,6 +253,26 @@ extern "C" EMSCRIPTEN_KEEPALIVE void azahar_set_input(unsigned mask, int lx, int
     pointer = {static_cast<int16_t>(x), static_cast<int16_t>(y), static_cast<int16_t>(touch)};
 }
 
+extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_set_motion(float ax, float ay, float az,
+                                                       float rx, float ry, float rz,
+                                                       unsigned screen_rotation) {
+    const std::array values{ax, ay, az, rx, ry, rz};
+    if (!initialized || screen_rotation > 3 ||
+        !std::all_of(values.begin(), values.end(), [](float value) { return std::isfinite(value); })) {
+        return false;
+    }
+    // Match Android's gravity sign and axis mapping. LibRetroMotion consumes g and radians/sec.
+    const auto acceleration = Input::TransformMotionAxes({ax, ay, az}, screen_rotation) / -9.80665f;
+    const auto rotation = Input::TransformMotionAxes({rx, ry, rz}, screen_rotation) *
+                          (3.14159265f / 180.f);
+    motion = {acceleration.x, acceleration.y, acceleration.z, rotation.x, rotation.y, rotation.z};
+    return true;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE void azahar_reset_motion() {
+    motion = {0.f, -1.f, 0.f, 0.f, 0.f, 0.f};
+}
+
 extern "C" EMSCRIPTEN_KEEPALIVE void azahar_shutdown() {
     if (!initialized) return;
     if (loaded) retro_unload_game();
@@ -242,4 +285,6 @@ extern "C" EMSCRIPTEN_KEEPALIVE void azahar_shutdown() {
     buttons = {};
     sticks = {};
     pointer = {};
+    azahar_reset_motion();
+    sensors_enabled = {};
 }
