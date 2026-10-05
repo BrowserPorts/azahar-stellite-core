@@ -206,6 +206,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
     ? locals.length + parameterCount : undefined;
   if (fpTrapFlags !== undefined) locals.push("i32");
   let fpTrapFlagsValid = false;
+  let fpMagnitude: number | undefined;
   const constant = (value: number): Bytes => body.byte(0x41).signed(BigInt(value), 32);
   const get = (index: number): Bytes => body.byte(0x20).u32(index);
   const set = (index: number): Bytes => body.byte(0x21).u32(index);
@@ -253,6 +254,18 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   };
   const argType = (value: Argument): ValueType => "ref" in value
     ? wasmType(block.nodes[value.ref]!.type) : wasmType(value.type);
+  const loadFPTrapFlags = (): undefined => {
+    if (fpTrapFlags !== undefined && fpTrapFlagsValid) get(fpTrapFlags);
+    else {
+      load(options.layout.fpscr).byte(0x41).signed(0x9f00n, 32).byte(0x71);
+      if (fpTrapFlags !== undefined) {
+        // Pure FP helpers accumulate status flags without changing trap enables.
+        body.byte(0x22).u32(fpTrapFlags);
+        fpTrapFlagsValid = true;
+      }
+    }
+    return undefined;
+  };
   const helper = (name: string, params: ValueType[], results: ValueType[], emit: () => unknown): undefined => {
     if (!options.helperNames?.has(name)) throw new JitError("compile", `ARM Wasm lowering is missing ${name}`);
     let importIndex = imports.findIndex((item) => item.name === name);
@@ -269,15 +282,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
     }
     // Scalar FP helpers only record flags when all exception traps are disabled.
     if (preservesRegisters && options.execution) {
-      if (fpTrapFlags !== undefined && fpTrapFlagsValid) get(fpTrapFlags);
-      else {
-        load(options.layout.fpscr).byte(0x41).signed(0x9f00n, 32).byte(0x71);
-        if (fpTrapFlags !== undefined) {
-          // Pure FP helpers accumulate status flags without changing trap enables.
-          body.byte(0x22).u32(fpTrapFlags);
-          fpTrapFlagsValid = true;
-        }
-      }
+      loadFPTrapFlags();
       body.byte(0x04).byte(0x40);
     }
     // Callbacks and enabled FP traps must see all ticks and cached registers.
@@ -1246,6 +1251,46 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
         });
         break;
       case "A32GetFpscr": load(options.layout.fpscr); break;
+      case "FPAdd32": case "FPSub32": case "FPMul32": {
+        const direct = options.fpStatusHelpers?.has(node.op);
+        if (direct) {
+          if (fpMagnitude === undefined) { fpMagnitude = locals.length + parameterCount; locals.push("i32"); }
+          body.byte(0x02).byte(0x7f).byte(0x02).byte(0x40);
+          // Later helper calls may reuse this guard even when the zero path skips the helper.
+          if (fpTrapFlags !== undefined && !fpTrapFlagsValid) { loadFPTrapFlags(); body.byte(0x1a); }
+          arg(0); constant(0x7fffffff).byte(0x71).byte(0x45);
+          arg(1); constant(0x7fffffff).byte(0x71).byte(0x45).byte(0x72).byte(0x45).byte(0x0d).u32(0);
+          // With at least one zero, the union is the other operand's magnitude.
+          arg(0); arg(1); body.byte(0x72); constant(0x7fffffff).byte(0x71).byte(0x22).u32(fpMagnitude);
+          body.byte(0x04).byte(0x40);
+          // Keep denormals, infinities and NaNs in the native arithmetic helper.
+          get(fpMagnitude); constant(0x800000).byte(0x6b);
+          constant(0x7effffff).byte(0x4b).byte(0x0d).u32(1).byte(0x0b);
+          if (node.op === "FPMul32") {
+            arg(0); arg(1); body.byte(0x73); constant(0x80000000).byte(0x71);
+          } else {
+            get(fpMagnitude).byte(0x04).byte(0x7f);
+            arg(0); arg(1);
+            if (node.op === "FPSub32") constant(0x80000000).byte(0x73);
+            arg(1); constant(0x7fffffff).byte(0x71).byte(0x45).byte(0x1b);
+            body.byte(0x05);
+            // Opposite zero signs round negative only toward minus infinity.
+            load(options.layout.fpscr); constant(0xc00000).byte(0x71);
+            constant(0x800000).byte(0x46).byte(0x04).byte(0x7f);
+            arg(0); arg(1);
+            if (node.op === "FPSub32") constant(0x80000000).byte(0x73);
+            body.byte(0x72).byte(0x05);
+            arg(0); arg(1);
+            if (node.op === "FPSub32") constant(0x80000000).byte(0x73);
+            body.byte(0x71).byte(0x0b).byte(0x0b);
+          }
+          // Zero identities are exact and leave every FPSCR exception flag unchanged.
+          body.byte(0x0c).u32(1).byte(0x0b);
+        }
+        helper(node.op, node.args.map(argType), ["i32"], () => node.args.forEach(argument));
+        if (direct) body.byte(0x0b);
+        break;
+      }
       case "A32SetFpscr":
         knownFpscrMode = undefined;
         fpTrapFlagsValid = false;
