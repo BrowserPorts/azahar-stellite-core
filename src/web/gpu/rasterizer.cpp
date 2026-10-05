@@ -3,7 +3,9 @@
 #include <bit>
 #include <emscripten.h>
 #include "video_core/pica/pica_core.h"
+#include "video_core/pica/vertex_loader.h"
 #include "video_core/rasterizer_cache/rasterizer_cache.h"
+#include "video_core/shader/generator/glsl_shader_gen.h"
 #include "web/gpu/rasterizer.h"
 
 namespace WebGPU {
@@ -37,10 +39,18 @@ EM_JS(void, UploadLookupTable, (u32 table, u32 offset, const u8* pointer, u32 si
     Module["azaharGraphicsHost"].lookupTable(table, offset, HEAPU8.subarray(pointer, pointer + size));
 });
 EM_JS(void, DrawTriangles, (const DrawState* state, const u8* config, u32 config_size,
-                           const u8* vertices, u32 vertex_bytes, const u8* vs, const u8* fs), {
+                           const u8* vertices, u32 vertex_bytes, const u8* vs, const u8* fs,
+                           u32 program, const u8* uniforms), {
     Module["azaharGraphicsHost"].draw(HEAPU8.subarray(state, state + 43 * 4),
        HEAPU8.subarray(config, config + config_size), HEAPU8.subarray(vertices, vertices + vertex_bytes),
-       HEAPU8.subarray(vs, vs + 32), HEAPU8.subarray(fs, fs + 0x530));
+       HEAPU8.subarray(vs, vs + 32), HEAPU8.subarray(fs, fs + 0x530), program,
+       uniforms ? HEAPU8.subarray(uniforms, uniforms + 1616) : undefined);
+});
+EM_JS(u32, CreateVertexProgram, (const char* source), {
+    return Module["azaharGraphicsHost"].createVertexProgram(UTF8ToString(source));
+});
+EM_JS(void, DestroyVertexProgram, (u32 program), {
+    Module["azaharGraphicsHost"].destroyVertexProgram(program);
 });
 
 } // namespace
@@ -56,6 +66,17 @@ Rasterizer::Rasterizer(Memory::MemorySystem& memory, Pica::PicaCore& pica,
 
 void Rasterizer::DrawTriangles() {
     if (vertex_batch.empty()) return;
+    DrawBatch({reinterpret_cast<const u8*>(vertex_batch.data()),
+               vertex_batch.size() * sizeof(HardwareVertex)});
+    vertex_batch.clear();
+}
+
+Rasterizer::~Rasterizer() {
+    ClearPrograms();
+}
+
+void Rasterizer::DrawBatch(std::span<const u8> vertices, u32 program,
+                          const Pica::Shader::Generator::VSPicaUniformData* uniforms) {
     SyncDrawUniforms();
     const auto& fb = regs.framebuffer;
     const auto& om = fb.output_merger;
@@ -70,7 +91,6 @@ void Rasterizer::DrawTriangles() {
     const auto* framebuffer = helper.Framebuffer();
     const auto draw_rect = helper.DrawRect();
     if ((!framebuffer->ColorHandle() && !framebuffer->DepthHandle()) || !draw_rect.GetArea()) {
-        vertex_batch.clear();
         return;
     }
     const auto scissor = helper.Scissor();
@@ -125,10 +145,9 @@ void Rasterizer::DrawTriangles() {
     SyncLookupTables();
     const Pica::Shader::FSConfig config{regs};
     WebGPU::DrawTriangles(&state, reinterpret_cast<const u8*>(&config), sizeof(config),
-                          reinterpret_cast<const u8*>(vertex_batch.data()),
-                          static_cast<u32>(vertex_batch.size() * sizeof(HardwareVertex)),
-                          reinterpret_cast<const u8*>(&vs_data), reinterpret_cast<const u8*>(&fs_data));
-    vertex_batch.clear();
+                          vertices.data(), static_cast<u32>(vertices.size()),
+                          reinterpret_cast<const u8*>(&vs_data), reinterpret_cast<const u8*>(&fs_data),
+                          program, reinterpret_cast<const u8*>(uniforms));
 }
 
 bool Rasterizer::AccelerateDrawBatch(bool is_indexed) {
@@ -144,9 +163,96 @@ bool Rasterizer::AccelerateDrawBatch(bool is_indexed) {
         cache.FlushRegion(address, count * loader.byte_count);
     }
 
+    if (DrawProgrammable(is_indexed)) return true;
     pica.LoadVertices(is_indexed, true);
     DrawTriangles();
     return true;
+}
+
+bool Rasterizer::DrawProgrammable(bool is_indexed) {
+    using namespace Pica::Shader::Generator;
+    using Topology = Pica::PipelineRegs::TriangleTopology;
+    const auto& pipeline = regs.pipeline;
+    if (pipeline.use_gs != Pica::PipelineRegs::UseGS::No) return false;
+    // Quaternion sign correction matters only when a combiner consumes fragment lighting.
+    // Some homebrew leaves the lighting registers enabled while using vertex colors alone.
+    if (!regs.lighting.disable) {
+        using Source = Pica::TexturingRegs::TevStageConfig::Source;
+        for (const auto& stage : regs.texturing.GetTevStages()) {
+            for (const auto source : {stage.color_source1.Value(), stage.color_source2.Value(),
+                                      stage.color_source3.Value(), stage.alpha_source1.Value(),
+                                      stage.alpha_source2.Value(), stage.alpha_source3.Value()}) {
+                if (source == Source::PrimaryFragmentColor || source == Source::SecondaryFragmentColor) {
+                    return false;
+                }
+            }
+        }
+    }
+    // Without a geometry program, the shader topology also assembles ordinary triangles.
+    const bool triangle_list = pipeline.triangle_topology == Topology::List ||
+                               pipeline.triangle_topology == Topology::Shader;
+    if (pipeline.num_vertices < 3) return true;
+    regs.rasterizer.ValidateSemantics();
+    const PicaVSConfig config{regs, pica.vs_setup};
+    auto found = vertex_programs.find(config);
+    if (found == vertex_programs.end()) {
+        ExtraVSConfig extra{};
+        extra.use_clip_planes = true;
+        extra.separable_shader = true;
+        extra.sanitize_mul = true;
+        extra.load_flags.fill(AttribLoadFlags::Float);
+        const auto source = GLSL::GenerateVertexShader(pica.vs_setup, config, extra, true);
+        const u32 program = source.empty() ? 0 :
+            CreateVertexProgram(("#version 450\n" + source).c_str());
+        if (vertex_programs.size() >= 512) ClearPrograms();
+        found = vertex_programs.emplace(config, program).first;
+    }
+    if (!found->second) return false;
+
+    using InputVertex = std::array<Common::Vec4f, 16>;
+    static_assert(sizeof(InputVertex) == 256);
+    const auto& attributes = pipeline.vertex_attributes;
+    const PAddr base = attributes.GetPhysicalBaseAddress();
+    const auto* indices = memory.GetPhysicalPointer(base + pipeline.index_array.offset);
+    if (is_indexed && !indices) return true;
+    const Pica::VertexLoader loader{memory, pipeline, true};
+    std::vector<InputVertex> inputs(pipeline.num_vertices);
+    for (u32 index = 0; index < pipeline.num_vertices; ++index) {
+        const u32 vertex = is_indexed ? (pipeline.index_array.format ?
+            reinterpret_cast<const u16*>(indices)[index] : indices[index]) :
+            index + pipeline.vertex_offset;
+        Pica::AttributeBuffer attributes_in{};
+        loader.LoadVertex(base, index, vertex, attributes_in, pica.input_default_attributes);
+        for (u32 attr = 0; attr <= regs.vs.max_input_attribute_index; ++attr) {
+            auto& input = inputs[index][regs.vs.GetRegisterForAttribute(attr)];
+            for (u32 component = 0; component < 4; ++component) {
+                input[component] = attributes_in[attr][component].ToFloat32();
+            }
+        }
+    }
+    std::vector<InputVertex> triangles;
+    if (!triangle_list) {
+        triangles.reserve((inputs.size() - 2) * 3);
+        for (u32 index = 2; index < inputs.size(); ++index) {
+            const bool strip = pipeline.triangle_topology == Topology::Strip;
+            const u32 first = strip ? index - 2 + (index & 1) : 0;
+            const u32 second = strip ? index - 1 - (index & 1) : index - 1;
+            triangles.insert(triangles.end(), {inputs[first], inputs[second], inputs[index]});
+        }
+    }
+    const auto& vertices = triangle_list ? inputs : triangles;
+    VSPicaUniformData uniforms{};
+    uniforms.SetFromRegs(pica.vs_setup);
+    DrawBatch({reinterpret_cast<const u8*>(vertices.data()), vertices.size() * sizeof(InputVertex)},
+              found->second, &uniforms);
+    return true;
+}
+
+void Rasterizer::ClearPrograms() {
+    for (const auto& [config, program] : vertex_programs) {
+        if (program) DestroyVertexProgram(program);
+    }
+    vertex_programs.clear();
 }
 
 u32 Rasterizer::TextureCube(const Pica::TexturingRegs::FullTextureConfig& texture) {
@@ -205,7 +311,7 @@ void Rasterizer::FlushAll() { cache.FlushAll(); }
 void Rasterizer::FlushRegion(PAddr addr, u32 size) { cache.FlushRegion(addr, size); }
 void Rasterizer::InvalidateRegion(PAddr addr, u32 size) { cache.InvalidateRegion(addr, size); }
 void Rasterizer::FlushAndInvalidateRegion(PAddr addr, u32 size) { cache.FlushRegion(addr, size); cache.InvalidateRegion(addr, size); }
-void Rasterizer::ClearAll(bool flush) { cache.ClearAll(flush); vertex_batch.clear(); }
+void Rasterizer::ClearAll(bool flush) { cache.ClearAll(flush); vertex_batch.clear(); ClearPrograms(); }
 bool Rasterizer::AccelerateDisplayTransfer(const Pica::DisplayTransferConfig& config) { return cache.AccelerateDisplayTransfer(config); }
 bool Rasterizer::AccelerateTextureCopy(const Pica::DisplayTransferConfig& config) { return cache.AccelerateTextureCopy(config); }
 bool Rasterizer::AccelerateFill(const Pica::MemoryFillConfig& config) { return cache.AccelerateFill(config); }

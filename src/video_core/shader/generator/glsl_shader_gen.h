@@ -47,7 +47,7 @@ std::string GenerateTrivialVertexShader(bool use_clip_planes, bool separable_sha
  * @returns String of the shader source code; empty on failure
  */
 std::string GenerateVertexShader(const Pica::ShaderSetup& setup, const PicaVSConfig& config,
-                                 const ExtraVSConfig& extra);
+                                 const ExtraVSConfig& extra, bool webgpu_viewport = false);
 
 /**
  * Generates the GLSL fixed geometry shader program source code for non-GS PICA pipeline

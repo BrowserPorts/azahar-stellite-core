@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { NativeDraw, NativeDrawState } from "./draw-types";
+import { nativePicaUniformBytes, programmableVertexLayout } from "./draw-types";
 import { PicaShaders } from "./pica-shaders";
 import { GraphicsSamplers } from "./samplers";
 import { ShadowPixels } from "./shadow-pixels";
@@ -28,6 +29,7 @@ interface DrawPass {
 }
 
 interface DrawPipeline {
+  programmable: boolean;
   pipeline: GPURenderPipeline;
   groups: readonly GPUBindGroupLayout[];
   textures: ResourceBindingGroup[];
@@ -41,6 +43,7 @@ const pipelineStateKeys = ["cull", "flipped", "colorMask", "depthWrite", "depthC
   "texture0Type"] as const satisfies readonly (keyof NativeDrawState)[];
 
 interface PipelineSelection {
+  program: number;
   configuration: Uint8Array<ArrayBuffer>;
   state: NativeDrawState;
   colorFormat: number;
@@ -61,7 +64,7 @@ export class GraphicsDraws {
   #drawCount = 0;
   #uploadBytes = 0;
   #upload: DrawUpload | undefined;
-  #uniformOffsets = new Uint32Array(4);
+  #uniformOffsets = new Uint32Array(5);
   #luts: readonly GPUBuffer[];
   #empty: GPUTexture;
   #emptyShadow: GPUBuffer;
@@ -96,9 +99,12 @@ export class GraphicsDraws {
   async draw(draw: NativeDraw): Promise<undefined> {
     this.checkOpen();
     const state = draw.state;
-    const stride = this.shaders.vertexLayout.arrayStride;
+    const stride = draw.program ? programmableVertexLayout.arrayStride : this.shaders.vertexLayout.arrayStride;
     if (draw.vertexUniforms.byteLength !== 32 || draw.fragmentUniforms.byteLength !== 0x530 ||
-      !draw.vertices.byteLength || draw.vertices.byteLength % (stride * 3)) throw new Error("Invalid native triangle batch");
+      !draw.vertices.byteLength || draw.vertices.byteLength % (stride * 3) ||
+      (draw.program ? draw.picaUniforms?.byteLength !== nativePicaUniformBytes : draw.picaUniforms !== undefined)) {
+      throw new Error("Invalid native triangle batch");
+    }
     if (!state.color && !state.depth) throw new Error("The native draw has no framebuffer");
     const colorSurface = state.color ? this.textures.get(state.color) : undefined;
     const color = colorSurface?.texture;
@@ -120,7 +126,7 @@ export class GraphicsDraws {
     const alignment = this.device.limits.minUniformBufferOffsetAlignment;
     const aligned = (bytes: number): number => Math.ceil(bytes / alignment) * alignment;
     const upload = this.uploadBuffer(aligned(draw.vertices.byteLength) + aligned(draw.vertexUniforms.byteLength) +
-      aligned(draw.fragmentUniforms.byteLength) + 2 * aligned(16));
+      aligned(draw.fragmentUniforms.byteLength) + aligned(draw.picaUniforms?.byteLength ?? 0) + 2 * aligned(16));
     const encoder = this.#encoder ??= this.device.createCommandEncoder({ label: "Azahar PICA draws" });
     const temporary: (GPUTexture | GPUBuffer)[] = [];
     try {
@@ -147,6 +153,7 @@ export class GraphicsDraws {
       const vertex = store(draw.vertices);
       const vs = store(draw.vertexUniforms);
       const fs = store(draw.fragmentUniforms);
+      const pica = draw.picaUniforms ? store(draw.picaUniforms) : undefined;
       const [vx, vy, vw, vh] = state.viewport;
       const transform = store(new Uint8Array(new Float32Array([vw / width, -vh / height,
         (2 * vx + vw) / width - 1, 1 - (2 * vy + vh) / height]).buffer));
@@ -157,10 +164,11 @@ export class GraphicsDraws {
         shadow = this.shadows.buffer(encoder, attachment!, colorLevel); temporary.push(shadow);
       }
       const uniformGroup = this.uniformGroup(compiled, upload.buffer);
-      this.#uniformOffsets[0] = vs.offset!;
-      this.#uniformOffsets[1] = fs.offset!;
-      this.#uniformOffsets[2] = transform.offset!;
-      this.#uniformOffsets[3] = dimensions.offset!;
+      this.#uniformOffsets[0] = pica?.offset ?? 0;
+      this.#uniformOffsets[1] = vs.offset!;
+      this.#uniformOffsets[2] = fs.offset!;
+      this.#uniformOffsets[3] = transform.offset!;
+      this.#uniformOffsets[4] = dimensions.offset!;
       const textureResources: (GPUTextureView | GPUSampler)[] = [];
       let reusableTextures = true;
       for (let i = 0; i < 3; i++) {
@@ -202,9 +210,9 @@ export class GraphicsDraws {
         }
         const pass = this.renderPass(encoder, attachment, colorLevel, depth, state.depthLevel);
         pass.setPipeline(compiled.pipeline); pass.setVertexBuffer(0, vertex.buffer, vertex.offset, vertex.size);
-        pass.setBindGroup(0, uniformGroup, this.#uniformOffsets, 0, 3);
+        pass.setBindGroup(0, uniformGroup, this.#uniformOffsets, draw.program ? 0 : 1, draw.program ? 4 : 3);
         pass.setBindGroup(1, textureGroup);
-        pass.setBindGroup(2, utilityGroup, this.#uniformOffsets, 3, 1);
+        pass.setBindGroup(2, utilityGroup, this.#uniformOffsets, 4, 1);
         pass.setScissorRect(x, y, w, h); pass.setStencilReference(state.stencilReference);
         const blendColor = state.blendColor >>> 0;
         pass.setBlendConstant({ r: (blendColor & 255) / 255, g: ((blendColor >>> 8) & 255) / 255,
@@ -309,6 +317,7 @@ export class GraphicsDraws {
     let group = compiled.uniforms.get(buffer);
     if (!group) {
       group = this.device.createBindGroup({ layout: compiled.groups[0]!, entries: [
+        ...(compiled.programmable ? [{ binding: 0, resource: { buffer, size: nativePicaUniformBytes } }] : []),
         { binding: 1, resource: { buffer, size: 32 } },
         { binding: 2, resource: { buffer, size: 0x530 } },
         ...this.#luts.map((lut, i) => ({ binding: i + 3, resource: { buffer: lut } })),
@@ -374,7 +383,7 @@ export class GraphicsDraws {
     const last = this.#lastPipeline;
     // Repeated draws already occupy the newest cache entry; compare the full signature directly.
     if (last && this.matchesPipeline(last, draw, colorFormat, color, depth)) return last.pipeline;
-    const key = String.fromCharCode(...draw.configuration) + JSON.stringify([colorFormat, color, depth,
+    const key = String.fromCharCode(...draw.configuration) + JSON.stringify([draw.program, colorFormat, color, depth,
       ...pipelineStateKeys.map(field => s[field]), !!s.normal, s.shadow]);
     let pending = this.#pipelines.get(key);
     if (pending) {
@@ -391,14 +400,14 @@ export class GraphicsDraws {
       this.#pipelines.set(key, pending);
     }
     // Copy only the shader bytes, so the last selection does not retain the vertex upload buffer.
-    this.#lastPipeline = { configuration: draw.configuration.slice(), state: { ...s }, colorFormat, color, depth,
+    this.#lastPipeline = { program: draw.program, configuration: draw.configuration.slice(), state: { ...s }, colorFormat, color, depth,
       pipeline: pending };
     return pending;
   }
 
   private matchesPipeline(last: PipelineSelection, draw: NativeDraw, colorFormat: number,
     color: GPUTextureFormat | undefined, depth: GPUTextureFormat | undefined): boolean {
-    if (last.colorFormat !== colorFormat || last.color !== color || last.depth !== depth ||
+    if (last.program !== draw.program || last.colorFormat !== colorFormat || last.color !== color || last.depth !== depth ||
       !!last.state.normal !== !!draw.state.normal || last.state.shadow !== draw.state.shadow ||
       last.configuration.length !== draw.configuration.length) return false;
     for (const field of pipelineStateKeys) if (last.state[field] !== draw.state[field]) return false;
@@ -415,6 +424,8 @@ export class GraphicsDraws {
       Number(!!s.normal) | (colorFormat << 1) | (depthFormat << 4));
     const groups = [
       this.device.createBindGroupLayout({ entries: [
+        ...(draw.program ? [{ binding: 0, visibility: GPUShaderStage.VERTEX,
+          buffer: { type: "uniform" as const, minBindingSize: nativePicaUniformBytes, hasDynamicOffset: true } }] : []),
         { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform", minBindingSize: 32, hasDynamicOffset: true } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform", minBindingSize: 0x530, hasDynamicOffset: true } },
         ...[3, 4, 5].map(binding => ({ binding, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } as const })),
@@ -445,7 +456,8 @@ export class GraphicsDraws {
       failOp: stencilOps[s.stencilFail]!, depthFailOp: stencilOps[s.stencilDepthFail]!, passOp: stencilOps[s.stencilPass]! } : { compare: "always" };
     const pipeline = await this.device.createRenderPipelineAsync({ label: "Azahar PICA pipeline",
       layout: this.device.createPipelineLayout({ bindGroupLayouts: groups }),
-      vertex: { module: this.shaders.vertex, entryPoint: "main", buffers: [this.shaders.vertexLayout] },
+      vertex: { module: draw.program ? this.shaders.vertexProgram(draw.program) : this.shaders.vertex,
+        entryPoint: "main", buffers: [draw.program ? programmableVertexLayout : this.shaders.vertexLayout] },
       fragment: { module: fragment, entryPoint: "main", targets: color ? [{ format: color,
         writeMask: s.shadow || (!s.blend && s.logicOp === 6) ? 0 : s.colorMask,
         ...(s.blend && !s.shadow ? { blend: { color: blend(s.rgbEquation, s.rgbSource, s.rgbDest, this.rgbEmulated(s, colorFormat)),
@@ -458,7 +470,7 @@ export class GraphicsDraws {
           stencilReadMask: s.stencilReadMask, stencilWriteMask: s.stencil ? s.stencilWriteMask : 0 } : {}),
       } } : {}),
     });
-    return { pipeline, groups, textures: [], uniforms: new WeakMap(), utilities: new WeakMap() };
+    return { programmable: draw.program !== 0, pipeline, groups, textures: [], uniforms: new WeakMap(), utilities: new WeakMap() };
   }
 
   private snapshot(encoder: GPUCommandEncoder, source: GPUTexture): GPUTexture {

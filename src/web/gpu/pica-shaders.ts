@@ -7,6 +7,7 @@ import { ShaderCompiler } from "./shader-compiler";
 /** Compiles native PICA configurations and keeps hot fragment programs on the device. */
 export class PicaShaders {
   #fragments = new Map<string, Promise<GPUShaderModule>>();
+  #vertices = new Map<number, GPUShaderModule>();
   #closed = false;
   readonly configurationSize: number;
   readonly configurationSchema: bigint;
@@ -73,6 +74,28 @@ export class PicaShaders {
     return pending;
   }
 
+  async createVertexProgram(handle: number, source: string): Promise<undefined> {
+    if (this.#closed || !Number.isInteger(handle) || handle <= 0 || this.#vertices.has(handle)) {
+      throw new Error("Invalid PICA vertex program handle");
+    }
+    const code = this.glslang.compileWgsl(source, "vertex", this.naga);
+    const module = await PicaShaders.createModule(this.device, "Azahar programmable PICA vertex shader", code);
+    if (this.#closed) throw new Error("The PICA shader compiler is closed");
+    this.#vertices.set(handle, module);
+    return undefined;
+  }
+
+  vertexProgram(handle: number): GPUShaderModule {
+    const module = this.#vertices.get(handle);
+    if (!module) throw new Error("Unknown PICA vertex program");
+    return module;
+  }
+
+  destroyVertexProgram(handle: number): undefined {
+    if (!this.#vertices.delete(handle)) throw new Error("Unknown PICA vertex program");
+    return undefined;
+  }
+
   private static async createModule(device: GPUDevice, label: string, code: string): Promise<GPUShaderModule> {
     const module = device.createShaderModule({ label, code });
     const info = await module.getCompilationInfo();
@@ -86,6 +109,7 @@ export class PicaShaders {
     if (this.#closed) return undefined;
     this.#closed = true;
     this.#fragments.clear();
+    this.#vertices.clear();
     this.native.close(); this.glslang.close(); this.naga.close();
     return undefined;
   }

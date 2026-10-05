@@ -4,6 +4,13 @@
 export const nativeDrawStateBytes = 43 * 4;
 export const nativeVertexUniformBytes = 32;
 export const nativeFragmentUniformBytes = 0x530;
+export const nativePicaUniformBytes = 1616;
+export const programmableVertexLayout: GPUVertexBufferLayout = {
+  arrayStride: 256,
+  attributes: Array.from({ length: 16 }, (_, shaderLocation) => ({
+    shaderLocation, offset: shaderLocation * 16, format: "float32x4" as const,
+  })),
+};
 
 export interface NativeDrawState {
   color: number;
@@ -43,6 +50,8 @@ export interface NativeDrawState {
 
 /** Snapshots of native state outlive subsequent CPU register and heap writes. */
 export interface NativeDraw {
+  program: number;
+  picaUniforms: Uint8Array<ArrayBuffer> | undefined;
   state: NativeDrawState;
   configuration: Uint8Array<ArrayBuffer>;
   vertices: Uint8Array<ArrayBuffer>;
@@ -51,7 +60,8 @@ export interface NativeDraw {
 }
 
 /** Reads a single transferred snapshot without copying its shader or vertex payloads. */
-export function unpackNativeDraw(bytes: Uint8Array<ArrayBuffer>, configurationSize: number): NativeDraw {
+export function unpackNativeDraw(bytes: Uint8Array<ArrayBuffer>, configurationSize: number,
+  program = 0, picaUniforms?: Uint8Array<ArrayBuffer>): NativeDraw {
   const vsOffset = nativeDrawStateBytes + configurationSize;
   const fsOffset = vsOffset + nativeVertexUniformBytes;
   const vertexOffset = fsOffset + nativeFragmentUniformBytes;
@@ -60,6 +70,7 @@ export function unpackNativeDraw(bytes: Uint8Array<ArrayBuffer>, configurationSi
   const u = new Uint32Array(bytes.buffer, bytes.byteOffset, 43);
   const viewport = new Int32Array(bytes.buffer, bytes.byteOffset + 35 * 4, 4);
   return {
+    program, picaUniforms,
     state: {
       color: u[0]!, depth: u[1]!, colorLevel: u[2]!, depthLevel: u[3]!,
       cull: u[4]!, flipped: u[5] !== 0, colorMask: u[6]!, depthWrite: u[7] !== 0, depthCompare: u[8]!,

@@ -2,7 +2,9 @@
 
 #pragma once
 
+#include <unordered_map>
 #include "video_core/rasterizer_accelerated.h"
+#include "video_core/shader/generator/shader_gen.h"
 #include "web/gpu/texture-runtime.h"
 
 namespace WebGPU {
@@ -11,6 +13,7 @@ class Rasterizer : public VideoCore::RasterizerAccelerated {
 public:
     Rasterizer(Memory::MemorySystem& memory, Pica::PicaCore& pica,
                VideoCore::CustomTexManager& custom_textures, VideoCore::RendererBase& renderer);
+    ~Rasterizer() override;
     void DrawTriangles() override;
     bool AccelerateDrawBatch(bool is_indexed) override;
     void FlushAll() override;
@@ -26,6 +29,10 @@ public:
     TextureRuntime& Runtime() { return runtime; }
 
 private:
+    void DrawBatch(std::span<const u8> vertices, u32 program = 0,
+                   const Pica::Shader::Generator::VSPicaUniformData* uniforms = nullptr);
+    bool DrawProgrammable(bool is_indexed);
+    void ClearPrograms();
     void SyncLookupTables();
     u32 TextureCube(const Pica::TexturingRegs::FullTextureConfig& texture);
     TextureRuntime runtime;
@@ -33,6 +40,7 @@ private:
     std::array<Common::Vec2f, 24 * 256 + 128> lighting_lut{};
     std::array<Common::Vec2f, 128 * 3> proctex_lut{};
     std::array<Common::Vec4f, 256 * 2> proctex_color{};
+    std::unordered_map<Pica::Shader::Generator::PicaVSConfig, u32> vertex_programs;
 };
 
 } // namespace WebGPU

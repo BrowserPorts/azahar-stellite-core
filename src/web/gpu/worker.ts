@@ -79,7 +79,10 @@ async function execute(request: GraphicsCommand): Promise<undefined> {
     // Submit prior draws before a queue write, resource mutation, presentation, or fence.
     if (request.type !== "draw") draws.flush();
     switch (request.type) {
-      case "draw": await draws.draw(unpackNativeDraw(request.bytes, shaders.configurationSize)); break;
+      case "vertex-program-create": await shaders.createVertexProgram(request.handle, request.source); break;
+      case "vertex-program-destroy": shaders.destroyVertexProgram(request.handle); break;
+      case "draw": await draws.draw(unpackNativeDraw(request.bytes, shaders.configurationSize,
+        request.program, request.picaUniforms)); break;
       case "lookup-table": draws.lookupTable(request.table, request.offset, request.bytes); break;
       case "sampler-create": samplers.create(request.handle, request.params); break;
       case "sampler-destroy": samplers.destroy(request.handle); break;

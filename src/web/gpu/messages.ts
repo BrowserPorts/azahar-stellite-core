@@ -26,7 +26,9 @@ export type GraphicsCommand =
   { type: "texture-mipmaps"; handle: number } |
   { type: "sampler-create"; handle: number; params: NativeSampler } |
   { type: "sampler-destroy"; handle: number } |
-  { type: "draw"; bytes: Uint8Array<ArrayBuffer> } |
+  { type: "vertex-program-create"; handle: number; source: string } |
+  { type: "vertex-program-destroy"; handle: number } |
+  { type: "draw"; bytes: Uint8Array<ArrayBuffer>; program: number; picaUniforms?: Uint8Array<ArrayBuffer> } |
   { type: "lookup-table"; table: number; offset: number; bytes: Uint8Array<ArrayBuffer> } |
   { type: "texture-clear"; handle: number; region: TextureRegion; value: readonly number[]; stencil: number } |
   { type: "texture-upload"; handle: number; region: TextureRegion; bytes: Uint8Array<ArrayBuffer> } |

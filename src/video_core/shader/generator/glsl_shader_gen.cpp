@@ -170,7 +170,7 @@ std::string_view MakeLoadPrefix(AttribLoadFlags flag) {
 }
 
 std::string GenerateVertexShader(const ShaderSetup& setup, const PicaVSConfig& config,
-                                 const ExtraVSConfig& extra) {
+                                 const ExtraVSConfig& extra, bool webgpu_viewport) {
     const bool separable_shader = extra.separable_shader;
 
     std::string out;
@@ -180,6 +180,10 @@ std::string GenerateVertexShader(const ShaderSetup& setup, const PicaVSConfig& c
 
     out += VSPicaUniformBlockDef;
     out += VSUniformBlockDef;
+    if (webgpu_viewport) {
+        ASSERT(extra.use_clip_planes && separable_shader && !extra.use_geometry_shader);
+        out += "layout(set = 0, binding = 6, std140) uniform native_viewport { vec4 viewport_transform; };\n";
+    }
 
     std::array<bool, 16> used_regs{};
     const auto get_input_reg = [&used_regs](u32 reg) {
@@ -226,7 +230,8 @@ std::string GenerateVertexShader(const ShaderSetup& setup, const PicaVSConfig& c
         }
         out += "void EmitVtx() {}\n";
     } else {
-        out += GetVertexInterfaceDeclaration(true, extra.use_clip_planes, separable_shader);
+        out += GetVertexInterfaceDeclaration(true, extra.use_clip_planes, separable_shader,
+                                             webgpu_viewport ? 6 : 2);
 
         // output attributes declaration
         for (u32 i = 0; i < config.state.num_outputs; ++i) {
@@ -272,6 +277,15 @@ std::string GenerateVertexShader(const ShaderSetup& setup, const PicaVSConfig& c
             out += "    }\n\n";
         }
 
+        if (webgpu_viewport) {
+            out += R"(
+    gl_ClipDistance[2] = vtx_pos.w + vtx_pos.x;
+    gl_ClipDistance[3] = vtx_pos.w - vtx_pos.x;
+    gl_ClipDistance[4] = vtx_pos.w + vtx_pos.y;
+    gl_ClipDistance[5] = vtx_pos.w - vtx_pos.y;
+    gl_Position.xy = gl_Position.xy * viewport_transform.xy + gl_Position.ww * viewport_transform.zw;
+)";
+        }
         out += "    normquat = GetVertexQuaternion();\n";
         out += "    vec4 vtx_color = vec4(" + semantic(VSOutputAttributes::COLOR_R) + ", " +
                semantic(VSOutputAttributes::COLOR_G) + ", " +

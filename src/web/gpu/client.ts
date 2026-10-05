@@ -5,7 +5,7 @@ import { fenceByteLength, fenceErrorOffset } from "./messages";
 import type { TextureRegion } from "./textures";
 import type { TextureRect } from "./blits";
 import type { NativeSampler } from "./samplers";
-import { nativeDrawStateBytes, nativeVertexUniformBytes, nativeFragmentUniformBytes } from "./draw-types";
+import { nativeDrawStateBytes, nativeVertexUniformBytes, nativeFragmentUniformBytes, nativePicaUniformBytes } from "./draw-types";
 import type { ScreenFrame } from "./screens";
 
 type Pending = { resolve(): unknown; reject(error: Error): unknown };
@@ -22,6 +22,7 @@ export interface GraphicsStatistics {
   fenceCount: number;
   submittedCommands: number;
   submittedBatches: number;
+  programmableDraws: number;
   /** Interval totals by the operation that stopped the emulation worker. */
   fences: {
     textureReadback: GraphicsFenceStatistics;
@@ -44,6 +45,8 @@ export class GraphicsClient {
   #snapshotBytes = 0;
   #submittedCommands = 0;
   #submittedBatches = 0;
+  #programmableDraws = 0;
+  #nextVertexProgram = 0;
   #closed = false;
   #hasSurface = false;
   // Outstanding snapshot bytes through each submitted frame.
@@ -138,9 +141,11 @@ export class GraphicsClient {
       stats.count = 0;
     }
     const submittedCommands = this.#submittedCommands, submittedBatches = this.#submittedBatches;
+    const programmableDraws = this.#programmableDraws;
+    this.#programmableDraws = 0;
     this.#submittedCommands = 0;
     this.#submittedBatches = 0;
-    return { adapter: { ...this.#adapter }, fenceWaitMs, fenceCount, fences, submittedCommands, submittedBatches };
+    return { adapter: { ...this.#adapter }, fenceWaitMs, fenceCount, fences, submittedCommands, submittedBatches, programmableDraws };
   }
 
   screens(frame: ScreenFrame): boolean {
@@ -186,11 +191,24 @@ export class GraphicsClient {
     return this.post({ type: "sampler-destroy", handle });
   }
 
+  createVertexProgram(source: string): number {
+    const handle = ++this.#nextVertexProgram;
+    if (handle > 0xffffffff) throw new Error("PICA vertex program handles exhausted");
+    this.post({ type: "vertex-program-create", handle, source });
+    return handle;
+  }
+
+  destroyVertexProgram(handle: number): undefined {
+    return this.post({ type: "vertex-program-destroy", handle });
+  }
+
   draw(state: Uint8Array<SharedArrayBuffer>, configuration: Uint8Array<SharedArrayBuffer>, vertices: Uint8Array<SharedArrayBuffer>,
-    vertexUniforms: Uint8Array<SharedArrayBuffer>, fragmentUniforms: Uint8Array<SharedArrayBuffer>): undefined {
+    vertexUniforms: Uint8Array<SharedArrayBuffer>, fragmentUniforms: Uint8Array<SharedArrayBuffer>,
+    program = 0, picaUniforms?: Uint8Array<SharedArrayBuffer>): undefined {
     this.checkOpen();
     if (state.byteLength !== nativeDrawStateBytes || configuration.byteLength !== this.configurationSize ||
-      vertexUniforms.byteLength !== nativeVertexUniformBytes || fragmentUniforms.byteLength !== nativeFragmentUniformBytes) {
+      vertexUniforms.byteLength !== nativeVertexUniformBytes || fragmentUniforms.byteLength !== nativeFragmentUniformBytes ||
+      (program !== 0 ? picaUniforms?.byteLength !== nativePicaUniformBytes : picaUniforms !== undefined)) {
       throw new Error("Invalid native draw layout");
     }
     const vsOffset = nativeDrawStateBytes + configuration.byteLength;
@@ -198,13 +216,17 @@ export class GraphicsClient {
     const vertexOffset = fsOffset + nativeFragmentUniformBytes;
     const size = vertexOffset + vertices.byteLength;
     // Batch storage snapshots every native input before heap and register writes resume.
-    const bytes = this.snapshot(size);
+    const snapshot = this.snapshot(size + (picaUniforms?.byteLength ?? 0));
+    const bytes = snapshot.subarray(0, size);
     bytes.set(state);
     bytes.set(configuration, nativeDrawStateBytes);
     bytes.set(vertexUniforms, vsOffset);
     bytes.set(fragmentUniforms, fsOffset);
     bytes.set(vertices, vertexOffset);
-    this.post({ type: "draw", bytes });
+    const uniforms = picaUniforms ? snapshot.subarray(size) : undefined;
+    uniforms?.set(picaUniforms!);
+    this.post({ type: "draw", bytes, program, ...(uniforms ? { picaUniforms: uniforms } : {}) });
+    if (program) this.#programmableDraws++;
     return undefined;
   }
 
