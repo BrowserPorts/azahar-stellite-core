@@ -288,20 +288,10 @@ bool System::LoadStateBuffer(std::vector<u8> buffer) {
 
     header = *((CSTHeader*)buffer.data());
 
-    if (header.filetype != header_magic_bytes) {
-        LOG_ERROR(Core, "Invalid save state");
-        return false;
-    }
-
-    if (header.program_id != title_id) {
-        LOG_ERROR(Core, "Save state isn't for the current game");
-        return false;
-    }
-    std::string revision = fmt::format("{:02x}", fmt::join(header.revision, ""));
-    if (revision != Common::g_scm_rev) {
-        LOG_ERROR(Core,
-                  "Save state file created from a different revision (core: {}, savestate: {})",
-                  Common::g_scm_rev, revision);
+    SaveStateInfo info{};
+    if (!ValidateSaveState(header, info, title_id, movie.GetCurrentMovieID()) ||
+        info.status == SaveStateInfo::ValidationStatus::BuildMismatch) {
+        LOG_ERROR(Core, "Invalid or incompatible save state");
         return false;
     }
 
