@@ -350,6 +350,12 @@ struct DspLle::Impl final {
         pipe_base_waddr = teakra.RecvData(2);
 
         loaded = true;
+
+        // Firmware can publish its pipe base before registering the pipe handlers. Finish
+        // that DSP slice before returning, as the single-threaded path already does.
+        if (multithread) {
+            RunTeakraSlice();
+        }
     }
 
     void UnloadComponent() {
