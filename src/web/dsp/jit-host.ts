@@ -74,12 +74,18 @@ export class DspJitHost {
     this.#memory = memory;
     this.#table = table;
     this.#imports = imports;
-    for (let opcode = 0; opcode < 65536; ++opcode) {
-      const matches = metadata.templates.filter((pattern) =>
-        (opcode & pattern[1]) === pattern[2] &&
-        pattern[5].every(([mask, rejected]) => (opcode & mask) !== rejected));
-      if (matches.length > 1) throw new Error(`Ambiguous DSP opcode ${opcode.toString(16)}`);
-      this.#patterns[opcode] = matches[0];
+    for (const pattern of metadata.templates) {
+      const variableBits = ~pattern[1] & 0xffff;
+      let operands = 0;
+      do {
+        const opcode = pattern[2] | operands;
+        if (pattern[5].every(([mask, rejected]) => (opcode & mask) !== rejected)) {
+          if (this.#patterns[opcode]) throw new Error(`Ambiguous DSP opcode ${opcode.toString(16)}`);
+          this.#patterns[opcode] = pattern;
+        }
+        // Visit each subset of the operand bits, keeping the fixed opcode bits intact.
+        operands = (operands - variableBits) & variableBits;
+      } while (operands !== 0);
     }
     return this.expansions();
   }
