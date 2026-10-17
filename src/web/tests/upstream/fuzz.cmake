@@ -14,6 +14,7 @@ if(EMSCRIPTEN)
     endif()
     list(APPEND UNICORN_ORACLE_TOOLCHAIN
         "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+        "-DCMAKE_CROSSCOMPILING_EMULATOR=${NODE_EXECUTABLE}"
         "-DCMAKE_C_FLAGS=${UNICORN_ORACLE_C_FLAGS}"
         "-DCMAKE_EXE_LINKER_FLAGS=-sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=67108864 -sMAXIMUM_MEMORY=536870912 -sEXIT_RUNTIME=1")
     set(UNICORN_ORACLE_ARM_TEST "${UNICORN_ORACLE_BINARY}/test_arm.js")
@@ -69,8 +70,9 @@ if(EMSCRIPTEN)
         -sINITIAL_MEMORY=67108864 -sMAXIMUM_MEMORY=536870912
         -sEXPORTED_RUNTIME_METHODS=FS,ENV)
     set_target_properties(dynarmic_arm_fuzz_fixtures PROPERTIES SUFFIX ".mjs")
-    add_test(NAME dynarmic_arm_fuzz_fixtures COMMAND "${BUN_EXECUTABLE}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/run-jit.ts" "$<TARGET_FILE:dynarmic_arm_fuzz_fixtures>")
+    add_dependencies(dynarmic_arm_fuzz_fixtures arm_jit_fixture_runner)
+    add_test(NAME dynarmic_arm_fuzz_fixtures COMMAND "${NODE_EXECUTABLE}"
+        "${ARM_JIT_RUNNER}" "$<TARGET_FILE:dynarmic_arm_fuzz_fixtures>")
     add_dependencies(browser_jit_fixtures dynarmic_arm_fuzz_fixtures)
 else()
     target_link_libraries(dynarmic_arm_fuzz_fixtures PRIVATE
