@@ -130,7 +130,8 @@ export function lowerArmRegion(blocks: readonly ArmBlock[], links: ReadonlyMap<n
   // Keep frequently referenced registers in locals throughout the region.
   const registers = [...references].filter(([, count]) => count > 1)
     .sort(([a, countA], [b, countB]) => countB - countA || a - b).slice(0, 4);
-  const state = [options.layout.cpsr,
+  // Internal branches update the PC local; exits and callbacks publish it with the registers.
+  const state = [options.layout.cpsr, options.layout.registers + 60,
     ...registers.map(([register]) => options.layout.registers + register * 4)];
   const region: LowerRegion = { imports: [], links, state, locals: [], localSlots: new Map(), copies: 0,
     blocks: blocks.map(block => ({ ...block, sourceCell: blocks[0]!.sourceCell! })) };
