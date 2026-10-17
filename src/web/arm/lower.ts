@@ -420,8 +420,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
     }
     const canLink = (cell: number, minimum: bigint): undefined => {
       const execution = options.execution!;
-      checkHalt(); body.byte(0x04).byte(0x40);
-      body.byte(0x42).signed(0n, 64); set(1); body.byte(0x0b);
+      // Native links use the cycle budget; halt checks belong to terminals and dispatchers.
       get(1);
       if (cell) constant(cell).byte(0x28).u32(2).u32(execution.minimumBudget).byte(0xad);
       else body.byte(0x42).signed(minimum, 64);
