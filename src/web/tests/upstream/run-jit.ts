@@ -42,11 +42,12 @@ await createModule({ arguments: args.filter((arg) => arg !== "--pica-dispatch" &
     createDataFile(parent: string, name: string, data: Uint8Array, canRead: boolean, canWrite: boolean): undefined },
     ENV: Record<string, string>; _azahar_arm_jit_linked_blocks?: () => bigint;
     _azahar_arm_jit_budget_reuses?: () => bigint;
-    _azahar_arm_jit_fast_dispatch_hits?: () => bigint }) => {
+    _azahar_arm_jit_fast_dispatch_hits?: () => bigint;
+    _azahar_dsp_jit_entries?: () => number }) => {
     linkedBlocks = module._azahar_arm_jit_linked_blocks;
     budgetReuses = module._azahar_arm_jit_budget_reuses;
     fastDispatchHits = module._azahar_arm_jit_fast_dispatch_hits;
-    if (firmware.length) {
+    if (firmware.length && module._azahar_dsp_jit_entries) {
       module.FS.createPath("/", "user/sdmc/3ds", true, true);
       for (const { name, data } of firmware) {
         module.FS.createDataFile("/user/sdmc/3ds", name, data, true, false);
