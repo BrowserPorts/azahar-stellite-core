@@ -91,6 +91,29 @@ if(EMSCRIPTEN)
     add_custom_target(browser_core_fixtures DEPENDS tests "${TEST_WEB_DIRECTORY}/browser-jit.js"
         "${TEST_WEB_DIRECTORY}/browser-worker.js")
 
+    # Retain the SDK's original JSPI export and indirect-function assertions.
+    foreach(jspi_case IN ITEMS wildcard add_function)
+        add_executable(wasm_jspi_${jspi_case}
+            "${PROJECT_SOURCE_DIR}/externals/emscripten/test/other/test_jspi_${jspi_case}.c")
+        target_compile_options(wasm_jspi_${jspi_case} PRIVATE -UNDEBUG)
+        target_link_options(wasm_jspi_${jspi_case} PRIVATE
+            -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker,node
+            -sJSPI=1 -sASSERTIONS=1 -sPTHREAD_POOL_SIZE=1 -sEXIT_RUNTIME=1
+            -sDYNAMIC_EXECUTION=0)
+        if(jspi_case STREQUAL "wildcard")
+            target_link_options(wasm_jspi_${jspi_case} PRIVATE "-sJSPI_EXPORTS=async*")
+        else()
+            target_link_options(wasm_jspi_${jspi_case} PRIVATE
+                -sEXPORTED_RUNTIME_METHODS=addFunction,dynCall -sALLOW_TABLE_GROWTH=1)
+        endif()
+        set_target_properties(wasm_jspi_${jspi_case} PROPERTIES SUFFIX ".mjs")
+        add_dependencies(wasm_jspi_${jspi_case} core_jit_fixture_runner)
+        add_test(NAME wasm_jspi_${jspi_case} COMMAND "${NODE_EXECUTABLE}"
+            "${CORE_JIT_RUNNER}" "$<TARGET_FILE:wasm_jspi_${jspi_case}>")
+    endforeach()
+    add_custom_target(browser_jspi_fixtures DEPENDS wasm_jspi_wildcard wasm_jspi_add_function
+        "${TEST_WEB_DIRECTORY}/browser-jit.js" "${TEST_WEB_DIRECTORY}/browser-worker.js")
+
     # Compile the SDK's original OPFS cases, including its cross-session persistence checks.
     foreach(mode IN ITEMS setup resume errors)
         set(opfs_source "${PROJECT_SOURCE_DIR}/externals/emscripten/test/wasmfs/wasmfs_opfs.c")
