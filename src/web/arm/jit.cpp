@@ -51,7 +51,8 @@ struct LinkCell {
     uint64_t used = 0;
     uint32_t minimum_budget = 0;
     uint32_t maximum_instructions = 0;
-    uint32_t native_entries = 0;
+    uint32_t promotion_remaining = 0;
+    const RegionKey* key = nullptr;
 };
 static_assert(offsetof(LinkCell, slot) == 0);
 static_assert(offsetof(LinkCell, minimum_budget) == 16);
@@ -85,6 +86,7 @@ struct alignas(8) ArmState {
     uint64_t next_budget{};
     uint64_t pending_ticks{};
     FastDispatchEntry* fast_dispatch{};
+    LinkCell* promotion_source{};
 };
 
 void FlushTicks(ArmState* state) {
@@ -1126,7 +1128,6 @@ struct Jit::Impl {
     std::array<FastDispatchEntry, fast_dispatch_size> fast_dispatch{};
     // Native entry selection also checks the requested translation limit.
     std::array<uint32_t, fast_dispatch_size> fast_dispatch_limits{};
-    std::array<LinkCell*, fast_dispatch_size> fast_dispatch_cells{};
     uint64_t generated_bytes = 0;
     uint64_t clock = 0;
     bool executing = false;
@@ -1158,6 +1159,7 @@ struct Jit::Impl {
         try { references.push_back(key); }
         catch (...) { if (inserted) links.erase(item); throw; }
         auto& cell = item->second;
+        cell.key = &item->first;
         ++cell.references;
         return cell;
     }
@@ -1194,14 +1196,12 @@ struct Jit::Impl {
             fast_dispatch[index] = {
                 location, destination.slot, destination.minimum_budget};
             fast_dispatch_limits[index] = destination.maximum_instructions;
-            fast_dispatch_cells[index] = &destination;
         }
     }
     void Clear() {
         while (!regions.empty()) Retire(regions.begin());
         fast_dispatch.fill({});
         fast_dispatch_limits.fill(0);
-        fast_dispatch_cells.fill(nullptr);
         if (!executing) ReleaseRetired();
     }
     void Promote(decltype(regions)::iterator root) {
@@ -1270,14 +1270,15 @@ struct Jit::Impl {
             }
         } catch (...) { ReleaseLinks(references); throw; }
     }
-    void Visit(uint64_t location, Entry entry, LinkCell& cell, bool step) {
-        if (step || !config.HasOptimization(OptimizationFlag::BlockLinking)) return;
-        if (++cell.native_entries < AZAHAR_ARM_JIT_REGION_AFTER) return;
-        cell.native_entries = 0;
-        for (auto item = regions.lower_bound({location, 0});
-             item != regions.end() && item->first.first == location; ++item) {
-            if (item->second.entry == entry) { Promote(item); break; }
-        }
+    void PromotePending() {
+        const auto* source = std::exchange(state.promotion_source, nullptr);
+        if (!source) return;
+        const auto item = regions.find(*source->key);
+        if (item == regions.end() || item->second.source != source || item->second.optimized) return;
+        // Retry after more executions if the outgoing blocks are not cached yet.
+        item->second.source->promotion_remaining = AZAHAR_ARM_JIT_REGION_AFTER;
+        Promote(item);
+        if (item->second.optimized) item->second.source->promotion_remaining = 0;
     }
     Entry GetEntry(uint32_t limit, bool step) {
         const LocationDescriptor location(state.registers[15], PSR{state.cpsr}, FPSCR{state.fpscr}, step);
@@ -1292,7 +1293,6 @@ struct Jit::Impl {
 #endif
                 // Emitted code records use, and retirement disconnects this slot.
                 const auto entry = reinterpret_cast<Entry>(fast.slot);
-                Visit(key.first, entry, *fast_dispatch_cells[index], step);
                 return entry;
             }
         }
@@ -1314,7 +1314,6 @@ struct Jit::Impl {
 #endif
             cached->second.source->used = clock;
             Publish(key.first, cached->second);
-            Visit(key.first, cached->second.entry, *cached->second.destination, step);
             return cached->second.entry;
         }
         CodeReader reader{*config.callbacks, limit};
@@ -1341,8 +1340,11 @@ struct Jit::Impl {
                 return CoprocessorBinding(instruction, config);
             }, config.always_little_endian, reinterpret_cast<uintptr_t>(&source), link,
                 config.HasOptimization(OptimizationFlag::FastDispatch) && !step);
+            // Only blocks with static outgoing links can form a hot region.
+            const bool can_promote = references.size() > 2;
+            source.promotion_remaining = can_promote ? AZAHAR_ARM_JIT_REGION_AFTER : 0;
             const uint32_t layout[] = {offsetof(ArmState, registers), offsetof(ArmState, cpsr),
-                offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit), 7,
+                offsetof(ArmState, extended_registers), offsetof(ArmState, fpscr), offsetof(ArmState, check_bit), 8,
                 offsetof(ArmState, halt), offsetof(ArmState, next_budget),
                 offsetof(ArmState, pending_ticks), offsetof(LinkCell, used), offsetof(LinkCell, minimum_budget),
 #ifdef AZAHAR_ARM_JIT_STATISTICS
@@ -1354,10 +1356,13 @@ struct Jit::Impl {
                 std::countr_zero(sizeof(FastDispatchEntry)), offsetof(FastDispatchEntry, location),
                 offsetof(FastDispatchEntry, slot), offsetof(FastDispatchEntry, minimum_budget),
 #ifdef AZAHAR_ARM_JIT_STATISTICS
-                reinterpret_cast<uintptr_t>(&fast_dispatch_hits)
+                reinterpret_cast<uintptr_t>(&fast_dispatch_hits),
 #else
-                0
+                0,
 #endif
+                offsetof(ArmState, promotion_source),
+                !step && config.HasOptimization(OptimizationFlag::BlockLinking)
+                    ? offsetof(LinkCell, promotion_remaining) : 0
             };
             const uint32_t memory_config[] = {static_cast<uint32_t>(reinterpret_cast<uintptr_t>(config.page_table)),
                 static_cast<uint32_t>(config.fastmem_pointer.value_or(0)), config.fastmem_pointer.has_value(),
@@ -1393,7 +1398,6 @@ struct Jit::Impl {
             source.used = clock;
             Publish(key.first, region->second);
             installed = true;
-            Visit(key.first, entry, *region->second.destination, step);
             return entry;
         } catch (...) {
             if (!installed) {
@@ -1423,6 +1427,8 @@ struct Jit::Impl {
                 native_dispatches.fetch_add(1, std::memory_order_relaxed);
 #endif
                 entry(&state, budget, state.pending_ticks, clock);
+                // The completed source stays owned until retired code is released below.
+                PromotePending();
                 ReleaseRetired();
             } while (!step);
             FlushTicks(&state);

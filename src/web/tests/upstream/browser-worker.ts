@@ -83,7 +83,7 @@ worker.onmessage = async (event: MessageEvent<FixtureRequest>): Promise<undefine
         const count = linkedBlocks?.();
         if (count) append(`ARM JIT: ${count} blocks entered through direct Wasm links`);
         const stats = armJit.takeStatistics();
-        if (stats.optimizedRegions) append(`ARM JIT: ${stats.optimizedRegions} hot regions compiled with direct Wasm calls`);
+        if (stats.optimizedRegions) append(`ARM JIT: ${stats.optimizedRegions} hot regions compiled as Wasm loops`);
         finish(exit);
         return undefined;
       },

@@ -53,19 +53,20 @@ export class ArmJitHost {
     const started = performance.now();
     const block = JSON.parse(json) as ArmBlock;
     const [registers, cpsr, extendedRegisters, fpscr, checkBit, executionAbi] = layout;
-    if ((layout.length !== 5 && layout.length !== 19) || registers === undefined || cpsr === undefined ||
+    if ((layout.length !== 5 && layout.length !== 21) || registers === undefined || cpsr === undefined ||
       extendedRegisters === undefined || fpscr === undefined || checkBit === undefined) {
       throw new Error("Invalid ARM JIT state layout");
     }
-    if (layout.length === 19 ? executionAbi !== 7 || !block.sourceCell : Boolean(block.sourceCell)) {
+    if (layout.length === 21 ? executionAbi !== 8 || !block.sourceCell : Boolean(block.sourceCell)) {
       throw new Error("ARM execution ABI does not match the Wasm compiler");
     }
     const options: LowerOptions = {
       layout: { registers, cpsr, extendedRegisters, fpscr, checkBit },
-      functionNames: layout.length === 19 && layout[11] !== 0,
-      ...(layout.length === 19 ? { execution: {
+      functionNames: layout.length === 21 && layout[11] !== 0,
+      ...(layout.length === 21 ? { execution: {
         halt: layout[6]!, budget: layout[7]!, pendingTicks: layout[8]!,
         sourceUsed: layout[9]!, minimumBudget: layout[10]!, completedBlocks: layout[11]!,
+        promotionSource: layout[19]!, promotionRemaining: layout[20]!,
         fastDispatch: {
           pointer: layout[12]!, mask: layout[13]!, strideShift: layout[14]!,
           location: layout[15]!, slot: layout[16]!, minimumBudget: layout[17]!, hits: layout[18]!,
@@ -96,7 +97,7 @@ export class ArmJitHost {
     return { slot, bytes: bytes.byteLength };
   }
 
-  /** Replace one native entry with direct calls between its cached, dependency-owned blocks. */
+  /** Replace one native entry with a loop over its cached, dependency-owned blocks. */
   optimize(slots: Uint32Array, links: Uint32Array, maximumBytes: number): number {
     if (!slots.length || slots.length > 8 || links.length !== slots.length * 3) {
       throw new Error("Invalid ARM hot region selection");

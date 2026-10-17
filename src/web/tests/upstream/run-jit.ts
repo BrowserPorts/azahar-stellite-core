@@ -32,7 +32,7 @@ process.on("exit", () => {
   const fast = fastDispatchHits?.();
   if (fast) console.log(`ARM JIT: ${fast} native and emitted Wasm dispatch-cache hits`);
   const stats = armJit.takeStatistics();
-  if (stats.optimizedRegions) console.log(`ARM JIT: ${stats.optimizedRegions} hot regions compiled with direct Wasm calls`);
+  if (stats.optimizedRegions) console.log(`ARM JIT: ${stats.optimizedRegions} hot regions compiled as Wasm loops`);
   if (stats.compiledBlocks) console.log(`ARM JIT: ${stats.compiledBlocks} regions, ${stats.generatedBytes} Wasm bytes, ${stats.compileMs.toFixed(2)} ms compilation`);
 });
 await createModule({ arguments: args.filter((arg) => arg !== "--pica-dispatch" && arg !== "--arm-region-tier"),

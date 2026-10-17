@@ -64,6 +64,9 @@ export interface ArmExecutionLayout {
   minimumBudget: number;
   /** Absolute counter address, or zero when execution counting is disabled. */
   completedBlocks: number;
+  promotionSource: number;
+  /** Zero disables promotion for single stepping and unlinked execution. */
+  promotionRemaining: number;
   fastDispatch: {
     pointer: number;
     mask: number;
@@ -92,8 +95,15 @@ interface RegionLink {
 interface LowerRegion {
   imports: FunctionImport[];
   links: ReadonlyMap<number, RegionLink>;
-  calls: { body: Bytes; offset: number; index: number }[];
   state: readonly number[];
+  locals: ValueType[];
+  blocks: readonly ArmBlock[];
+  copies: number;
+}
+
+interface RegionPath {
+  index: number;
+  depth: number;
 }
 
 export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<ArrayBuffer> {
@@ -116,32 +126,37 @@ export function lowerArmRegion(blocks: readonly ArmBlock[], links: ReadonlyMap<n
     }
     if (register < 15) references.set(register, (references.get(register) ?? 0) + 1);
   }
-  // Bound the extra call parameters to the four most frequently referenced registers.
+  // Keep frequently referenced registers in locals throughout the region.
   const registers = [...references].filter(([, count]) => count > 1)
     .sort(([a, countA], [b, countB]) => countB - countA || a - b).slice(0, 4);
-  const region: LowerRegion = { imports: [], links, calls: [], state: [options.layout.cpsr,
-    ...registers.map(([register]) => options.layout.registers + register * 4)] };
-  // Copied blocks share cache lifetime and carry CPU state between their direct calls.
-  const functions = blocks.map(block => lowerArmBody({ ...block, sourceCell: blocks[0]!.sourceCell! }, options, region));
-  for (const call of region.calls) {
-    let index = region.imports.length + 1 + call.index;
-    for (let byte = 0; byte < 5; byte++) {
-      call.body.data[call.offset + byte] = (index & 127) | (byte < 4 ? 128 : 0);
-      index >>>= 7;
+  const state = [options.layout.cpsr,
+    ...registers.map(([register]) => options.layout.registers + register * 4)];
+  const region: LowerRegion = { imports: [], links, state, locals: [], copies: 0,
+    blocks: blocks.map(block => ({ ...block, sourceCell: blocks[0]!.sourceCell! })) };
+  for (const link of links.values()) {
+    if (!Number.isInteger(link.index) || link.index < 0 || link.index >= blocks.length ||
+      !Number.isInteger(link.minimumBudget) || link.minimumBudget <= 0) {
+      throw new JitError("compile", "Invalid ARM region destination");
     }
   }
-  // The table entry retains the native ABI; only internal functions receive cached state.
+  const fn = lowerArmBody(region.blocks[0]!, options, region);
+  // One native entry initializes cached state; internal edges stay inside its loop.
   const body = new Bytes();
-  for (let parameter = 0; parameter < 4; parameter++) body.byte(0x20).u32(parameter);
-  for (const offset of region.state) body.byte(0x20).u32(0).byte(0x28).u32(2).u32(offset);
-  body.byte(0x12).u32(region.imports.length + 1);
-  const entry: ModuleOptions = { ...functions[0]!, signature: {
+  state.forEach((offset, index) => {
+    body.byte(0x20).u32(0).byte(0x28).u32(2).u32(offset).byte(0x21).u32(4 + index);
+  });
+  // Cache age stays constant until this native entry returns.
+  body.byte(0x41).i32(blocks[0]!.sourceCell!).byte(0x20).u32(3)
+    .byte(0x37).u32(3).u32(options.execution.sourceUsed);
+  body.append(fn.body.data);
+  const entry: ModuleOptions = { ...fn, signature: {
     params: ["i32", "i64", "i64", "i64"], results: ["i64"],
-  }, locals: [], body, ...(functions[0]!.name ? { name: `${functions[0]!.name}_region_entry` } : {}) };
-  return regionModule({ ...entry, functions: [entry, ...functions], imports: region.imports });
+  }, locals: [...state.map(() => "i32" as const), ...region.locals], body };
+  return regionModule(entry);
 }
 
-function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegion): ModuleOptions {
+function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegion, blockIndex = 0,
+  ancestors: readonly RegionPath[] = [], parentDepth = 0): ModuleOptions {
   if (Boolean(block.sourceCell) !== Boolean(options.execution)) {
     throw new JitError("compile", "ARM execution layout does not match the region");
   }
@@ -152,6 +167,9 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   const cachedState = region ? new Map(region.state.map((offset, index) => [offset, params.length + index])) : undefined;
   region?.state.forEach(() => params.push("i32"));
   const parameterCount = params.length;
+  const loopDepth = parentDepth + 1;
+  const path = region ? [...ancestors, { index: blockIndex, depth: loopDepth }] : [];
+  if (region) region.copies++;
   const cpsrModeMask = 0x0600fe20;
   const fpscrModeMask = 0x07f70000;
   // Native dispatch and links enter the exact Thumb, endian, and IT-state descriptor.
@@ -164,7 +182,10 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   const entryFpscrMode = knownFpscrMode;
   let terminalFpscrMode: number | undefined;
   const hasBxWritePc = block.nodes.some((node) => node.op === "A32BXWritePC");
-  const locals: ValueType[] = block.nodes.map((node) => wasmType(node.type));
+  const locals: ValueType[] = region?.locals ?? [];
+  const nodeBase = parameterCount + locals.length;
+  locals.push(...block.nodes.map((node) => wasmType(node.type)));
+  const scratchStart = locals.length;
   const carryLocals = new Map<number, number>();
   const wideLocals = new Map<number, number>();
   const narrowArithmetic = new Set<number>();
@@ -205,6 +226,10 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
     block.nodes.filter((node) => options.fpStatusHelpers?.has(node.op)).length > 1
     ? locals.length + parameterCount : undefined;
   if (fpTrapFlags !== undefined) locals.push("i32");
+  const conditionFlagsScratch = region ? locals.length + parameterCount : undefined;
+  const fpMagnitudeScratch = region ? locals.length + parameterCount + 1 : undefined;
+  if (region) locals.push("i32", "i32");
+  const scratchEnd = locals.length;
   let fpTrapFlagsValid = false;
   let fpMagnitude: number | undefined;
   const constant = (value: number): Bytes => body.byte(0x41).i32(value);
@@ -245,7 +270,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   const argument = (value: Argument): undefined => {
     if ("ref" in value) {
       if (!block.nodes[value.ref]) throw new JitError("compile", "Invalid ARM IR reference");
-      get(value.ref + parameterCount);
+      get(value.ref + nodeBase);
     } else {
       const wide = wasmType(value.type) === "i64";
       body.byte(wide ? 0x42 : 0x41).signed(BigInt(value.imm), wide ? 64 : 32);
@@ -310,8 +335,8 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
         bit(0x60000000); constant(0x20000000).byte(code === 8 ? 0x46 : 0x47); break;
       case 10: case 11: case 12: case 13:
         if (conditionFlags === undefined) {
-          conditionFlags = locals.length + parameterCount;
-          locals.push("i32");
+          conditionFlags = conditionFlagsScratch ?? locals.length + parameterCount;
+          if (!region) locals.push("i32");
         }
         // Branches and selects accept any nonzero value. Align V with N to compare their bits.
         load(options.layout.cpsr).byte(0x22).u32(conditionFlags);
@@ -350,8 +375,10 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   };
   const chargeTicks = (cycles: number): undefined => {
     const execution = options.execution!;
-    constant(block.sourceCell!); get(3);
-    body.byte(0x37).u32(3).u32(execution.sourceUsed);
+    if (!region) {
+      constant(block.sourceCell!); get(3);
+      body.byte(0x37).u32(3).u32(execution.sourceUsed);
+    }
     get(2).byte(0x42).signed(BigInt(cycles), 64).byte(0x7c); set(2);
     // Linked regions carry the remaining budget in their i64 parameter.
     get(1).byte(0x42).signed(BigInt(cycles), 64).byte(0x56).byte(0x04).byte(0x7e);
@@ -360,12 +387,25 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
     return undefined;
   };
   const finishBlock = (cycles: number, destination?: Extract<Terminal, { kind: "link" }>,
-    fastDispatch = false, fpscrMode = terminalFpscrMode): undefined => {
+    fastDispatch = false, fpscrMode = terminalFpscrMode, controlDepth = 0): undefined => {
     if (!block.sourceCell) {
       consume(cycles).byte(0x0f);
       return undefined;
     }
     chargeTicks(cycles);
+    const execution = options.execution!;
+    if (!region && execution.promotionRemaining) {
+      // Linked baseline blocks must become hot even without a native dispatch.
+      constant(block.sourceCell!).byte(0x28).u32(2).u32(execution.promotionRemaining);
+      body.byte(0x22).u32(linkSlot).byte(0x04).byte(0x40);
+      constant(block.sourceCell!); get(linkSlot); constant(1).byte(0x6b);
+      body.byte(0x22).u32(linkSlot).byte(0x36).u32(2).u32(execution.promotionRemaining);
+      get(linkSlot).byte(0x45).byte(0x04).byte(0x40);
+      storeState(execution.promotionSource, () => constant(block.sourceCell!));
+      storeState(execution.budget, () => get(1), true);
+      storeState(execution.pendingTicks, () => get(2), true);
+      body.byte(0x42).signed(0n, 64).byte(0x0f).byte(0x0b).byte(0x0b);
+    }
     const canLink = (cell: number, minimum: bigint): undefined => {
       const execution = options.execution!;
       checkHalt(); body.byte(0x04).byte(0x40);
@@ -385,17 +425,21 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       return undefined;
     };
     const internal = destination?.cell ? region?.links.get(destination.cell) : undefined;
-    if (internal && destination?.fpscr !== undefined) {
+    const ancestor = internal ? path.find(item => item.index === internal.index) : undefined;
+    const target = internal ? region!.blocks[internal.index] : undefined;
+    // Bound duplicated paths and the native frame's temporary storage.
+    const inline = internal && (ancestor || region!.copies < 8 &&
+      region!.locals.length + target!.nodes.length * 2 + 64 <= 16384);
+    if (inline && destination?.fpscr !== undefined) {
       canLink(0, BigInt(internal.minimumBudget)); body.byte(0x04).byte(0x40);
       if (fpscrMode !== (destination.fpscr & fpscrModeMask)) {
         load(options.layout.fpscr); constant(fpscrModeMask).byte(0x71);
         constant(destination.fpscr & fpscrModeMask).byte(0x46).byte(0x04).byte(0x40);
       }
-      get(0); get(1); get(2); get(3);
-      for (const parameter of cachedState!.values()) get(parameter);
-      body.byte(0x12);
-      region!.calls.push({ body, offset: body.data.length, index: internal.index });
-      body.append([128, 128, 128, 128, 0]);
+      const depth = loopDepth + controlDepth + 1 +
+        Number(fpscrMode !== (destination.fpscr & fpscrModeMask));
+      if (ancestor) body.byte(0x0c).u32(depth - ancestor.depth);
+      else body.append(lowerArmBody(target!, options, region, internal!.index, path, depth).body.data);
       if (fpscrMode !== (destination.fpscr & fpscrModeMask)) body.byte(0x0b);
       body.byte(0x0b);
     } else if (destination?.cell && destination.fpscr !== undefined) {
@@ -527,7 +571,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       if (source.op === "Sub32") {
         argument(source.args[0]!); argument(source.args[1]!); body.byte(0x4f);
       } else {
-        get(reference + parameterCount); argument(source.args[0]!); body.byte(0x49);
+        get(reference + nodeBase); argument(source.args[0]!); body.byte(0x49);
       }
     } else if (wide !== undefined) get(wide).byte(0x42).signed(32n, 64).byte(0x88).byte(0xa7);
     else if (shift !== undefined) get(shift);
@@ -584,7 +628,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       return undefined;
     }
     if (source.op === "SignedSaturation" || source.op === "UnsignedSaturation") {
-      argument(source.args[0]!); get(reference + parameterCount).byte(0x47);
+      argument(source.args[0]!); get(reference + nodeBase).byte(0x47);
       return undefined;
     }
     if (source.op !== "Add32" && source.op !== "Sub32") {
@@ -592,7 +636,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
     }
     argument(source.args[0]!); argument(source.args[1]!); body.byte(0x73);
     if (source.op === "Add32") constant(-1).byte(0x73);
-    argument(source.args[0]!); get(reference + parameterCount).byte(0x73).byte(0x71);
+    argument(source.args[0]!); get(reference + nodeBase).byte(0x73).byte(0x71);
     constant(31).byte(0x76);
     return undefined;
   };
@@ -608,8 +652,8 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
     arg(2); set(outputCarry); arg(0);
     body.byte(0x05);
     if (op === "RotateRight32") {
-      arg(0); arg(1); body.byte(0x78).byte(0x22).u32(index + parameterCount);
-      get(index + parameterCount); constant(31).byte(0x76); set(outputCarry);
+      arg(0); arg(1); body.byte(0x78).byte(0x22).u32(index + nodeBase);
+      get(index + nodeBase); constant(31).byte(0x76); set(outputCarry);
     } else if (op === "ArithmeticShiftRight32") {
       arg(0); arg(1); constant(1).byte(0x6b); constant(31);
       arg(1); constant(32).byte(0x49).byte(0x1b).byte(0x76); carryBit(); set(outputCarry);
@@ -630,27 +674,27 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
     body.byte(0x0b);
     return undefined;
   };
-  const terminal = (term: Terminal): undefined => {
+  const terminal = (term: Terminal, depth = 0): undefined => {
     switch (term.kind) {
       case "link":
         store(options.layout.registers + 60, () => constant(term.pc));
         writeMode(term.cpsr, terminalCpsrMode);
-        finishBlock(block.cycles, term);
+        finishBlock(block.cycles, term, false, terminalFpscrMode, depth);
         break;
       case "dispatch": finishBlock(block.cycles); break;
       case "fast-dispatch": finishBlock(block.cycles, undefined, true); break;
       case "if":
         condition(term.condition); body.byte(0x04).byte(0x40);
-        terminal(term.then); body.byte(0x05); terminal(term.else); body.byte(0x0b);
+        terminal(term.then, depth + 1); body.byte(0x05); terminal(term.else, depth + 1); body.byte(0x0b);
         break;
       case "check-bit":
         load(options.layout.checkBit); body.byte(0x04).byte(0x40);
-        terminal(term.then); body.byte(0x05); terminal(term.else); body.byte(0x0b);
+        terminal(term.then, depth + 1); body.byte(0x05); terminal(term.else, depth + 1); body.byte(0x0b);
         break;
       case "check-halt":
         checkHalt();
         body.byte(0x45).byte(0x04).byte(0x40);
-        terminal(term.else); body.byte(0x0b);
+        terminal(term.else, depth + 1); body.byte(0x0b);
         finishBlock(block.cycles);
         break;
     }
@@ -673,7 +717,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       kind: "link", pc: block.conditionFailedPc, cpsr: block.conditionFailedCpsr,
       ...(block.conditionFailedCell ? { cell: block.conditionFailedCell } : {}),
       ...(block.conditionFailedFpscr !== undefined ? { fpscr: block.conditionFailedFpscr } : {}),
-    }, false, entryFpscrMode);
+    }, false, entryFpscrMode, 1);
     body.byte(0x0b);
   }
   // The failed condition returned; the executed body still starts in its entry mode.
@@ -734,25 +778,25 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
           arg(0); simd(0x1b).byte(lane); body.byte(0x67); simd(0x1c).byte(lane);
         }
       } else {
-        arg(0); set(index + parameterCount);
+        arg(0); set(index + nodeBase);
         for (let shift = 1; shift < bits; shift *= 2) {
-          get(index + parameterCount); get(index + parameterCount); constant(shift);
-          simd(vectorShiftLeft[bits]! + 2); simd(0x50); set(index + parameterCount);
+          get(index + nodeBase); get(index + nodeBase); constant(shift);
+          simd(vectorShiftLeft[bits]! + 2); simd(0x50); set(index + nodeBase);
         }
-        constant(bits); simd(laneSplat[bits]!); get(index + parameterCount); simd(0x62);
+        constant(bits); simd(laneSplat[bits]!); get(index + nodeBase); simd(0x62);
         if (bits === 16) simd(0x7d);
         simd(vectorBinary[`VectorSub${bits}`]!);
       }
     } else if (doublingLong) {
       const bits = Number(doublingLong[1]);
       arg(0); arg(1); simd(bits === 16 ? 0xbc : 0xdc);
-      constant(1); simd(vectorShiftLeft[bits * 2]!); body.byte(0x22).u32(index + parameterCount);
-      get(index + parameterCount);
+      constant(1); simd(vectorShiftLeft[bits * 2]!); body.byte(0x22).u32(index + nodeBase);
+      get(index + nodeBase);
       if (bits === 16) constant(-0x80000000); else body.byte(0x42).signed(-0x8000000000000000n, 64);
       simd(laneSplat[bits * 2]!); simd(vectorBinary[`VectorEqual${bits * 2}`]!);
-      body.byte(0x22).u32(index + parameterCount); simd(0x51);
+      body.byte(0x22).u32(index + nodeBase); simd(0x51);
       store(options.layout.fpscr, () => {
-        load(options.layout.fpscr); get(index + parameterCount); simd(0x53); constant(27).byte(0x74).byte(0x72);
+        load(options.layout.fpscr); get(index + nodeBase); simd(0x53); constant(27).byte(0x74).byte(0x72);
       });
     } else if (doublingHigh) {
       const bits = Number(doublingHigh[2]);
@@ -760,7 +804,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       const splat = (value: number): Bytes => constant(value).byte(0xfd).u32(laneSplat[bits]!);
       arg(0); splat(-(2 ** (bits - 1))); simd(vectorBinary[`VectorEqual${bits}`]!);
       arg(1); splat(-(2 ** (bits - 1))); simd(vectorBinary[`VectorEqual${bits}`]!);
-      simd(0x4e); set(index + parameterCount);
+      simd(0x4e); set(index + nodeBase);
       if (bits === 16 && rounding) { arg(0); arg(1); simd(0x82); }
       else {
         for (let part = 0; part < 2; ++part) {
@@ -774,11 +818,11 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
         else {
           simd(0x0d);
           for (let byte = 0; byte < 16; ++byte) body.byte(Math.floor(byte / 4) * 8 + byte % 4);
-          splat(0x7fffffff); get(index + parameterCount); simd(0x4d); simd(0x52);
+          splat(0x7fffffff); get(index + nodeBase); simd(0x4d); simd(0x52);
         }
       }
       store(options.layout.fpscr, () => {
-        load(options.layout.fpscr); get(index + parameterCount); simd(0x53); constant(27).byte(0x74).byte(0x72);
+        load(options.layout.fpscr); get(index + nodeBase); simd(0x53); constant(27).byte(0x74).byte(0x72);
       });
     } else if (variableShift || roundingShift) {
       const bits = Number((variableShift ?? roundingShift)![2]);
@@ -912,9 +956,9 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
           simd(0x1c).byte(lane);
         }
       }
-      body.byte(0x22).u32(index + parameterCount);
+      body.byte(0x22).u32(index + nodeBase);
       store(options.layout.fpscr, () => {
-        load(options.layout.fpscr); arg(0); get(index + parameterCount);
+        load(options.layout.fpscr); arg(0); get(index + nodeBase);
         simd(vectorUnary[`Vector${signedOutput ? "Sign" : "Zero"}Extend${bits / 2}`]!);
         simd(0x51); simd(0x53); constant(27).byte(0x74).byte(0x72);
       });
@@ -926,9 +970,9 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       if (bits === 64) body.byte(0x42).signed(-0x8000000000000000n, 64);
       else constant(-(2 ** (bits - 1)));
       simd(laneSplat[bits]!); simd(vectorBinary[`VectorEqual${bits}`]!);
-      body.byte(0x22).u32(index + parameterCount); simd(0x51);
+      body.byte(0x22).u32(index + nodeBase); simd(0x51);
       store(options.layout.fpscr, () => {
-        load(options.layout.fpscr); get(index + parameterCount); simd(0x53); constant(27).byte(0x74).byte(0x72);
+        load(options.layout.fpscr); get(index + nodeBase); simd(0x53); constant(27).byte(0x74).byte(0x72);
       });
     } else if (saturatedBinary) {
       const signed = saturatedBinary[1] === "Signed";
@@ -937,9 +981,9 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       const wrapping = vectorBinary[`Vector${subtract ? "Sub" : "Add"}${bits}`]!;
       if (bits <= 16) {
         const opcode = (bits === 8 ? 0x6f : 0x8f) + (signed ? 0 : 1) + (subtract ? 3 : 0);
-        arg(0); arg(1); simd(opcode); body.byte(0x22).u32(index + parameterCount);
+        arg(0); arg(1); simd(opcode); body.byte(0x22).u32(index + nodeBase);
         store(options.layout.fpscr, () => {
-          load(options.layout.fpscr); get(index + parameterCount); arg(0); arg(1); simd(wrapping);
+          load(options.layout.fpscr); get(index + nodeBase); arg(0); arg(1); simd(wrapping);
           simd(0x51); simd(0x53); constant(27).byte(0x74).byte(0x72);
         });
       } else {
@@ -947,26 +991,26 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
           if (bits === 32) constant(Number(value)); else body.byte(0x42).signed(value, 64);
           return simd(laneSplat[bits]!);
         };
-        arg(0); arg(1); simd(wrapping); set(index + parameterCount);
+        arg(0); arg(1); simd(wrapping); set(index + nodeBase);
         if (signed) {
           arg(0); constant(bits - 1); simd(vectorShiftLeft[bits]! + 1);
           splat((1n << BigInt(bits - 1)) - 1n); simd(0x51);
         } else if (subtract) zeroVector();
         else splat(-1n);
-        get(index + parameterCount);
+        get(index + nodeBase);
         if (signed) {
-          arg(0); get(index + parameterCount); simd(0x51); arg(0); arg(1); simd(0x51);
+          arg(0); get(index + nodeBase); simd(0x51); arg(0); arg(1); simd(0x51);
           simd(subtract ? 0x4e : 0x4f); constant(bits - 1); simd(vectorShiftLeft[bits]! + 1);
         } else {
           if (subtract) arg(1); else arg(0);
           if (bits === 64) { splat(-0x8000000000000000n); simd(0x51); }
-          if (subtract) arg(0); else get(index + parameterCount);
+          if (subtract) arg(0); else get(index + nodeBase);
           if (bits === 64) { splat(-0x8000000000000000n); simd(0x51); }
           simd(bits === 32 ? 0x3c : 0xd9);
         }
-        body.byte(0x22).u32(index + parameterCount); simd(0x52);
+        body.byte(0x22).u32(index + nodeBase); simd(0x52);
         store(options.layout.fpscr, () => {
-          load(options.layout.fpscr); get(index + parameterCount); simd(0x53); constant(27).byte(0x74).byte(0x72);
+          load(options.layout.fpscr); get(index + nodeBase); simd(0x53); constant(27).byte(0x74).byte(0x72);
         });
       }
     } else if (paired) {
@@ -1254,7 +1298,10 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       case "FPAdd32": case "FPSub32": case "FPMul32": {
         const direct = options.fpStatusHelpers?.has(node.op);
         if (direct) {
-          if (fpMagnitude === undefined) { fpMagnitude = locals.length + parameterCount; locals.push("i32"); }
+          if (fpMagnitude === undefined) {
+            fpMagnitude = fpMagnitudeScratch ?? locals.length + parameterCount;
+            if (!region) locals.push("i32");
+          }
           body.byte(0x02).byte(0x7f).byte(0x02).byte(0x40);
           // Later helper calls may reuse this guard even when the zero path skips the helper.
           if (fpTrapFlags !== undefined && !fpTrapFlagsValid) { loadFPTrapFlags(); body.byte(0x1a); }
@@ -1365,13 +1412,13 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
         body.byte(0x7c); arg(2); body.byte(0xad).byte(0x7c); break;
       case "SignedSaturatedAddWithFlag32": case "SignedSaturatedSubWithFlag32": {
         const subtract = node.op === "SignedSaturatedSubWithFlag32";
-        arg(0); arg(1); body.byte(subtract ? 0x6b : 0x6a); set(index + parameterCount);
+        arg(0); arg(1); body.byte(subtract ? 0x6b : 0x6a); set(index + nodeBase);
         arg(0); arg(1); body.byte(0x73);
         if (!subtract) constant(-1).byte(0x73);
-        arg(0); get(index + parameterCount).byte(0x73).byte(0x71); constant(31).byte(0x76);
+        arg(0); get(index + nodeBase).byte(0x73).byte(0x71); constant(31).byte(0x76);
         set(overflowLocals.get(index)!);
         constant(0x7fffffff); arg(0); constant(31).byte(0x75).byte(0x73);
-        get(index + parameterCount); get(overflowLocals.get(index)!).byte(0x1b);
+        get(index + nodeBase); get(overflowLocals.get(index)!).byte(0x1b);
         break;
       }
       case "SignedSaturation": case "UnsignedSaturation": {
@@ -1383,8 +1430,8 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
         const minimum = signed ? -(2 ** (bits - 1)) : 0;
         const maximum = 2 ** (signed ? bits - 1 : bits) - 1;
         constant(minimum); arg(0); arg(0); constant(minimum).byte(0x48).byte(0x1b);
-        set(index + parameterCount);
-        constant(maximum); get(index + parameterCount); get(index + parameterCount);
+        set(index + nodeBase);
+        constant(maximum); get(index + nodeBase); get(index + nodeBase);
         constant(maximum).byte(0x4a).byte(0x1b);
         break;
       }
@@ -1449,7 +1496,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
         helper(node.op, node.args.map(argType), result ? [wasmType(node.type)] : [], () => node.args.forEach(argument));
       }
     }
-    if (result) set(index + parameterCount);
+    if (result) set(index + nodeBase);
     if (options.execution && (node.op === "A32CallSupervisor" || node.op === "A32ExceptionRaised")) {
       // These native callbacks flush prior ticks and refresh the remaining budget.
       load(options.execution.budget, true); set(1);
@@ -1460,14 +1507,31 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   terminalCpsrMode = options.execution ? knownCpsrMode : undefined;
   terminalFpscrMode = options.execution ? knownFpscrMode : undefined;
   terminal(block.terminal);
-  // Every terminal path returns or tail-calls, including both branches of a conditional exit.
+  // Every terminal path returns or transfers control to another block.
   body.byte(0x00);
+  let code = body;
+  if (region) {
+    code = new Bytes().byte(0x03).byte(0x40);
+    // IR results are assigned by their instructions; only scratch locals need clearing.
+    for (let local = scratchStart; local < scratchEnd; local++) {
+      switch (locals[local]!) {
+        case "i32": code.byte(0x41).i32(0); break;
+        case "i64": code.byte(0x42).signed(0n, 64); break;
+        case "v128": code.byte(0xfd).u32(0x0c).append(new Uint8Array(16)); break;
+        case "f32": code.byte(0x43).append(new Uint8Array(4)); break;
+        case "f64": code.byte(0x44).append(new Uint8Array(8)); break;
+        default: throw new JitError("compile", "Invalid ARM temporary local type");
+      }
+      code.byte(0x21).u32(parameterCount + local);
+    }
+    code.append(body.data).byte(0x0b).byte(0x00);
+  }
   return { imports, shared: options.shared, maximumPages: options.maximumPages,
     ...(options.functionNames && block.startPc !== undefined ? {
       name: `arm_pc_${block.startPc.toString(16).padStart(8, "0")}` +
         `_cpsr_${(block.startCpsr ?? 0).toString(16).padStart(8, "0")}` +
         `_fpscr_${(block.startFpscr ?? 0).toString(16).padStart(8, "0")}`,
     } : {}),
-    signature: { params, results: ["i64"] }, locals, body,
+    signature: { params, results: ["i64"] }, locals, body: code,
     table: Boolean(block.sourceCell) };
 }
