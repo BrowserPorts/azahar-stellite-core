@@ -191,7 +191,7 @@ int16_t ReadInput(unsigned port, unsigned device, unsigned index, unsigned id) {
 } // namespace
 
 extern "C" EMSCRIPTEN_KEEPALIVE std::uint32_t azahar_web_abi() {
-    return 19;
+    return 20;
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_core_options() {

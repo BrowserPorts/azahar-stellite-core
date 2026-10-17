@@ -51,24 +51,31 @@ function scheduleFrame(delay: number): undefined {
 }
 
 function frame(): undefined {
-  if (!running || !session) return undefined;
-  try {
-    session.runFrame();
-    const now = performance.now();
-    // Drop accumulated wall-clock debt when background throttling resumes.
-    nextFrame = Math.max(nextFrame + frameInterval, now - frameInterval);
-    scheduleFrame(Math.max(0, nextFrame - now));
-  } catch (error) { pause(); report(error); }
+  const signal = frameTasks?.signal;
+  if (!running || !session || !signal) return undefined;
+  // A suspended native frame must finish before another command enters the core.
+  commands = commands.then(async () => {
+    if (!running || !session || signal.aborted) return undefined;
+    try {
+      await session.runFrame();
+      if (signal.aborted) return undefined;
+      const now = performance.now();
+      // Drop accumulated wall-clock debt when background throttling resumes.
+      nextFrame = Math.max(nextFrame + frameInterval, now - frameInterval);
+      scheduleFrame(Math.max(0, nextFrame - now));
+    } catch (error) { pause(); report(error); }
+    return undefined;
+  }).catch(report);
   return undefined;
 }
 
-function start(): undefined {
+async function start(): Promise<undefined> {
   if (running) return undefined;
   if (!session) throw new Error("Azahar is unavailable");
   audio?.clear();
   // Let the command handler report a failed first frame to its caller.
   session.microphone.running(true);
-  try { session.runFrame(); }
+  try { await session.runFrame(); }
   catch (error) { session.microphone.running(false); throw error; }
   frameTasks = new AbortController();
   running = true;
@@ -130,19 +137,19 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
           audio.clear();
           break;
         }
-        case "start": start(); break;
+        case "start": await start(); break;
         case "pause": pause(); break;
         case "reset": {
           const resume = running;
           pause();
-          session.reset();
-          if (resume) start();
+          await session.reset();
+          if (resume) await start();
           break;
         }
         case "advance-frame":
           if (running) throw new Error("Pause Azahar before advancing a frame");
           session.microphone.running(true);
-          try { session.runFrame(); }
+          try { await session.runFrame(); }
           finally { session.microphone.running(false); }
           break;
         case "input": session.input(request.state); break;
@@ -169,7 +176,7 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
         }
         case "close":
           pause(); audio?.close(); audio = undefined;
-          session.close(); await graphics?.close(); graphics = undefined; break;
+          await session.close(); await graphics?.close(); graphics = undefined; break;
         default: throw new Error("Unknown Azahar session request");
       }
       post({ type: "reply", id: request.id, result });

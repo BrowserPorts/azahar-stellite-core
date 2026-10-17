@@ -31,20 +31,20 @@ export interface AzaharModule {
   _azahar_unmount_game_file(path: number): number;
   _azahar_import_user_file(path: number, size: bigint): number;
   _azahar_content_id(path: number): number;
-  _azahar_initialize(): number;
+  _azahar_initialize(): Promise<number>;
   _azahar_core_options(): number;
   _azahar_set_core_option(key: number, value: number): number;
-  _azahar_load_game(path: number): number;
+  _azahar_load_game(path: number): Promise<number>;
   _azahar_program_id(): number;
-  _azahar_run_frame(): number;
-  _azahar_reset_game(): number;
+  _azahar_run_frame(): Promise<number>;
+  _azahar_reset_game(): Promise<number>;
   _azahar_performance_stats(): number;
   _azahar_set_input(mask: number, lx: number, ly: number, rx: number, ry: number,
     x: number, y: number, touch: number): unknown;
   _azahar_set_motion(ax: number, ay: number, az: number, rx: number, ry: number, rz: number,
     screenRotation: number): number;
   _azahar_reset_motion(): unknown;
-  _azahar_shutdown(): unknown;
+  _azahar_shutdown(): Promise<unknown>;
   _malloc(bytes: number): number;
   _free(pointer: number): unknown;
   _retro_init(): unknown;
@@ -57,13 +57,14 @@ export interface AzaharModule {
   _retro_load_game(pointer: number): number;
   _retro_unload_game(): unknown;
   _retro_run(): unknown;
-  _retro_serialize_size(): number;
-  _retro_serialize(pointer: number, length: number): number;
-  _retro_unserialize(pointer: number, length: number): number;
+  _retro_serialize_size(): Promise<number>;
+  _retro_serialize(pointer: number, length: number): Promise<number>;
+  _retro_unserialize(pointer: number, length: number): Promise<number>;
 }
 
 export interface AzaharModuleOptions {
   azaharDspJitHost?: DspJitHost;
+  azaharLazyDsp?: boolean;
   azaharJitHost: ArmJitHost;
   azaharPicaJitHost: PicaJitHost;
   azaharGraphicsHost: GraphicsClient;

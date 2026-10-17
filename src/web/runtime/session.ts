@@ -92,6 +92,7 @@ export class BrowserSession {
     const microphone = new MicrophoneConsumer();
     try {
       const core = await factory({
+        azaharLazyDsp: true,
         azaharJitHost: armJit,
         azaharMicrophoneActive: active => microphone.active(active),
         azaharMicrophoneRead: (pointer, count) => microphone.read(core.HEAP16.subarray(
@@ -108,9 +109,9 @@ export class BrowserSession {
         azaharAudio: (pointer, frames, sampleRate) => output.audio(core.HEAP16.subarray(pointer >>> 1,
           (pointer >>> 1) + frames * 2), sampleRate),
       });
-      if (core._azahar_web_abi() !== 19) throw new Error("Unsupported Azahar browser ABI");
+      if (core._azahar_web_abi() !== 20) throw new Error("Unsupported Azahar browser ABI");
       if (!core._azahar_mount_storage()) throw new Error("Azahar could not mount OPFS user storage");
-      if (!core._azahar_initialize()) throw new Error("Azahar initialization failed");
+      if (!await core._azahar_initialize()) throw new Error("Azahar initialization failed");
       return new BrowserSession(core, storage, armJit, graphics, microphone);
     } catch (error) { storage.close(); throw error; }
   }
@@ -146,7 +147,7 @@ export class BrowserSession {
     try {
       this.core.azaharGameFile = file;
       if (!this.core._azahar_mount_game_file(path, BigInt(file.size))) throw new Error("Azahar could not mount this game");
-      if (!this.core._azahar_load_game(path)) throw new Error("Azahar could not load this game");
+      if (!await this.core._azahar_load_game(path)) throw new Error("Azahar could not load this game");
       this.#loaded = true;
       let game = this.core.UTF8ToString(this.core._azahar_program_id());
       if (game === "0000000000000000") {
@@ -159,14 +160,14 @@ export class BrowserSession {
       return game;
     } catch (error) {
       // A partially loaded kernel must not receive another load request.
-      this.close();
+      await this.close();
       throw error;
     }
   }
 
-  runFrame(): undefined {
+  async runFrame(): Promise<undefined> {
     this.checkLoaded();
-    if (!this.core._azahar_run_frame()) throw new Error("Azahar stopped running");
+    if (!await this.core._azahar_run_frame()) throw new Error("Azahar stopped running");
     this.#completedFrames++;
     return undefined;
   }
@@ -282,14 +283,14 @@ export class BrowserSession {
     return this.#states.save(slot, this.core);
   }
 
-  reset(): undefined {
+  async reset(): Promise<undefined> {
     this.checkLoaded();
     try {
-      if (!this.core._azahar_reset_game()) throw new Error("Azahar could not reset this game");
+      if (!await this.core._azahar_reset_game()) throw new Error("Azahar could not reset this game");
       // Reset native and browser counters together after rebuilding the game state.
       this.performance();
     } catch (error) {
-      this.close();
+      await this.close();
       throw error;
     }
     return undefined;
@@ -301,12 +302,12 @@ export class BrowserSession {
     return this.#states.load(slot, this.core);
   }
 
-  close(): undefined {
+  async close(): Promise<undefined> {
     if (this.#closed) return undefined;
     this.#closed = true;
     try {
       this.microphone.close();
-      this.core._azahar_shutdown();
+      await this.core._azahar_shutdown();
       if (this.#gamePath) this.core._azahar_unmount_game_file(this.#gamePath);
     } finally {
       if (this.#gamePath) this.core._free(this.#gamePath);

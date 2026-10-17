@@ -9,6 +9,7 @@ export interface FixtureRequest {
   args: string[];
   dispatch: boolean;
   dsp?: boolean;
+  lazyDsp?: boolean;
   regionTier?: boolean;
   firmware?: { name: string; data: Uint8Array }[];
 }
@@ -55,6 +56,7 @@ worker.onmessage = async (event: MessageEvent<FixtureRequest>): Promise<undefine
     if (event.data.regionTier) append("ARM JIT: upstream fixtures use the region compiler");
     await createModule({
       ...(dspHost ? { azaharDspJitHost: dspHost } : {}),
+      azaharLazyDsp: event.data.lazyDsp ?? false,
       azaharJitHost: armJit,
       azaharPicaJitHost: new PicaJitHost(event.data.dispatch),
       arguments: event.data.args,

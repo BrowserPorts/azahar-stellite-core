@@ -35,13 +35,13 @@ export class OpfsSaveStates {
       let pointer = 0;
       let closed = false;
       try {
-        const bytes = core._retro_serialize_size();
+        const bytes = await core._retro_serialize_size();
         if (bytes < 1 || bytes > MAXIMUM_STATE_BYTES) {
           throw new Error("Azahar could not create a save state");
         }
         pointer = core._malloc(bytes);
         if (!pointer) throw new Error("Not enough memory for the save state");
-        if (!core._retro_serialize(pointer, bytes)) throw new Error("Azahar serialization failed");
+        if (!await core._retro_serialize(pointer, bytes)) throw new Error("Azahar serialization failed");
         const snapshot = core.HEAPU8.subarray(pointer, pointer + bytes);
         let offset = 0;
         while (offset < bytes) {
@@ -94,7 +94,7 @@ export class OpfsSaveStates {
           if (read < 1) throw new Error("OPFS stopped reading the save state");
           offset += read;
         }
-        if (!core._retro_unserialize(pointer, head.bytes)) {
+        if (!await core._retro_unserialize(pointer, head.bytes)) {
           throw new Error("Azahar rejected the save state");
         }
         return head.bytes;

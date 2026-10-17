@@ -2,9 +2,9 @@
 
 addToLibrary({
     $initializeDspRuntime__deps: ["$addRunDependency", "$removeRunDependency"],
-    // Prepare synchronous core calls; pthreads load the compiler on their first DSP call.
+    // Synchronous consumers preload the host; JSPI consumers can load it on first use.
     $initializeDspRuntime__postset: `
-        if (!ENVIRONMENT_IS_PTHREAD && !Module["azaharDspJitHost"]) {
+        if (!ENVIRONMENT_IS_PTHREAD && !Module["azaharDspJitHost"] && !Module["azaharLazyDsp"]) {
             addRunDependency("dsp-jit");
             initializeDspRuntime().then(() => removeRunDependency("dsp-jit")).catch(abort);
         }
