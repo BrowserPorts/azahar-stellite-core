@@ -34,6 +34,8 @@ target_link_options(azahar_browser PRIVATE
     "-sEXPORTED_RUNTIME_METHODS=['HEAPU8','HEAPU32','HEAP16','UTF8ToString','stringToNewUTF8','addFunction','removeFunction']"
     "-sEXPORTED_FUNCTIONS=['_malloc','_free','_retro_init','_retro_deinit','_retro_api_version','_retro_get_system_info','_retro_get_system_av_info','_retro_set_environment','_retro_set_video_refresh','_retro_set_audio_sample','_retro_set_audio_sample_batch','_retro_set_input_poll','_retro_set_input_state','_retro_set_controller_port_device','_retro_reset','_retro_run','_retro_load_game','_retro_unload_game','_retro_serialize_size','_retro_serialize','_retro_unserialize','_retro_get_memory_data','_retro_get_memory_size','_retro_get_region']")
 
+# Bundle inputs are listed below. Native assets belong to the aggregate runtime target.
+set(CMAKE_ADD_CUSTOM_COMMAND_DEPENDS_EXPLICIT_ONLY ON)
 find_program(BUN_EXECUTABLE NAMES bun REQUIRED)
 set(WORKER_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-worker.js")
 set(CLIENT_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar.js")
