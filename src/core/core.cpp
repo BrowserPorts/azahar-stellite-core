@@ -896,6 +896,15 @@ void System::DebugUnscheduleAllThreadsFromFrontend(bool unschedule) {
 
 template <class Archive>
 void System::serialize(Archive& ar, const unsigned int file_version) {
+    auto* saving_dsp =
+        Archive::is_saving::value ? dynamic_cast<AudioCore::DspLle*>(dsp_core.get()) : nullptr;
+    if (saving_dsp)
+        saving_dsp->PauseForState();
+    SCOPE_EXIT({
+        if (saving_dsp)
+            saving_dsp->ResumeAfterStateSave();
+        save_state_status = SaveStateStatus::NONE;
+    });
 
     if (Archive::is_loading::value) {
         save_state_status = SaveStateStatus::LOADING;
@@ -945,8 +954,10 @@ void System::serialize(Archive& ar, const unsigned int file_version) {
     auto dsp_hle = dynamic_cast<AudioCore::DspHle*>(dsp_core.get());
     if (dsp_hle) {
         ar&* dsp_hle;
+    } else if (auto* dsp_lle = dynamic_cast<AudioCore::DspLle*>(dsp_core.get())) {
+        ar&* dsp_lle;
     } else {
-        throw std::runtime_error("LLE audio not supported for save states");
+        throw std::runtime_error("Unknown DSP backend for save states");
     }
 
     ar&* memory.get();
@@ -991,7 +1002,10 @@ void System::serialize(Archive& ar, const unsigned int file_version) {
         ar & cheats_pid;
     }
 
-    save_state_status = SaveStateStatus::NONE;
+    if constexpr (Archive::is_loading::value) {
+        if (auto* dsp_lle = dynamic_cast<AudioCore::DspLle*>(dsp_core.get()))
+            dsp_lle->ResumeAfterStateLoad();
+    }
 }
 
 SERIALIZE_IMPL(System)

@@ -6,10 +6,13 @@
 #include <sstream>
 #include <cryptopp/hex.h>
 #include <fmt/ranges.h>
+#include "audio_core/hle/hle.h"
+#include "audio_core/lle/lle.h"
 #include "common/archives.h"
 #include "common/file_util.h"
 #include "common/logging/log.h"
 #include "common/scm_rev.h"
+#include "common/settings.h"
 #include "common/swap.h"
 #include "common/zstd_compression.h"
 #include "core/core.h"
@@ -31,10 +34,32 @@ struct CSTHeader {
     std::array<u8, 20> build_version{}; /// Latest build version, used as compatibility.
     u32_le zero_2{};                    /// Should be zero, just in case.
 
-    std::array<u8, 168> reserved{}; /// Make heading 256 bytes so it has consistent size
+    u8 dsp_mode{};                  // 0: HLE (including older states), 1: LLE, 2: threaded LLE
+    std::array<u8, 167> reserved{}; /// Make heading 256 bytes so it has consistent size
 };
 static_assert(sizeof(CSTHeader) == 256, "CSTHeader should be 256 bytes");
 #pragma pack(pop)
+
+static u8 GetDspMode(const System& system) {
+    if (dynamic_cast<const AudioCore::DspHle*>(&system.DSP()))
+        return 0;
+    if (auto* lle = dynamic_cast<const AudioCore::DspLle*>(&system.DSP()))
+        return lle->IsMultithreaded() ? 2 : 1;
+    throw std::runtime_error("Unknown DSP backend for save states");
+}
+
+static bool ValidateAudioMode(const CSTHeader& header) {
+    const auto mode = Settings::values.audio_emulation.GetValue();
+    const u8 configured = mode == Settings::AudioEmulation::HLE   ? 0
+                          : mode == Settings::AudioEmulation::LLE ? 1
+                                                                  : 2;
+    if (header.dsp_mode != configured) {
+        LOG_ERROR(Core, "Save state audio mode {} does not match configured mode {}",
+                  header.dsp_mode, configured);
+        return false;
+    }
+    return true;
+}
 
 constexpr std::array<u8, 4> header_magic_bytes{{'C', 'S', 'T', 0x1B}};
 
@@ -174,6 +199,7 @@ void System::SaveState(u32 slot) const {
 
     CSTHeader header{};
     header.filetype = header_magic_bytes;
+    header.dsp_mode = GetDspMode(*this);
     header.program_id = title_id;
     std::string rev_bytes;
     CryptoPP::StringSource ss(Common::g_scm_rev, true,
@@ -222,7 +248,7 @@ void System::LoadState(u32 slot) {
         // validate header
         SaveStateInfo info;
         info.slot = slot;
-        if (!ValidateSaveState(header, info, title_id, movie_id) ||
+        if (!ValidateAudioMode(header) || !ValidateSaveState(header, info, title_id, movie_id) ||
             info.status == SaveStateInfo::ValidationStatus::BuildMismatch) {
             throw std::runtime_error("Invalid savestate");
         }
@@ -254,6 +280,7 @@ std::vector<u8> System::SaveStateBuffer() const {
 
     CSTHeader header{};
     header.filetype = header_magic_bytes;
+    header.dsp_mode = GetDspMode(*this);
     header.program_id = title_id;
     std::string rev_bytes;
     CryptoPP::StringSource ss(Common::g_scm_rev, true,
@@ -289,7 +316,8 @@ bool System::LoadStateBuffer(std::vector<u8> buffer) {
     header = *((CSTHeader*)buffer.data());
 
     SaveStateInfo info{};
-    if (!ValidateSaveState(header, info, title_id, movie.GetCurrentMovieID()) ||
+    if (!ValidateAudioMode(header) ||
+        !ValidateSaveState(header, info, title_id, movie.GetCurrentMovieID()) ||
         info.status == SaveStateInfo::ValidationStatus::BuildMismatch) {
         LOG_ERROR(Core, "Invalid or incompatible save state");
         return false;

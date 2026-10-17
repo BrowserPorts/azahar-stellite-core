@@ -5,6 +5,7 @@
 #pragma once
 
 #include <span>
+#include <boost/serialization/access.hpp>
 #include "audio_core/dsp_interface.h"
 
 namespace Core {
@@ -37,9 +38,18 @@ public:
     void LoadComponent(const std::span<const u8> buffer) override;
     void UnloadComponent() override;
 
+    bool IsMultithreaded() const;
+    void PauseForState();
+    void ResumeAfterStateSave();
+    void ResumeAfterStateLoad();
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;
+
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int);
+    friend class boost::serialization::access;
 };
 
 } // namespace AudioCore

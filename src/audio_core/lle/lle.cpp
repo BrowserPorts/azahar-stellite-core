@@ -4,9 +4,13 @@
 
 #include <array>
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
+#include <boost/serialization/vector.hpp>
 #include <teakra/teakra.h>
 #include "audio_core/lle/lle.h"
+#include "common/archives.h"
 #include "common/assert.h"
 #include "common/bit_field.h"
 #include "common/swap.h"
@@ -146,21 +150,60 @@ struct DspLle::Impl final {
     std::thread teakra_thread;
     Common::Barrier teakra_slice_barrier{2};
     std::atomic<bool> stop_signal = false;
-    std::size_t stop_generation;
+    std::size_t stop_generation = 0;
+    std::atomic<bool> state_pause_requested = false;
+    std::size_t state_pause_generation = 0;
+    std::mutex state_mutex;
+    std::condition_variable state_condition;
+    bool state_paused = false;
+    bool restored_completed_slice = false;
 
     static constexpr u32 DspDataOffset = 0x40000;
     static constexpr u32 TeakraSlice = 16384;
 
-    void TeakraThread() {
+    void TeakraThread(bool completed_slice) {
         while (true) {
-            teakra.Run(TeakraSlice);
+            if (!completed_slice)
+                teakra.Run(TeakraSlice);
+            completed_slice = false;
             teakra_slice_barrier.Sync();
             if (stop_signal) {
                 if (stop_generation == teakra_slice_barrier.Generation())
                     break;
             }
+            if (state_pause_requested.load(std::memory_order_acquire) &&
+                state_pause_generation == teakra_slice_barrier.Generation()) {
+                std::unique_lock lock(state_mutex);
+                state_paused = true;
+                state_condition.notify_all();
+                state_condition.wait(lock, [this] { return !state_pause_requested.load(); });
+                state_paused = false;
+                state_condition.notify_all();
+                // Pausing used a barrier without consuming a scheduled DSP slice. Present
+                // that completed slice again at the next CPU/DSP synchronization point.
+                completed_slice = true;
+            }
         }
         stop_signal = false;
+    }
+
+    void PauseForState() {
+        if (!teakra_thread.joinable())
+            return;
+        state_pause_generation = teakra_slice_barrier.Generation() + 1;
+        state_pause_requested.store(true, std::memory_order_release);
+        teakra_slice_barrier.Sync();
+        std::unique_lock lock(state_mutex);
+        state_condition.wait(lock, [this] { return state_paused; });
+    }
+
+    void ResumeAfterStateSave() {
+        std::unique_lock lock(state_mutex);
+        if (!state_paused)
+            return;
+        state_pause_requested.store(false, std::memory_order_release);
+        state_condition.notify_all();
+        state_condition.wait(lock, [this] { return !state_paused; });
     }
 
     void StopTeakraThread() {
@@ -331,7 +374,7 @@ struct DspLle::Impl final {
         core_timing.ScheduleEvent(TeakraSlice, teakra_slice_event, 0);
 
         if (multithread) {
-            teakra_thread = std::thread(&Impl::TeakraThread, this);
+            teakra_thread = std::thread(&Impl::TeakraThread, this, false);
         }
 
         // Wait for initialization
@@ -502,5 +545,52 @@ DspLle::DspLle(Core::System& system, Memory::MemorySystem& memory, Core::Timing&
         [this](std::array<s16, 2> sample) { OutputSample(std::move(sample)); });
 }
 DspLle::~DspLle() = default;
+
+bool DspLle::IsMultithreaded() const {
+    return impl->multithread;
+}
+
+void DspLle::PauseForState() {
+    impl->PauseForState();
+}
+
+void DspLle::ResumeAfterStateSave() {
+    impl->ResumeAfterStateSave();
+}
+
+void DspLle::ResumeAfterStateLoad() {
+    if (impl->multithread && impl->loaded) {
+        impl->teakra_thread =
+            std::thread(&Impl::TeakraThread, impl.get(), impl->restored_completed_slice);
+    }
+}
+
+template <class Archive>
+void DspLle::serialize(Archive& ar, const unsigned int) {
+    u32 version = 1;
+    ar & version;
+    if (version != 1)
+        throw std::runtime_error("Unsupported LLE audio state version");
+    bool loaded = impl->loaded;
+    bool completed_slice = impl->multithread && loaded;
+    ar & loaded;
+    ar & completed_slice;
+    ar & impl->pipe_base_waddr;
+    ar & impl->semaphore_signaled;
+    ar & impl->data_signaled;
+    std::vector<u8> state;
+    if constexpr (Archive::is_saving::value)
+        state = impl->teakra.SaveState();
+    ar & state;
+    if constexpr (Archive::is_loading::value) {
+        if (completed_slice != (impl->multithread && loaded))
+            throw std::runtime_error("LLE audio state thread mode mismatch");
+        impl->teakra.LoadState(state);
+        impl->loaded = loaded;
+        impl->restored_completed_slice = completed_slice;
+    }
+}
+
+SERIALIZE_IMPL(DspLle)
 
 } // namespace AudioCore

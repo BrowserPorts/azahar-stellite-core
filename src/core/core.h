@@ -235,6 +235,10 @@ public:
         return *dsp_core;
     }
 
+    [[nodiscard]] const AudioCore::DspInterface& DSP() const {
+        return *dsp_core;
+    }
+
     [[nodiscard]] VideoCore::GPU& GPU();
 
     /**
