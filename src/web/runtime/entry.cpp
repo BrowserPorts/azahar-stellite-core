@@ -191,7 +191,7 @@ int16_t ReadInput(unsigned port, unsigned device, unsigned index, unsigned id) {
 } // namespace
 
 extern "C" EMSCRIPTEN_KEEPALIVE std::uint32_t azahar_web_abi() {
-    return 18;
+    return 19;
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_core_options() {
@@ -274,6 +274,12 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_program_id() {
 extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_run_frame() {
     if (!initialized || !loaded) return false;
     return LibRetro::RunFrame();
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_reset_game() {
+    if (!initialized || !loaded) return false;
+    loaded = LibRetro::ResetGame(true);
+    return loaded;
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE const double* azahar_performance_stats() {

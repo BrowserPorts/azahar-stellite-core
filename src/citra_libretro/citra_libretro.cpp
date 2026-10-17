@@ -508,11 +508,18 @@ static void context_destroy() {
     emu_instance->emu_window->DestroyContext();
 }
 
-void retro_reset() {
+bool LibRetro::ResetGame(bool update_settings) {
     LOG_DEBUG(Frontend, "retro_reset");
+    if (!emu_instance || !emu_instance->game_loaded) return false;
     Core::System::GetInstance().Shutdown();
+    if (update_settings) UpdateSettings();
     emu_instance->game_loaded = do_load_game();
     emu_instance->first_run_loop = true;
+    return emu_instance->game_loaded;
+}
+
+void retro_reset() {
+    LibRetro::ResetGame();
 }
 
 /**

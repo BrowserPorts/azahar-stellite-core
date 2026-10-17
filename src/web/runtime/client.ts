@@ -199,6 +199,12 @@ export class AzaharClient {
     await this.#audio?.suspend();
     return undefined;
   }
+
+  /** Restart the loaded game, preserving whether emulation is running or paused. */
+  async reset(): Promise<undefined> {
+    await this.request({ type: "reset" });
+    return undefined;
+  }
   /** Advance one native frame while paused. */
   async advanceFrame(): Promise<undefined> {
     await this.request({ type: "advance-frame" });
@@ -220,7 +226,7 @@ export class AzaharClient {
     return result;
   }
 
-  /** Applies at game load or the next frame; restart-only settings require a new session. */
+  /** Applies at game load or the next frame; restart-only settings require a reset. */
   async setOption(key: string, value: string): Promise<undefined> {
     await this.request({ type: "set-option", key, value });
     return undefined;

@@ -10,4 +10,6 @@
 namespace LibRetro {
 /// Runs until the next video frame, returning false if emulation stops or fails.
 bool RunFrame();
+/// Reloads the current game, optionally applying pending frontend options before loading.
+bool ResetGame(bool update_settings = false);
 } // namespace LibRetro

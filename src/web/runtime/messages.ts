@@ -12,7 +12,7 @@ export type SessionRequest = { id: number } & (
   { type: "surface"; canvas: OffscreenCanvas } |
   { type: "microphone-input"; transport: MicrophoneTransport } |
   { type: "audio-output"; transport: AudioTransport } |
-  { type: "start" | "pause" | "advance-frame" | "close" | "performance" | "options" } |
+  { type: "start" | "pause" | "advance-frame" | "reset" | "close" | "performance" | "options" } |
   { type: "set-option"; key: string; value: string } |
   { type: "save" | "restore"; slot: number } |
   { type: "motion"; state: MotionState | null } |

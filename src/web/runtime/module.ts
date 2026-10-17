@@ -37,6 +37,7 @@ export interface AzaharModule {
   _azahar_load_game(path: number): number;
   _azahar_program_id(): number;
   _azahar_run_frame(): number;
+  _azahar_reset_game(): number;
   _azahar_performance_stats(): number;
   _azahar_set_input(mask: number, lx: number, ly: number, rx: number, ry: number,
     x: number, y: number, touch: number): unknown;

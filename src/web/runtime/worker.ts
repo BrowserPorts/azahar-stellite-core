@@ -132,6 +132,13 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
         }
         case "start": start(); break;
         case "pause": pause(); break;
+        case "reset": {
+          const resume = running;
+          pause();
+          session.reset();
+          if (resume) start();
+          break;
+        }
         case "advance-frame":
           if (running) throw new Error("Pause Azahar before advancing a frame");
           session.microphone.running(true);
