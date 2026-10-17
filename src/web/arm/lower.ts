@@ -205,14 +205,8 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
     slots.push(start);
     return parameterCount + start;
   };
-  // Tail transitions discard IR values; CPU state remains in separate cached locals.
+  // Reentered blocks assign IR values and scratch locals before reading them.
   const nodeLocals = block.nodes.map(node => reserve(wasmType(node.type)));
-  const scratchLocals: number[] = [];
-  const temporary = (type: ValueType, count = 1): number => {
-    const start = reserve(type, count);
-    if (region) for (let index = 0; index < count; index++) scratchLocals.push(start + index);
-    return start;
-  };
   const carryLocals = new Map<number, number>();
   const wideLocals = new Map<number, number>();
   const narrowArithmetic = new Set<number>();
@@ -223,31 +217,31 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       if (carryIn && "imm" in carryIn && carryIn.imm === (node.op === "Add32" ? "0" : "1")) {
         narrowArithmetic.add(index);
       } else {
-        wideLocals.set(index, temporary("i64"));
+        wideLocals.set(index, reserve("i64"));
       }
     } else if (["SignedSaturatedAddWithFlag32", "SignedSaturatedSubWithFlag32"].includes(node.op)) {
-      overflowLocals.set(index, temporary("i32"));
+      overflowLocals.set(index, reserve("i32"));
     } else if (["LogicalShiftLeft32", "LogicalShiftRight32", "ArithmeticShiftRight32", "RotateRight32", "RotateRightExtended"].includes(node.op)) {
-      carryLocals.set(index, temporary("i32"));
+      carryLocals.set(index, reserve("i32"));
     }
   });
-  const memoryPointer = options.memory ? temporary("i32") : locals.length + parameterCount;
+  const memoryPointer = options.memory ? reserve("i32") : locals.length + parameterCount;
   let scalarShiftCount = locals.length + parameterCount;
   if (block.nodes.some((node) => /^Vector((Arithmetic|Logical)VShift|RoundingShiftLeft(S|U))(32|64)$/.test(node.op))) {
-    scalarShiftCount = temporary("i32", 2);
+    scalarShiftCount = reserve("i32", 2);
   }
   let vectorShiftScratch = locals.length + parameterCount;
   if (block.nodes.some((node) => /^Vector((Arithmetic|Logical)VShift|RoundingShiftLeft(S|U))(8|16)$/.test(node.op))) {
-    vectorShiftScratch = temporary("v128",
+    vectorShiftScratch = reserve("v128",
       block.nodes.some((node) => /^VectorRoundingShiftLeft(S|U)(8|16)$/.test(node.op)) ? 6 : 5);
   }
-  const linkSlot = block.sourceCell ? temporary("i32") : 0;
-  const dispatchPointer = block.sourceCell ? temporary("i32") : 0;
-  const dispatchLocation = block.sourceCell ? temporary("i64") : 0;
+  const linkSlot = block.sourceCell ? reserve("i32") : 0;
+  const dispatchPointer = block.sourceCell ? reserve("i32") : 0;
+  const dispatchLocation = block.sourceCell ? reserve("i64") : 0;
   const fpTrapFlags = options.execution &&
     block.nodes.filter((node) => options.fpStatusHelpers?.has(node.op)).length > 1
-    ? temporary("i32") : undefined;
-  const conditionFlagsScratch = region ? temporary("i32", 2) : undefined;
+    ? reserve("i32") : undefined;
+  const conditionFlagsScratch = region ? reserve("i32", 2) : undefined;
   const fpMagnitudeScratch = conditionFlagsScratch === undefined ? undefined : conditionFlagsScratch + 1;
   let fpTrapFlagsValid = false;
   let fpMagnitude: number | undefined;
@@ -354,7 +348,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
         bit(0x60000000); constant(0x20000000).byte(code === 8 ? 0x46 : 0x47); break;
       case 10: case 11: case 12: case 13:
         if (conditionFlags === undefined) {
-          conditionFlags = conditionFlagsScratch ?? temporary("i32");
+          conditionFlags = conditionFlagsScratch ?? reserve("i32");
         }
         // Branches and selects accept any nonzero value. Align V with N to compare their bits.
         load(options.layout.cpsr).byte(0x22).u32(conditionFlags);
@@ -1317,7 +1311,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
         const direct = options.fpStatusHelpers?.has(node.op);
         if (direct) {
           if (fpMagnitude === undefined) {
-            fpMagnitude = fpMagnitudeScratch ?? temporary("i32");
+            fpMagnitude = fpMagnitudeScratch ?? reserve("i32");
           }
           body.byte(0x02).byte(0x7f).byte(0x02).byte(0x40);
           // Later helper calls may reuse this guard even when the zero path skips the helper.
@@ -1562,20 +1556,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   body.byte(0x00);
   let code = body;
   if (region) {
-    code = new Bytes().byte(0x03).byte(0x40);
-    // IR results are assigned by their instructions; only scratch locals need clearing.
-    for (const local of scratchLocals) {
-      switch (locals[local - parameterCount]!) {
-        case "i32": code.byte(0x41).i32(0); break;
-        case "i64": code.byte(0x42).signed(0n, 64); break;
-        case "v128": code.byte(0xfd).u32(0x0c).append(new Uint8Array(16)); break;
-        case "f32": code.byte(0x43).append(new Uint8Array(4)); break;
-        case "f64": code.byte(0x44).append(new Uint8Array(8)); break;
-        default: throw new JitError("compile", "Invalid ARM temporary local type");
-      }
-      code.byte(0x21).u32(local);
-    }
-    code.append(body.data).byte(0x0b).byte(0x00);
+    code = new Bytes().byte(0x03).byte(0x40).append(body.data).byte(0x0b).byte(0x00);
   }
   return { imports, shared: options.shared, maximumPages: options.maximumPages,
     ...(options.functionNames && block.startPc !== undefined ? {
