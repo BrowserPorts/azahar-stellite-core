@@ -250,14 +250,34 @@ public:
         vinterrupt_context_switch = context_switch;
     }
 
+    Teakra::ExecutionState CaptureState() const override {
+        Teakra::ExecutionState state;
+        state.idle = idle;
+        for (std::size_t i = 0; i < interrupt_pending.size(); ++i)
+            state.interrupt_pending[i] = interrupt_pending[i].load(std::memory_order_relaxed);
+        state.vectored_pending = vinterrupt_pending.load(std::memory_order_relaxed);
+        state.vectored_context_switch = vinterrupt_context_switch.load(std::memory_order_relaxed);
+        state.vectored_address = vinterrupt_address.load(std::memory_order_relaxed);
+        return state;
+    }
+
+    void RestoreState(const Teakra::ExecutionState& state) override {
+        idle = state.idle;
+        for (std::size_t i = 0; i < interrupt_pending.size(); ++i)
+            interrupt_pending[i].store(state.interrupt_pending[i], std::memory_order_relaxed);
+        vinterrupt_pending.store(state.vectored_pending, std::memory_order_relaxed);
+        vinterrupt_context_switch.store(state.vectored_context_switch, std::memory_order_relaxed);
+        vinterrupt_address.store(state.vectored_address, std::memory_order_relaxed);
+    }
+
 private:
     Teakra::CoreTiming& core_timing;
     Teakra::MemoryInterface& memory;
     Web::Dsp::MemoryAccess access;
     std::array<std::atomic<bool>, 3> interrupt_pending{{false, false, false}};
     std::atomic<bool> vinterrupt_pending{false};
-    std::atomic<bool> vinterrupt_context_switch;
-    std::atomic<u32> vinterrupt_address;
+    std::atomic<bool> vinterrupt_context_switch{false};
+    std::atomic<u32> vinterrupt_address{0};
 };
 
 } // namespace
