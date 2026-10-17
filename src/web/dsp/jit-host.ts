@@ -104,14 +104,8 @@ export class DspJitHost {
     const module = binaryen.readBinary(this.archive.family(pattern[4] - this.#tableBase));
     try {
       module.setFeatures(features);
-      relocateFamily(module, this.#memoryBase, this.#tableBase);
-      const target = binaryen.getExportInfo(module.getExport("template")).value;
-      module.removeExport("template");
-      module.addFunction("run", binaryen.i32, binaryen.none, [], module.call(target, [
-        module.local.get(0, binaryen.i32), module.i32.const(opcode), module.i32.const(expansion),
-      ], binaryen.none));
-      module.addFunctionExport("run", "run");
-      module.runPasses(["simplify-globals", "inlining", "precompute-propagate", "dce", "vacuum",
+      relocateFamily(module, this.#memoryBase, this.#tableBase, opcode, expansion);
+      module.runPasses(["simplify-globals", "precompute-propagate", "dce", "vacuum",
         "remove-unused-module-elements"]);
       if (optimized && pattern[6].length) {
         let folded;

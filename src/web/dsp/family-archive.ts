@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-const magic = new TextEncoder().encode("AZDSPPK1");
+const magic = new TextEncoder().encode("AZDSPPK2");
 
 export interface FamilyMetadata {
   sourceSha256: string;
