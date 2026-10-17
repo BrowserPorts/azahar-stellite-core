@@ -69,14 +69,17 @@ if(EMSCRIPTEN)
         -g2 -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker,node
         -sINITIAL_MEMORY=67108864 -sMAXIMUM_MEMORY=536870912
         -sEXPORTED_RUNTIME_METHODS=FS,ENV)
-    set_target_properties(dynarmic_arm_fuzz_fixtures PROPERTIES SUFFIX ".mjs")
+    set_target_properties(dynarmic_arm_fuzz_fixtures PROPERTIES SUFFIX ".mjs"
+        CROSSCOMPILING_EMULATOR "${NODE_EXECUTABLE};${ARM_JIT_RUNNER}")
     add_dependencies(dynarmic_arm_fuzz_fixtures arm_jit_fixture_runner)
-    add_test(NAME dynarmic_arm_fuzz_fixtures COMMAND "${NODE_EXECUTABLE}"
-        "${ARM_JIT_RUNNER}" "$<TARGET_FILE:dynarmic_arm_fuzz_fixtures>")
     add_dependencies(browser_jit_fixtures dynarmic_arm_fuzz_fixtures)
 else()
     target_link_libraries(dynarmic_arm_fuzz_fixtures PRIVATE
         dynarmic Boost::boost merry::mcl fmt::fmt)
-    register_fixture(dynarmic_arm_fuzz_fixtures)
 endif()
+include("${AZAHAR_ROOT}/externals/catch2/extras/Catch.cmake")
+catch_discover_tests(dynarmic_arm_fuzz_fixtures
+    TEST_PREFIX "dynarmic_arm_fuzz_fixtures::"
+    DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 1500)
 add_dependencies(upstream_fixtures dynarmic_arm_fuzz_fixtures)
