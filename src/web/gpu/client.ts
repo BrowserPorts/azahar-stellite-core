@@ -219,7 +219,8 @@ export class GraphicsClient {
 
   draw(state: Uint8Array<SharedArrayBuffer>, configuration: Uint8Array<SharedArrayBuffer>, vertices: Uint8Array<SharedArrayBuffer>,
     vertexUniforms: Uint8Array<SharedArrayBuffer>, fragmentUniforms: Uint8Array<SharedArrayBuffer>,
-    program = 0, picaUniforms?: Uint8Array<SharedArrayBuffer>, indices?: Uint8Array<SharedArrayBuffer>): undefined {
+    program = 0, picaUniforms?: Uint8Array<SharedArrayBuffer>, indices?: Uint8Array<SharedArrayBuffer>,
+    sameImmediateState?: boolean): undefined {
     this.checkOpen();
     if (state.byteLength !== nativeDrawStateBytes || configuration.byteLength !== this.configurationSize ||
       vertexUniforms.byteLength !== nativeVertexUniformBytes || fragmentUniforms.byteLength !== nativeFragmentUniformBytes ||
@@ -231,8 +232,9 @@ export class GraphicsClient {
     const fsOffset = vsOffset + nativeVertexUniformBytes;
     const vertexOffset = fsOffset + nativeFragmentUniformBytes;
     const size = vertexOffset + vertices.byteLength;
-    if (!program && this.appendTriangles(state, configuration, vertexUniforms, fragmentUniforms,
-      vertices, vertexOffset)) {
+    if (!program && sameImmediateState !== false &&
+      this.appendTriangles(state, configuration, vertexUniforms, fragmentUniforms,
+        vertices, vertexOffset, sameImmediateState)) {
       this.#vertexBytes += vertices.byteLength;
       return undefined;
     }
@@ -259,7 +261,7 @@ export class GraphicsClient {
 
   private appendTriangles(state: Uint8Array<SharedArrayBuffer>, configuration: Uint8Array<SharedArrayBuffer>,
     vertexUniforms: Uint8Array<SharedArrayBuffer>, fragmentUniforms: Uint8Array<SharedArrayBuffer>,
-    vertices: Uint8Array<SharedArrayBuffer>, vertexOffset: number): boolean {
+    vertices: Uint8Array<SharedArrayBuffer>, vertexOffset: number, sameState: boolean | undefined): boolean {
     const previous = this.#commands[this.#commands.length - 1];
     if (previous?.type !== "draw" || previous.program || !this.#snapshots ||
       previous.bytes.buffer !== this.#snapshots.buffer || vertexOffset % 4 || vertices.byteLength % 4 ||
@@ -273,12 +275,15 @@ export class GraphicsClient {
       const texture = header[binding];
       if (texture && (texture === header[0] || texture === header[1])) return false;
     }
-    let offset = 0;
-    for (const source of [state, configuration, vertexUniforms, fragmentUniforms]) {
-      if (source.byteOffset % 4 || source.byteLength % 4) return false;
-      const words = new Uint32Array(source.buffer, source.byteOffset, source.byteLength / 4);
-      for (let i = 0; i < words.length; ++i) if (words[i] !== header[offset + i]) return false;
-      offset += words.length;
+    // New native cores compare these exact bytes before entering JavaScript.
+    if (!sameState) {
+      let offset = 0;
+      for (const source of [state, configuration, vertexUniforms, fragmentUniforms]) {
+        if (source.byteOffset % 4 || source.byteLength % 4) return false;
+        const words = new Uint32Array(source.buffer, source.byteOffset, source.byteLength / 4);
+        for (let i = 0; i < words.length; ++i) if (words[i] !== header[offset + i]) return false;
+        offset += words.length;
+      }
     }
     // Only extend the last unsubmitted snapshot, retaining triangle order and immutable state.
     const bytes = this.snapshot(vertices.byteLength);

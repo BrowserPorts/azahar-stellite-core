@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstring>
 #include <limits>
 #include <emscripten.h>
+#include <wasm_simd128.h>
 #include "video_core/pica/pica_core.h"
 #include "video_core/pica/vertex_loader.h"
 #include "video_core/rasterizer_cache/rasterizer_cache.h"
@@ -12,6 +14,19 @@
 
 namespace WebGPU {
 namespace {
+
+bool EqualDrawStateBytes(const u8* cached, std::span<const std::byte> current) {
+    std::size_t offset = 0;
+    for (; offset + sizeof(v128_t) <= current.size(); offset += sizeof(v128_t)) {
+        const auto difference = wasm_v128_xor(wasm_v128_load(cached + offset),
+                                              wasm_v128_load(current.data() + offset));
+        if (wasm_v128_any_true(difference)) return false;
+    }
+    for (; offset < current.size(); ++offset) {
+        if (cached[offset] != static_cast<u8>(current[offset])) return false;
+    }
+    return true;
+}
 
 struct DrawState {
     u32 color, depth, color_level, depth_level;
@@ -42,12 +57,14 @@ EM_JS(void, UploadLookupTable, (u32 table, u32 offset, const u8* pointer, u32 si
 });
 EM_JS(void, DrawTriangles, (const DrawState* state, const u8* config, u32 config_size,
                            const u8* vertices, u32 vertex_bytes, const u8* vs, const u8* fs,
-                           u32 program, const u8* uniforms, const u32* indices, u32 index_bytes), {
+                           u32 program, const u8* uniforms, const u32* indices, u32 index_bytes,
+                           bool same_state), {
     Module["azaharGraphicsHost"].draw(HEAPU8.subarray(state, state + 43 * 4),
        HEAPU8.subarray(config, config + config_size), HEAPU8.subarray(vertices, vertices + vertex_bytes),
        HEAPU8.subarray(vs, vs + 32), HEAPU8.subarray(fs, fs + 0x530), program,
        uniforms ? HEAPU8.subarray(uniforms, uniforms + 1616) : undefined,
-       index_bytes ? HEAPU8.subarray(indices, indices + index_bytes) : undefined);
+       index_bytes ? HEAPU8.subarray(indices, indices + index_bytes) : undefined,
+       same_state !== 0);
 });
 EM_JS(u32, CreateVertexProgram, (const char* source, u32 input_mask), {
     return Module["azaharGraphicsHost"].createVertexProgram(UTF8ToString(source), input_mask);
@@ -148,11 +165,41 @@ void Rasterizer::DrawBatch(std::span<const u8> vertices, u32 program,
     }
     SyncLookupTables();
     const Pica::Shader::FSConfig config{regs};
+    const std::array<std::span<const std::byte>, 4> state_parts{
+        std::as_bytes(std::span{&state, 1}), std::as_bytes(std::span{&config, 1}),
+        std::as_bytes(std::span{&vs_data, 1}), std::as_bytes(std::span{&fs_data, 1}),
+    };
+    constexpr std::size_t state_size =
+        sizeof(state) + sizeof(config) + sizeof(vs_data) + sizeof(fs_data);
+    bool same_state = !program && immediate_state_valid && immediate_state.size() == state_size;
+    if (same_state) {
+        std::size_t offset = 0;
+        for (const auto part : state_parts) {
+            if (!EqualDrawStateBytes(immediate_state.data() + offset, part)) {
+                same_state = false;
+                break;
+            }
+            offset += part.size();
+        }
+    }
+    immediate_state_valid = false;
     WebGPU::DrawTriangles(&state, reinterpret_cast<const u8*>(&config), sizeof(config),
                           vertices.data(), static_cast<u32>(vertices.size()),
                           reinterpret_cast<const u8*>(&vs_data), reinterpret_cast<const u8*>(&fs_data),
                           program, reinterpret_cast<const u8*>(uniforms), indices.data(),
-                          static_cast<u32>(indices.size_bytes()));
+                          static_cast<u32>(indices.size_bytes()), same_state);
+    // Publish the comparison state only after the draw was queued.
+    if (program) {
+        immediate_state.clear();
+    } else if (!same_state) {
+        immediate_state.resize(state_size);
+        std::size_t offset = 0;
+        for (const auto part : state_parts) {
+            std::memcpy(immediate_state.data() + offset, part.data(), part.size());
+            offset += part.size();
+        }
+    }
+    immediate_state_valid = !program;
 }
 
 bool Rasterizer::AccelerateDrawBatch(bool is_indexed) {
@@ -357,7 +404,13 @@ void Rasterizer::FlushAll() { cache.FlushAll(); }
 void Rasterizer::FlushRegion(PAddr addr, u32 size) { cache.FlushRegion(addr, size); }
 void Rasterizer::InvalidateRegion(PAddr addr, u32 size) { cache.InvalidateRegion(addr, size); }
 void Rasterizer::FlushAndInvalidateRegion(PAddr addr, u32 size) { cache.FlushRegion(addr, size); cache.InvalidateRegion(addr, size); }
-void Rasterizer::ClearAll(bool flush) { cache.ClearAll(flush); vertex_batch.clear(); ClearPrograms(); }
+void Rasterizer::ClearAll(bool flush) {
+    cache.ClearAll(flush);
+    vertex_batch.clear();
+    ClearPrograms();
+    immediate_state.clear();
+    immediate_state_valid = false;
+}
 bool Rasterizer::AccelerateDisplayTransfer(const Pica::DisplayTransferConfig& config) { return cache.AccelerateDisplayTransfer(config); }
 bool Rasterizer::AccelerateTextureCopy(const Pica::DisplayTransferConfig& config) { return cache.AccelerateTextureCopy(config); }
 bool Rasterizer::AccelerateFill(const Pica::MemoryFillConfig& config) { return cache.AccelerateFill(config); }

@@ -46,6 +46,8 @@ private:
     std::array<Common::Vec2f, 128 * 3> proctex_lut{};
     std::array<Common::Vec4f, 256 * 2> proctex_color{};
     std::unordered_map<Pica::Shader::Generator::PicaVSConfig, VertexProgram> vertex_programs;
+    std::vector<u8> immediate_state;
+    bool immediate_state_valid = false;
 };
 
 } // namespace WebGPU
