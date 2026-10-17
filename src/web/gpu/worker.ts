@@ -34,7 +34,9 @@ function fail(error: unknown, id?: number): undefined {
   if (!failure) {
     failure = error instanceof Error ? error.message : String(error);
     if (control && errorBytes) {
-      const encoded = new TextEncoder().encodeInto(failure, errorBytes);
+      const bytes = new Uint8Array(errorBytes.length);
+      const encoded = new TextEncoder().encodeInto(failure, bytes);
+      errorBytes.set(bytes.subarray(0, encoded.written));
       Atomics.store(control, 2, encoded.written);
       Atomics.store(control, 1, 1);
       Atomics.add(control, 0, 1);
@@ -66,7 +68,7 @@ async function initialize(fence: SharedArrayBuffer, protocol: number): Promise<u
     if (adapter.features.has(feature)) requiredFeatures.push(feature);
   }
   device = await adapter.requestDevice({ label: "Azahar graphics", requiredFeatures });
-  device.onuncapturederror = (event): undefined => fail(event.error);
+  device.onuncapturederror = (event): undefined => fail(event.error.message);
   device.lost.then((info) => { if (!closed) fail(new Error(`WebGPU device lost: ${info.message}`)); });
   shaders = await PicaShaders.create(device);
   textures = await GraphicsTextures.create(device);
