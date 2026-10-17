@@ -74,7 +74,7 @@ export class ArmJitHost {
       } } : {}),
       shared: memory.buffer instanceof SharedArrayBuffer,
       maximumPages: 65536,
-      helperNames: new Set(Object.keys(helpers)),
+      helperNames: { has: name => Object.hasOwn(helpers, name) },
       ...(fpStatusHelpers ? { fpStatusHelpers } : {}),
       ...(memoryOptions ? { memory: memoryOptions } : {}),
     };

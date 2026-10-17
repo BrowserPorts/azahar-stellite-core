@@ -49,7 +49,7 @@ export interface LowerOptions {
   /** Attach guest locations to Wasm functions in instrumented builds. */
   functionNames?: boolean;
   /** Explicit arithmetic/peripheral helpers exported as raw Wasm functions by the core. */
-  helperNames?: ReadonlySet<string>;
+  helperNames?: Pick<ReadonlySet<string>, "has">;
   /** Native helpers preserve registers and modes, adding only FPSCR exception flags.
    * With exception traps disabled, valid arithmetic operands cannot unwind. */
   fpStatusHelpers?: ReadonlySet<string>;
