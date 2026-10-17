@@ -2,7 +2,7 @@
 
 import { JitError } from "../protocol";
 import { Bytes, regionModule } from "../wasm/binary";
-import type { FunctionImport, ModuleOptions, ValueType } from "../wasm/binary";
+import type { FunctionImport, GlobalImport, ModuleOptions, ValueType } from "../wasm/binary";
 import type { Argument, ArmBlock, ArmLayout, Terminal } from "./ir";
 
 const binary: Record<string, number> = {
@@ -107,8 +107,36 @@ interface RegionPath {
   depth: number;
 }
 
-export function lowerArm(block: ArmBlock, options: LowerOptions): Uint8Array<ArrayBuffer> {
-  return regionModule(lowerArmBody(block, options));
+/** Per-instance constants keep baseline instruction shapes reusable across locations. */
+export class ArmConstants {
+  readonly imports: GlobalImport[] = [];
+  readonly values: WebAssembly.ModuleImports = {};
+  readonly #indices = new Map<string, number>();
+
+  emit(body: Bytes, value: bigint, bits: 32 | 64): Bytes {
+    const normalized = BigInt.asIntN(bits, value);
+    const key = `${bits}:${normalized}`;
+    let index = this.#indices.get(key);
+    if (index === undefined) {
+      index = this.imports.length;
+      const name = `g${index}`;
+      this.#indices.set(key, index);
+      this.imports.push({ module: "block", name, type: bits === 64 ? "i64" : "i32" });
+      this.values[name] = bits === 64
+        ? new WebAssembly.Global({ value: "i64", mutable: false }, normalized) : Number(normalized);
+    }
+    return body.byte(0x23).u32(index);
+  }
+}
+
+interface BlockOptions extends LowerOptions {
+  constants?: ArmConstants;
+}
+
+export function lowerArm(block: ArmBlock, options: LowerOptions,
+  constants?: ArmConstants): Uint8Array<ArrayBuffer> {
+  return regionModule({ ...lowerArmBody(block, { ...options, ...(constants ? { constants } : {}) }),
+    ...(constants ? { globals: constants.imports } : {}) });
 }
 
 export function lowerArmRegion(blocks: readonly ArmBlock[], links: ReadonlyMap<number, RegionLink>,
@@ -190,7 +218,7 @@ export function lowerArmRegion(blocks: readonly ArmBlock[], links: ReadonlyMap<n
   return regionModule(entry);
 }
 
-function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegion, blockIndex = 0,
+function lowerArmBody(block: ArmBlock, options: BlockOptions, region?: LowerRegion, blockIndex = 0,
   ancestors: readonly RegionPath[] = [], parentDepth = 0): ModuleOptions {
   if (Boolean(block.sourceCell) !== Boolean(options.execution)) {
     throw new JitError("compile", "ARM execution layout does not match the region");
@@ -279,6 +307,8 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   let fpTrapFlagsValid = false;
   let fpMagnitude: number | undefined;
   const constant = (value: number): Bytes => body.byte(0x41).i32(value);
+  const metadata = (value: number): Bytes => options.constants
+    ? options.constants.emit(body, BigInt(value), 32) : constant(value);
   const get = (index: number): Bytes => body.byte(0x20).u32(index);
   const set = (index: number): Bytes => body.byte(0x21).u32(index);
   const simd = (opcode: number): Bytes => body.byte(0xfd).u32(opcode);
@@ -334,7 +364,11 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       get(nodeLocals[value.ref]!);
     } else {
       const wide = wasmType(value.type) === "i64";
-      body.byte(wide ? 0x42 : 0x41).signed(BigInt(value.imm), wide ? 64 : 32);
+      const immediate = BigInt.asIntN(wide ? 64 : 32, BigInt(value.imm));
+      // Small literals retain constant folding; larger operands can share compiled shapes.
+      if (options.constants && (immediate < -256n || immediate > 255n)) {
+        options.constants.emit(body, immediate, wide ? 64 : 32);
+      } else body.byte(wide ? 0x42 : 0x41).signed(immediate, wide ? 64 : 32);
     }
     return undefined;
   };
@@ -437,7 +471,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   const chargeTicks = (cycles: number): undefined => {
     const execution = options.execution!;
     if (!region) {
-      constant(block.sourceCell!); get(3);
+      metadata(block.sourceCell!); get(3);
       body.byte(0x37).u32(3).u32(execution.sourceUsed);
     }
     get(2).byte(0x42).signed(BigInt(cycles), 64).byte(0x7c); set(2);
@@ -457,12 +491,12 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
     const execution = options.execution!;
     if (!region && execution.promotionRemaining) {
       // Linked baseline blocks must become hot even without a native dispatch.
-      constant(block.sourceCell!).byte(0x28).u32(2).u32(execution.promotionRemaining);
+      metadata(block.sourceCell!).byte(0x28).u32(2).u32(execution.promotionRemaining);
       body.byte(0x22).u32(linkSlot).byte(0x04).byte(0x40);
-      constant(block.sourceCell!); get(linkSlot); constant(1).byte(0x6b);
+      metadata(block.sourceCell!); get(linkSlot); constant(1).byte(0x6b);
       body.byte(0x22).u32(linkSlot).byte(0x36).u32(2).u32(execution.promotionRemaining);
       get(linkSlot).byte(0x45).byte(0x04).byte(0x40);
-      storeState(execution.promotionSource, () => constant(block.sourceCell!));
+      storeState(execution.promotionSource, () => metadata(block.sourceCell!));
       storeState(execution.budget, () => get(1), true);
       storeState(execution.pendingTicks, () => get(2), true);
       body.byte(0x42).signed(0n, 64).byte(0x0f).byte(0x0b).byte(0x0b);
@@ -471,7 +505,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       const execution = options.execution!;
       // Native links use the cycle budget; halt checks belong to terminals and dispatchers.
       get(1);
-      if (cell) constant(cell).byte(0x28).u32(2).u32(execution.minimumBudget).byte(0xad);
+      if (cell) metadata(cell).byte(0x28).u32(2).u32(execution.minimumBudget).byte(0xad);
       else body.byte(0x42).signed(minimum, 64);
       // A smaller budget returns to native dispatch without discarding the unused ticks.
       // Published slots have a positive minimum; an unpublished cell cannot tail-call.
@@ -510,7 +544,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
         load(options.layout.fpscr); constant(fpscrModeMask).byte(0x71);
         constant(destination.fpscr & fpscrModeMask).byte(0x46);
       }
-      constant(destination.cell).byte(0x28).u32(2).u32(0).byte(0x22).u32(linkSlot);
+      metadata(destination.cell).byte(0x28).u32(2).u32(0).byte(0x22).u32(linkSlot);
       if (checkFpscr) body.byte(0x45).byte(0x45).byte(0x71);
       body.byte(0x04).byte(0x40);
       tailCall(); body.byte(0x0b).byte(0x0b);
@@ -597,14 +631,14 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       return undefined;
     };
     if (config.fastmem !== undefined) {
-      constant(config.fastmem); address(); body.byte(0x6a); set(memoryPointer);
+      metadata(config.fastmem); address(); body.byte(0x6a); set(memoryPointer);
       // Check the full address before wrapping it to wasm32, including the access width.
       body.byte(0x42).signed(BigInt(config.fastmem + width), 64);
       address(); body.byte(0xad).byte(0x7c);
       body.byte(0x3f).byte(0).byte(0xad).byte(0x42).signed(16n, 64).byte(0x86).byte(0x58);
       branch();
     } else {
-      constant(config.pageTable); address(); constant(12).byte(0x76); constant(2).byte(0x74).byte(0x6a);
+      metadata(config.pageTable); address(); constant(12).byte(0x76); constant(2).byte(0x74).byte(0x6a);
       body.byte(0x28).u32(2).u32(0);
       if (config.pointerMaskBits) constant(-1 << config.pointerMaskBits).byte(0x71);
       set(memoryPointer);
@@ -737,7 +771,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   const terminal = (term: Terminal, depth = 0): undefined => {
     switch (term.kind) {
       case "link":
-        store(options.layout.registers + 60, () => constant(term.pc));
+        store(options.layout.registers + 60, () => metadata(term.pc));
         writeMode(term.cpsr, terminalCpsrMode);
         finishBlock(block.cycles, term, false, terminalFpscrMode, depth);
         break;
@@ -771,7 +805,7 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       throw new JitError("compile", "Conditional ARM block is missing its failure location");
     }
     condition(block.condition); body.byte(0x45).byte(0x04).byte(0x40);
-    store(options.layout.registers + 60, () => constant(block.conditionFailedPc!));
+    store(options.layout.registers + 60, () => metadata(block.conditionFailedPc!));
     writeMode(block.conditionFailedCpsr, entryCpsrMode);
     finishBlock(block.conditionFailedCycles, {
       kind: "link", pc: block.conditionFailedPc, cpsr: block.conditionFailedCpsr,

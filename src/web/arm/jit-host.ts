@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { lowerArm, lowerArmRegion } from "./lower";
+import { ArmConstants, lowerArm, lowerArmRegion } from "./lower";
 import type { LowerOptions, MemoryOptions } from "./lower";
 import type { ArmBlock, Terminal } from "./ir";
 
@@ -78,10 +78,11 @@ export class ArmJitHost {
       ...(fpStatusHelpers ? { fpStatusHelpers } : {}),
       ...(memoryOptions ? { memory: memoryOptions } : {}),
     };
-    const bytes = this.#lowerBlock(block, options);
+    const constants = new ArmConstants();
+    const bytes = this.#lowerBlock(block, options, constants);
     const module = new WebAssembly.Module(bytes);
     const instance = new WebAssembly.Instance(module, {
-      env: { memory, __indirect_function_table: table }, core: helpers,
+      env: { memory, __indirect_function_table: table }, core: helpers, block: constants.values,
     });
     const run = instance.exports.run;
     if (typeof run !== "function") throw new Error("ARM region is missing its Wasm entry");
