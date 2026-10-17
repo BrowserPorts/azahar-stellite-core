@@ -7,6 +7,7 @@
     "check": "tsc --noEmit",
     "configure:runtime": "cmake -S ../.. --preset web-release",
     "build:runtime": "cmake --build ../../build/web-core --target azahar_browser_runtime",
+    "serve:runtime": "emrun --no-browser --no-emrun-detect --hostname 127.0.0.1 ../../build/web-core/bin/Release/azahar.html",
     "build:core-fixtures": "cmake --build ../../build/web-core --target tests browser_core_fixtures",
     "test:core-fixtures": "ctest --test-dir ../../build/web-core --output-on-failure",
     "configure:fixtures": "cmake -S tests/upstream --preset web-native-fixtures",
