@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <cstdarg>
 #include <cstdint>
@@ -18,9 +19,13 @@
 #include "citra_libretro/core_settings.h"
 #include "common/logging/backend.h"
 #include "common/logging/filter.h"
+#include "common/file_util.h"
 #include "core/core.h"
 #include "core/core_timing.h"
 #include "core/frontend/motion.h"
+#include "core/file_sys/title_metadata.h"
+#include "core/hle/service/am/am.h"
+#include "core/hle/service/fs/archive.h"
 #include "core/loader/loader.h"
 #include "libretro.h"
 
@@ -46,6 +51,9 @@ EM_JS(void, AudioFrames, (const int16_t* data, size_t frames, unsigned sample_ra
 });
 EM_JS(void, DisplayMessage, (const char* text), {
     Module["printErr"]?.(UTF8ToString(text));
+});
+EM_JS(void, InstallProgress, (u64 written, u64 total), {
+    Module["azaharInstallProgress"]?.(Number(written), Number(total));
 });
 
 EM_JS(int, ReadMicrophoneSamples, (int16_t* samples, size_t count), {
@@ -191,7 +199,7 @@ int16_t ReadInput(unsigned port, unsigned device, unsigned index, unsigned id) {
 } // namespace
 
 extern "C" EMSCRIPTEN_KEEPALIVE std::uint32_t azahar_web_abi() {
-    return 20;
+    return 21;
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_core_options() {
@@ -261,6 +269,57 @@ extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_load_game(const char* path) {
     const retro_game_info game{path, nullptr, 0, nullptr};
     loaded = retro_load_game(&game);
     return loaded;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE u32 azahar_install_cia(const char* path) {
+    if (!initialized || loaded || !path) return static_cast<u32>(Service::AM::InstallStatus::ErrorInvalid);
+    return static_cast<u32>(Service::AM::InstallCIA(path, [](u64 written, u64 total) {
+        InstallProgress(written, total);
+    }));
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_installed_title_path(u64 title_id) {
+    if (!initialized || loaded) return nullptr;
+    static std::string path;
+    path = Service::AM::GetTitleContentPath(Service::AM::GetTitleMediaType(title_id), title_id);
+    return FileUtil::Exists(path) ? path.c_str() : nullptr;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_installed_titles() {
+    if (!initialized) return nullptr;
+    auto titles = nlohmann::json::array();
+    for (const auto media : {Service::FS::MediaType::NAND, Service::FS::MediaType::SDMC}) {
+        FileUtil::FSTEntry entries;
+        FileUtil::ScanDirectoryTree(Service::AM::GetMediaTitlePath(media), entries, 1);
+        for (const auto& high : entries.children) {
+            if (!high.isDirectory || high.virtualName.size() != 8) continue;
+            for (const auto& low : high.children) {
+                if (!low.isDirectory || low.virtualName.size() != 8) continue;
+                const auto text = high.virtualName + low.virtualName;
+                u64 title_id = 0;
+                const auto parsed = std::from_chars(text.data(), text.data() + text.size(), title_id, 16);
+                if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size()) continue;
+                const auto path = Service::AM::GetTitleContentPath(media, title_id);
+                auto loader = Loader::GetLoader(path);
+                if (!loader) continue;
+                std::string title;
+                loader->ReadTitle(title);
+                bool executable = false;
+                loader->IsExecutable(executable);
+                FileSys::TitleMetadata metadata;
+                if (metadata.Load(Service::AM::GetTitleMetadataPath(media, title_id)) !=
+                    Loader::ResultStatus::Success) continue;
+                std::array<char, 17> id{};
+                std::snprintf(id.data(), id.size(), "%016llx", static_cast<unsigned long long>(title_id));
+                titles.push_back({{"id", id.data()}, {"title", title},
+                                  {"version", metadata.GetTitleVersion()}, {"executable", executable},
+                                  {"media", media == Service::FS::MediaType::NAND ? "nand" : "sdmc"}});
+            }
+        }
+    }
+    static std::string text;
+    text = titles.dump();
+    return text.c_str();
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_program_id() {

@@ -13,6 +13,15 @@ export interface SessionOutput {
   video(bytes: Uint8Array<SharedArrayBuffer>, width: number, height: number, pitch: number): unknown;
   audio(samples: Int16Array<SharedArrayBuffer>, sampleRate: number): unknown;
   log(line: string): unknown;
+  installProgress(written: number, total: number): unknown;
+}
+
+export interface InstalledTitle {
+  id: string;
+  title: string;
+  version: number;
+  executable: boolean;
+  media: "nand" | "sdmc";
 }
 
 export interface InputState {
@@ -93,6 +102,7 @@ export class BrowserSession {
     try {
       const core = await factory({
         azaharLazyDsp: true,
+        azaharInstallProgress: output.installProgress,
         azaharJitHost: armJit,
         azaharMicrophoneActive: active => microphone.active(active),
         azaharMicrophoneRead: (pointer, count) => microphone.read(core.HEAP16.subarray(
@@ -109,7 +119,7 @@ export class BrowserSession {
         azaharAudio: (pointer, frames, sampleRate) => output.audio(core.HEAP16.subarray(pointer >>> 1,
           (pointer >>> 1) + frames * 2), sampleRate),
       });
-      if (core._azahar_web_abi() !== 20) throw new Error("Unsupported Azahar browser ABI");
+      if (core._azahar_web_abi() !== 21) throw new Error("Unsupported Azahar browser ABI");
       if (!core._azahar_mount_storage()) throw new Error("Azahar could not mount OPFS user storage");
       if (!await core._azahar_initialize()) throw new Error("Azahar initialization failed");
       return new BrowserSession(core, storage, armJit, graphics, microphone);
@@ -147,22 +157,73 @@ export class BrowserSession {
     try {
       this.core.azaharGameFile = file;
       if (!this.core._azahar_mount_game_file(path, BigInt(file.size))) throw new Error("Azahar could not mount this game");
-      if (!await this.core._azahar_load_game(path)) throw new Error("Azahar could not load this game");
-      this.#loaded = true;
-      let game = this.core.UTF8ToString(this.core._azahar_program_id());
-      if (game === "0000000000000000") {
-        // Homebrew loaders may have no title ID; use the file's content identity.
-        const identity = this.core._azahar_content_id(path);
-        if (!identity) throw new Error("Azahar could not read this game's content identity");
-        game = this.core.UTF8ToString(identity);
-      }
-      this.#states = await OpfsSaveStates.open(game);
-      return game;
+      return await this.loadPath(path);
     } catch (error) {
       // A partially loaded kernel must not receive another load request.
       await this.close();
       throw error;
     }
+  }
+
+  async install(file: File): Promise<undefined> {
+    this.checkOpen();
+    if (this.#loaded) throw new Error("Install CIA packages before loading a game");
+    if (!file.size || !Number.isSafeInteger(file.size) || /[/\\\0]/.test(file.name)) {
+      throw new Error("Invalid CIA file");
+    }
+    const path = this.core.stringToNewUTF8(`/rom/${file.name}`);
+    if (!path) throw new Error("Azahar could not allocate the CIA path");
+    let mounted = false;
+    try {
+      this.core.azaharGameFile = file;
+      if (!this.core._azahar_mount_game_file(path, BigInt(file.size))) throw new Error("Azahar could not mount this CIA");
+      mounted = true;
+      const status = await this.core._azahar_install_cia(path);
+      if (status !== 0) {
+        const messages = ["", "Could not open the CIA", "CIA file not found", "CIA installation aborted",
+          "Invalid CIA package", "The CIA contains encrypted content"];
+        throw new Error(messages[status] ?? `CIA installation failed (${status})`);
+      }
+      return undefined;
+    } finally {
+      if (mounted) this.core._azahar_unmount_game_file(path);
+      this.core.azaharGameFile = undefined;
+      this.core._free(path);
+    }
+  }
+
+  installedTitles(): InstalledTitle[] {
+    this.checkOpen();
+    const pointer = this.core._azahar_installed_titles();
+    if (!pointer) throw new Error("Installed titles are unavailable");
+    return JSON.parse(this.core.UTF8ToString(pointer)) as InstalledTitle[];
+  }
+
+  async loadInstalled(id: string): Promise<string> {
+    this.checkOpen();
+    if (this.#loaded) throw new Error("Close the current session before loading another game");
+    if (typeof id !== "string" || !/^[0-9a-fA-F]{16}$/.test(id)) throw new Error("Invalid installed title ID");
+    const path = this.core._azahar_installed_title_path(BigInt(`0x${id}`));
+    if (!path) throw new Error("The installed title is unavailable");
+    try {
+      return await this.loadPath(path);
+    } catch (error) {
+      await this.close();
+      throw error;
+    }
+  }
+
+  private async loadPath(path: number): Promise<string> {
+    if (!await this.core._azahar_load_game(path)) throw new Error("Azahar could not load this game");
+    this.#loaded = true;
+    let game = this.core.UTF8ToString(this.core._azahar_program_id());
+    if (game === "0000000000000000") {
+      const identity = this.core._azahar_content_id(path);
+      if (!identity) throw new Error("Azahar could not read this game's content identity");
+      game = this.core.UTF8ToString(identity);
+    }
+    this.#states = await OpfsSaveStates.open(game);
+    return game;
   }
 
   async runFrame(): Promise<undefined> {

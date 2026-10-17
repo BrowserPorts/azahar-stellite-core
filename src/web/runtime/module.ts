@@ -35,6 +35,9 @@ export interface AzaharModule {
   _azahar_core_options(): number;
   _azahar_set_core_option(key: number, value: number): number;
   _azahar_load_game(path: number): Promise<number>;
+  _azahar_install_cia(path: number): Promise<number>;
+  _azahar_installed_titles(): number;
+  _azahar_installed_title_path(title: bigint): number;
   _azahar_program_id(): number;
   _azahar_run_frame(): Promise<number>;
   _azahar_reset_game(): Promise<number>;
@@ -74,6 +77,7 @@ export interface AzaharModuleOptions {
   azaharMicrophoneRead?: (pointer: number, count: number) => number;
   azaharMicrophoneActive?: (active: boolean) => unknown;
   azaharAudio: (pointer: number, frames: number, sampleRate: number) => unknown;
+  azaharInstallProgress?: (written: number, total: number) => unknown;
 }
 
 export type AzaharModuleFactory = (options: AzaharModuleOptions) => Promise<AzaharModule>;

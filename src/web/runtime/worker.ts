@@ -94,6 +94,7 @@ async function initialize(): Promise<BrowserSession> {
   try {
     return await BrowserSession.create(factory, {
       log: (line) => post({ type: "log", line }),
+      installProgress: (written, total) => post({ type: "install-progress", written, total }),
       video: (view, width, height, pitch) => {
         if (graphics?.present(view, width, height, pitch)) return undefined;
         const bytes = view.slice();
@@ -121,6 +122,9 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
       switch (request.type) {
         case "import-user-file": result = session.importUserFile(request.file, request.path); break;
         case "load": pause(); result = await session.load(request.file); break;
+        case "install": result = await session.install(request.file); break;
+        case "load-installed": pause(); result = await session.loadInstalled(request.title); break;
+        case "installed-titles": result = session.installedTitles(); break;
         case "surface": {
           pause();
           if (!graphics) throw new Error("WebGPU is unavailable");

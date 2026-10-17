@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { SessionEvent, SessionRequest, SessionResult } from "./messages";
-import type { CoreOption, InputState, MotionState, PerformanceStats } from "./session";
-export type { CoreOption, MotionState } from "./session";
+import type { CoreOption, InputState, InstalledTitle, MotionState, PerformanceStats } from "./session";
+export type { CoreOption, InstalledTitle, MotionState } from "./session";
 import { BrowserAudioOutput } from "./audio-output";
 import { BrowserMicrophoneInput } from "./microphone-input";
 export { BrowserMicrophoneInput } from "./microphone-input";
@@ -17,6 +17,7 @@ export interface ClientOutput {
   audio(samples: Int16Array<ArrayBuffer>, sampleRate: number): unknown;
   log(line: string): unknown;
   error(message: string): unknown;
+  installProgress?(written: number, total: number): unknown;
 }
 
 interface Pending {
@@ -80,6 +81,7 @@ export class AzaharClient {
           case "video": output.video(value); break;
           case "audio": output.audio(value.samples, value.sampleRate); break;
           case "log": output.log(value.line); break;
+          case "install-progress": output.installProgress?.(value.written, value.total); break;
         }
         return undefined;
       };
@@ -105,6 +107,24 @@ export class AzaharClient {
   async load(file: File): Promise<string> {
     const result = await this.request({ type: "load", file });
     if (typeof result !== "string") throw new Error("Invalid game identity returned by Azahar");
+    return result;
+  }
+
+  /** Install a CIA package into persistent emulated storage before loading a game. */
+  async install(file: File): Promise<undefined> {
+    await this.request({ type: "install", file });
+    return undefined;
+  }
+
+  async installedTitles(): Promise<InstalledTitle[]> {
+    const result = await this.request({ type: "installed-titles" });
+    if (!Array.isArray(result)) throw new Error("Invalid installed title list returned by Azahar");
+    return result as InstalledTitle[];
+  }
+
+  async loadInstalled(title: string): Promise<string> {
+    const result = await this.request({ type: "load-installed", title });
+    if (typeof result !== "string") throw new Error("Invalid installed game identity returned by Azahar");
     return result;
   }
 
@@ -223,7 +243,7 @@ export class AzaharClient {
   async options(): Promise<CoreOption[]> {
     const result = await this.request({ type: "options" });
     if (!Array.isArray(result)) throw new Error("Invalid core options returned by Azahar");
-    return result;
+    return result as CoreOption[];
   }
 
   /** Applies at game load or the next frame; restart-only settings require a reset. */
