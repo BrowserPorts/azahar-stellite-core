@@ -1911,6 +1911,61 @@ void FragmentModule::DefineTexUnitSampler(u32 texture_unit) {
         return;
     }
 
+    // Evaluate texture derivatives before the varying border checks.
+    out += "vec4 sampled_color;\n";
+    switch (texture_unit) {
+    case 0:
+        switch (config.texture.texture0_type) {
+        case TexturingRegs::TextureConfig::Texture2D:
+            out += "sampled_color = textureLod(tex0, texcoord0, getLod(texcoord0 * "
+                   "vec2(textureSize(tex0, 0))) + tex_lod_bias[0]);";
+            break;
+        case TexturingRegs::TextureConfig::Projection2D:
+            // TODO (wwylele): find the exact LOD formula for projection texture
+            out += "sampled_color = textureProj(tex0, vec3(texcoord0, texcoord0_w));";
+            break;
+        case TexturingRegs::TextureConfig::TextureCube:
+            out += "sampled_color = texture(tex0, vec3(texcoord0, texcoord0_w));";
+            break;
+        case TexturingRegs::TextureConfig::Shadow2D:
+            out += "sampled_color = shadowTexture(texcoord0, texcoord0_w);";
+            break;
+        case TexturingRegs::TextureConfig::ShadowCube:
+            out += "sampled_color = shadowTextureCube(texcoord0, texcoord0_w);";
+            break;
+        default:
+            LOG_CRITICAL(HW_GPU, "Unhandled texture type {:x}",
+                         config.texture.texture0_type.Value());
+            UNIMPLEMENTED();
+            out += "sampled_color = texture(tex0, texcoord0);";
+            break;
+        }
+        break;
+    case 1:
+        out += "sampled_color = textureLod(tex1, texcoord1, getLod(texcoord1 * vec2(textureSize(tex1, "
+               "0))) + tex_lod_bias[1]);";
+        break;
+    case 2:
+        if (config.texture.texture2_use_coord1) {
+            out += "sampled_color = textureLod(tex2, texcoord1, getLod(texcoord1 * "
+                   "vec2(textureSize(tex2, 0))) + tex_lod_bias[2]);";
+        } else {
+            out += "sampled_color = textureLod(tex2, texcoord2, getLod(texcoord2 * "
+                   "vec2(textureSize(tex2, 0))) + tex_lod_bias[2]);";
+        }
+        break;
+    case 3:
+        if (config.proctex.enable) {
+            out += "sampled_color = ProcTex();";
+        } else {
+            out += "sampled_color = vec4(0.0);";
+        }
+        break;
+    default:
+        UNREACHABLE();
+        break;
+    }
+
     if (texture_unit < 3) {
         const u32 texcoord_num =
             texture_unit == 2 && config.texture.texture2_use_coord1 ? 1 : texture_unit;
@@ -1932,60 +1987,7 @@ void FragmentModule::DefineTexUnitSampler(u32 texture_unit) {
         }
     }
 
-    switch (texture_unit) {
-    case 0:
-        switch (config.texture.texture0_type) {
-        case TexturingRegs::TextureConfig::Texture2D:
-            out += "return textureLod(tex0, texcoord0, getLod(texcoord0 * "
-                   "vec2(textureSize(tex0, 0))) + tex_lod_bias[0]);";
-            break;
-        case TexturingRegs::TextureConfig::Projection2D:
-            // TODO (wwylele): find the exact LOD formula for projection texture
-            out += "return textureProj(tex0, vec3(texcoord0, texcoord0_w));";
-            break;
-        case TexturingRegs::TextureConfig::TextureCube:
-            out += "return texture(tex0, vec3(texcoord0, texcoord0_w));";
-            break;
-        case TexturingRegs::TextureConfig::Shadow2D:
-            out += "return shadowTexture(texcoord0, texcoord0_w);";
-            break;
-        case TexturingRegs::TextureConfig::ShadowCube:
-            out += "return shadowTextureCube(texcoord0, texcoord0_w);";
-            break;
-        default:
-            LOG_CRITICAL(HW_GPU, "Unhandled texture type {:x}",
-                         config.texture.texture0_type.Value());
-            UNIMPLEMENTED();
-            out += "return texture(tex0, texcoord0);";
-            break;
-        }
-        break;
-    case 1:
-        out += "return textureLod(tex1, texcoord1, getLod(texcoord1 * vec2(textureSize(tex1, "
-               "0))) + tex_lod_bias[1]);";
-        break;
-    case 2:
-        if (config.texture.texture2_use_coord1) {
-            out += "return textureLod(tex2, texcoord1, getLod(texcoord1 * "
-                   "vec2(textureSize(tex2, 0))) + tex_lod_bias[2]);";
-        } else {
-            out += "return textureLod(tex2, texcoord2, getLod(texcoord2 * "
-                   "vec2(textureSize(tex2, 0))) + tex_lod_bias[2]);";
-        }
-        break;
-    case 3:
-        if (config.proctex.enable) {
-            out += "return ProcTex();";
-        } else {
-            out += "return vec4(0.0);";
-        }
-        break;
-    default:
-        UNREACHABLE();
-        break;
-    }
-
-    out += "\n}\n";
+    out += "\nreturn sampled_color;\n}\n";
 }
 
 std::string GenerateFragmentShader(const FSConfig& config, const UserConfig& user,
