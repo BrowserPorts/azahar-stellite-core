@@ -56,7 +56,8 @@ struct LinkCell {
 };
 static_assert(offsetof(LinkCell, slot) == 0);
 static_assert(offsetof(LinkCell, minimum_budget) == 16);
-constexpr size_t fast_dispatch_size = 4096;
+// Match the native Dynarmic dispatch cache capacity.
+constexpr size_t fast_dispatch_size = 0x10000;
 struct FastDispatchEntry {
     uint64_t location = 0;
     uint32_t slot = 0;
