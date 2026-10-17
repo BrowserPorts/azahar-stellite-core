@@ -10,6 +10,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #ifdef ENABLE_OPENGL
 #include "glad/glad.h"
 #include "video_core/renderer_opengl/gl_vars.h"
@@ -704,6 +708,10 @@ static bool DrainAsyncOperations(Core::System& system) {
             emu_instance->emu_window->suppressPresentation = false;
             return false;
         }
+#ifdef __EMSCRIPTEN__
+        // Pending ROM reads can proxy callbacks to this browser worker.
+        emscripten_sleep(0);
+#endif
         auto result = system.RunLoop();
         if (result != Core::System::ResultStatus::Success) {
             emu_instance->emu_window->suppressPresentation = false;
