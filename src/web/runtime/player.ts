@@ -33,6 +33,7 @@ const installed = element("installed");
 const emptyLibrary = element("empty-library");
 const fps = element<HTMLOutputElement>("fps");
 const log = element("log");
+const jit = element("jit");
 let canvas = element<HTMLCanvasElement>("canvas");
 let client: AzaharClient | undefined;
 let audio: BrowserAudioOutput | undefined;
@@ -134,6 +135,7 @@ async function newSession(): Promise<undefined> {
   const own = ++generation;
   ready = false; loaded = false; running = false; fatal = false;
   audio = undefined; gain = undefined;
+  jit.textContent = "";
   const previous = client;
   client = undefined;
   if (previous) await previous.close().catch(error => appendLog(String(error)));
@@ -318,7 +320,10 @@ setInterval(() => {
   const current = client;
   sampling = true;
   current.performance().then(stats => {
-    if (client === current && running) fps.value = `${stats.systemFps.toFixed(1)} FPS`;
+    if (client === current && running) {
+      fps.value = `${stats.systemFps.toFixed(1)} FPS`;
+      jit.textContent = `DSP Wasm JIT: ${stats.dspJit.installedEntries} installed, ${stats.dspJit.optimizedEntries} optimized.`;
+    }
   }).catch(error => appendLog(String(error))).finally(() => { sampling = false; });
   return undefined;
 }, 1000);
