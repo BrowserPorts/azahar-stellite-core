@@ -112,7 +112,7 @@ if(EMSCRIPTEN)
         target_compile_options(wasmfs_opfs_${mode} PRIVATE -UNDEBUG)
         target_link_options(wasmfs_opfs_${mode} PRIVATE
             -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker
-            -sPTHREAD_POOL_SIZE=1 -sEXIT_RUNTIME=1 -sDYNAMIC_EXECUTION=0)
+            -sPTHREAD_POOL_SIZE=1 -sJSPI=1 -sEXIT_RUNTIME=1 -sDYNAMIC_EXECUTION=0)
         set_target_properties(wasmfs_opfs_${mode} PROPERTIES SUFFIX ".mjs")
     endforeach()
     add_custom_target(browser_storage_fixtures DEPENDS wasmfs_opfs_setup wasmfs_opfs_resume wasmfs_opfs_errors
