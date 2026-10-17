@@ -147,6 +147,10 @@ struct CodeReader final : Dynarmic::A32::TranslateCallbacks {
     uint32_t first = 0;
     uint32_t last = 0;
     bool read = false;
+    bool decoded = false;
+    uint64_t instruction_location = 0;
+    uint64_t instruction_ticks = 0;
+    const Dynarmic::IR::Inst* instruction_tail = nullptr;
 
     CodeReader(Dynarmic::A32::UserCallbacks& callbacks_, uint32_t limit)
         : callbacks(callbacks_), remaining(limit) {}
@@ -157,15 +161,20 @@ struct CodeReader final : Dynarmic::A32::TranslateCallbacks {
         return callbacks.MemoryReadCode(address);
     }
     bool PreCodeReadHook(bool thumb, uint32_t pc, Dynarmic::A32::IREmitter& ir) override {
+        decoded = false;
         if (remaining-- == 0) {
             ir.SetTerm(Dynarmic::IR::Term::LinkBlock{ir.current_location});
             return false;
         }
         ++instructions;
+        instruction_location = ir.current_location.UniqueHash();
+        instruction_ticks = ir.block.CycleCount();
+        instruction_tail = ir.block.empty() ? nullptr : &ir.block.back();
         return callbacks.PreCodeReadHook(thumb, pc, ir);
     }
     void PreCodeTranslationHook(bool thumb, uint32_t pc, Dynarmic::A32::IREmitter& ir) override {
         callbacks.PreCodeTranslationHook(thumb, pc, ir);
+        decoded = true;
     }
     uint64_t GetTicksForCode(bool thumb, uint32_t pc, uint32_t instruction) override {
         return callbacks.GetTicksForCode(thumb, pc, instruction);
@@ -1322,6 +1331,12 @@ struct Jit::Impl {
                                          config.hook_hint_instructions};
         auto block = Translate(location, &reader, options);
         if (block.CycleCount() == 0) throw std::runtime_error("ARM JIT produced a zero-cycle block");
+        // A condition-boundary lookahead changes neither the location, IR, nor ticks.
+        const bool empty_lookahead = reader.decoded &&
+            block.EndLocation().Value() == reader.instruction_location &&
+            block.CycleCount() == reader.instruction_ticks &&
+            (block.empty() ? nullptr : &block.back()) == reader.instruction_tail;
+        const auto instruction_count = reader.instructions - uint32_t(empty_lookahead);
         Azahar::Wasm::OptimizeArmBlock(block,
             config.HasOptimization(OptimizationFlag::GetSetElimination) && !config.check_halt_on_memory_access,
             config.HasOptimization(OptimizationFlag::ConstProp), config.callbacks);
@@ -1391,7 +1406,7 @@ struct Jit::Impl {
             ReleaseRetired();
             auto region = regions.emplace(key, Region{entry, bytes, reader.first,
                 uint64_t(uint32_t(reader.last - reader.first)) + 4, &source, &destination,
-                std::max(1u, std::min(reader.instructions, limit)), limit, {}}).first;
+                std::max(1u, std::min(instruction_count, limit)), limit, {}}).first;
             region->second.block_links = references.size();
             region->second.links = std::move(references);
             generated_bytes += bytes;
