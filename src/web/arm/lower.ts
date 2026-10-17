@@ -570,12 +570,22 @@ function lowerArmBody(block: ArmBlock, options: BlockOptions, region?: LowerRegi
       canLink(0, 1n); body.byte(0x04).byte(0x40);
       const cache = options.execution!.fastDispatch;
       // Match Dynarmic's LocationDescriptor, including split Thumb IT-state bits.
-      load(options.layout.cpsr); set(dispatchPointer);
-      load(options.layout.fpscr); constant(fpscrModeMask).byte(0x71);
-      get(dispatchPointer); constant(5).byte(0x76); constant(1).byte(0x71).byte(0x72);
-      get(dispatchPointer); constant(8).byte(0x76); constant(2).byte(0x71).byte(0x72);
-      get(dispatchPointer); constant(0xfc00).byte(0x71).byte(0x72);
-      get(dispatchPointer); constant(17).byte(0x76); constant(0x300).byte(0x71).byte(0x72);
+      // Terminal snapshots exclude modes invalidated by writes or callbacks.
+      const cpsr = terminalCpsrMode;
+      const upperCpsr = cpsr === undefined ? undefined :
+        (cpsr >>> 5 & 1) | (cpsr >>> 8 & 2) | (cpsr & 0xfc00) | (cpsr >>> 17 & 0x300);
+      if (fpscrMode !== undefined && upperCpsr !== undefined) constant(fpscrMode | upperCpsr);
+      else {
+        if (fpscrMode === undefined) { load(options.layout.fpscr); constant(fpscrModeMask).byte(0x71); }
+        else constant(fpscrMode);
+        if (upperCpsr === undefined) {
+          load(options.layout.cpsr); set(dispatchPointer);
+          get(dispatchPointer); constant(5).byte(0x76); constant(1).byte(0x71).byte(0x72);
+          get(dispatchPointer); constant(8).byte(0x76); constant(2).byte(0x71).byte(0x72);
+          get(dispatchPointer); constant(0xfc00).byte(0x71).byte(0x72);
+          get(dispatchPointer); constant(17).byte(0x76); constant(0x300).byte(0x71).byte(0x72);
+        } else if (upperCpsr) constant(upperCpsr).byte(0x72);
+      }
       body.byte(0xad).byte(0x42).signed(32n, 64).byte(0x86);
       load(options.layout.registers + 60).byte(0xad).byte(0x84); set(dispatchLocation);
       load(cache.pointer);
