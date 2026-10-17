@@ -71,6 +71,8 @@ export interface PerformanceStats {
   otherMs: number;
   /** Totals since the previous snapshot; excludes native IR translation. */
   armJit: ArmJitStatistics;
+  /** Cumulative opcode specialization totals across this session's Wasm threads. */
+  dspJit: { installedEntries: number; optimizedEntries: number };
   /** Totals since the previous snapshot, rather than per-frame averages. */
   graphics: GraphicsStatistics;
 }
@@ -250,6 +252,8 @@ export class BrowserSession {
       hleIpcMs: values[5]! * 1000, gpuCommandMs: values[6]! * 1000,
       swapMs: values[7]! * 1000, otherMs: values[8]! * 1000,
       armJit: { ...this.armJit.takeStatistics(), ...this.executionStatistics() },
+      dspJit: { installedEntries: this.core._azahar_dsp_jit_entries(),
+        optimizedEntries: this.core._azahar_dsp_jit_optimized_entries() },
       graphics: this.graphics.takeStatistics(),
     };
   }
