@@ -1087,21 +1087,26 @@ InstallStatus InstallCIA(const std::string& path,
         std::vector<u8> buffer;
         buffer.resize(0x10000);
         auto file_size = in_file->GetSize();
-        std::size_t total_bytes_read = 0;
+        u64 total_bytes_read = 0;
         while (total_bytes_read != file_size) {
-            std::size_t bytes_read = in_file->ReadBytes(buffer.data(), buffer.size());
+            const auto remaining = std::min<u64>(buffer.size(), file_size - total_bytes_read);
+            const std::size_t bytes_read = in_file->ReadBytes(buffer.data(), remaining);
+            if (bytes_read == 0) {
+                LOG_ERROR(Service_AM, "CIA input stopped before the installation completed");
+                return InstallStatus::ErrorAborted;
+            }
             auto result = installFile.Write(static_cast<u64>(total_bytes_read), bytes_read, true,
                                             false, static_cast<u8*>(buffer.data()));
 
-            if (update_callback) {
-                update_callback(total_bytes_read, file_size);
-            }
             if (result.Failed()) {
                 LOG_ERROR(Service_AM, "CIA file installation aborted with error code {:08x}",
                           result.Code().raw);
                 return InstallStatus::ErrorAborted;
             }
             total_bytes_read += bytes_read;
+            if (update_callback) {
+                update_callback(total_bytes_read, file_size);
+            }
         }
         installFile.Close();
 

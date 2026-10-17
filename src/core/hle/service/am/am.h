@@ -120,7 +120,7 @@ constexpr std::size_t TITLE_ID_VALID_LENGTH = 16;
 constexpr u64 TWL_TITLE_ID_FLAG = 0x0000800000000000ULL;
 
 // Progress callback for InstallCIA, receives bytes written and total bytes
-using ProgressCallback = void(std::size_t, std::size_t);
+using ProgressCallback = void(u64, u64);
 
 class NCCHCryptoFile final {
 public:
