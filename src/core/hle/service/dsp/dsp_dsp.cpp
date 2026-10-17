@@ -391,8 +391,7 @@ DSP_DSP::DSP_DSP(Core::System& system)
     semaphore_event =
         system.Kernel().CreateEvent(Kernel::ResetType::OneShot, "DSP_DSP::semaphore_event");
 
-    semaphore_event->SetHLENotifier(
-        [this]() { this->system.DSP().SetSemaphore(preset_semaphore); });
+    BindSemaphoreEvent();
 
     system.DSP().SetInterruptHandler([dsp_ref = this, &system](InterruptType type, DspPipe pipe) {
         std::scoped_lock lock{system.Kernel().GetHLELock()};
@@ -405,6 +404,11 @@ DSP_DSP::DSP_DSP(Core::System& system)
 DSP_DSP::~DSP_DSP() {
     semaphore_event = nullptr;
     pipes = {};
+}
+
+void DSP_DSP::BindSemaphoreEvent() {
+    semaphore_event->SetHLENotifier(
+        [this]() { this->system.DSP().SetSemaphore(preset_semaphore); });
 }
 
 void InstallInterfaces(Core::System& system) {

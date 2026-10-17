@@ -255,6 +255,7 @@ private:
     std::shared_ptr<Kernel::Event>& GetInterruptEvent(InterruptType type, AudioCore::DspPipe pipe);
     /// Checks if we are trying to register more than 6 events
     bool HasTooManyEventsRegistered() const;
+    void BindSemaphoreEvent();
 
     Core::System& system;
 
@@ -276,6 +277,8 @@ private:
         ar & interrupt_zero;
         ar & interrupt_one;
         ar & pipes;
+        if constexpr (Archive::is_loading::value)
+            BindSemaphoreEvent();
     }
     friend class boost::serialization::access;
 };
