@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { AzaharClient } from "./client";
-import type { BrowserAudioOutput, InstalledTitle } from "./client";
+import type { BrowserAudioOutput, CoreOption, InstalledTitle } from "./client";
 
 function element<T extends HTMLElement>(id: string): T {
   const value = document.getElementById(id);
@@ -34,6 +34,11 @@ const emptyLibrary = element("empty-library");
 const fps = element<HTMLOutputElement>("fps");
 const log = element("log");
 const jit = element("jit");
+const settings = element("settings");
+const optionKeys = ["citra_audio_emulation", "citra_layout_option", "citra_swap_screen"] as const;
+const preferences = new Map<string, string>();
+const settingSelects = new Map<string, HTMLSelectElement>();
+const preferencesKey = "azahar.player.options.v1";
 let canvas = element<HTMLCanvasElement>("canvas");
 let client: AzaharClient | undefined;
 let audio: BrowserAudioOutput | undefined;
@@ -76,6 +81,7 @@ function controls(): undefined {
     button.disabled = unavailable || loaded;
     return undefined;
   });
+  for (const select of settingSelects.values()) select.disabled = unavailable || loaded;
   if (!running) fps.value = "Paused";
   return undefined;
 }
@@ -84,6 +90,70 @@ function appendLog(line: string): undefined {
   lines.push(line.trimEnd());
   if (lines.length > 200) lines.splice(0, lines.length - 200);
   logsDirty = true;
+  return undefined;
+}
+
+function readPreferences(): undefined {
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(preferencesKey) ?? "{}");
+    if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+      for (const key of optionKeys) {
+        const value = (stored as Record<string, unknown>)[key];
+        if (typeof value === "string") preferences.set(key, value);
+      }
+    }
+  } catch (error) { appendLog(`Could not read player settings: ${String(error)}`); }
+  return undefined;
+}
+
+function writePreferences(): undefined {
+  try { localStorage.setItem(preferencesKey, JSON.stringify(Object.fromEntries(preferences))); }
+  catch (error) { appendLog(`Could not save player settings: ${String(error)}`); }
+  return undefined;
+}
+
+async function showSettings(current: AzaharClient, definitions: CoreOption[]): Promise<undefined> {
+  settings.replaceChildren();
+  settingSelects.clear();
+  for (const key of optionKeys) {
+    const definition = definitions.find(option => option.key === key);
+    if (!definition) continue;
+    const preferred = preferences.get(key);
+    if (preferred !== undefined && definition.values.some(value => value.value === preferred)) {
+      await current.setOption(key, preferred);
+      definition.value = preferred;
+    } else preferences.delete(key);
+    const label = document.createElement("label");
+    label.className = "setting";
+    label.textContent = definition.label;
+    const select = document.createElement("select");
+    select.id = `setting-${key}`;
+    select.disabled = true;
+    select.setAttribute("aria-describedby", `${select.id}-description`);
+    for (const value of definition.values) select.add(new Option(value.label, value.value));
+    select.value = definition.value;
+    select.addEventListener("change", () => {
+      const value = select.value;
+      action(`Applying ${definition.label}…`, async () => {
+        try {
+          if (client !== current || loaded) throw new Error("Change settings in the library before opening a game");
+          await current.setOption(key, value);
+        } catch (error) { select.value = definition.value; throw error; }
+        definition.value = value;
+        preferences.set(key, value);
+        writePreferences();
+        message("Setting applied.");
+      });
+      return undefined;
+    });
+    label.append(select);
+    const description = document.createElement("p");
+    description.id = `${select.id}-description`;
+    description.className = "hint";
+    description.textContent = definition.description;
+    settings.append(label, description);
+    settingSelects.set(key, select);
+  }
   return undefined;
 }
 
@@ -165,6 +235,7 @@ async function newSession(): Promise<undefined> {
   client = current;
   try {
     await current.ready;
+    await showSettings(current, await current.options());
     await current.connectSurface(canvas.transferControlToOffscreen());
     current.connectInput(canvas);
     showTitles(await current.installedTitles());
@@ -328,4 +399,5 @@ setInterval(() => {
   return undefined;
 }, 1000);
 
+readPreferences();
 action("Starting Azahar…", newSession);
