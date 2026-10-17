@@ -63,7 +63,7 @@ endfunction()
 function(azahar_enable_dsp_runtime target)
     target_link_libraries(${target} PRIVATE "$<TARGET_FILE:azahar_dsp_templates>")
     add_dependencies(${target} azahar_dsp_templates azahar_dsp_families azahar_dsp_jit_host)
-    target_link_options(${target} PRIVATE -sMAIN_MODULE=2 -Wl,--export=__stack_pointer
+    target_link_options(${target} PRIVATE -sMAIN_MODULE=2 -sJSPI=1 -Wl,--export=__stack_pointer
         -Wl,--export=malloc -Wl,--export=free
         "SHELL:--js-library \"${CMAKE_CURRENT_FUNCTION_LIST_DIR}/runtime.js\"")
     set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS

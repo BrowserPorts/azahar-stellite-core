@@ -2,9 +2,9 @@
 
 addToLibrary({
     $initializeDspRuntime__deps: ["$addRunDependency", "$removeRunDependency"],
-    // Library initialization runs after the pthread message handler is installed.
+    // Prepare synchronous core calls; pthreads load the compiler on their first DSP call.
     $initializeDspRuntime__postset: `
-        if (!Module["azaharDspJitHost"]) {
+        if (!ENVIRONMENT_IS_PTHREAD && !Module["azaharDspJitHost"]) {
             addRunDependency("dsp-jit");
             initializeDspRuntime().then(() => removeRunDependency("dsp-jit")).catch(abort);
         }

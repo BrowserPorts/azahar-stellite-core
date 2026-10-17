@@ -25,6 +25,20 @@ constexpr uint32_t optimize_after = AZAHAR_DSP_JIT_OPTIMIZE_AFTER;
 
 EM_JS_DEPS(dsp_jit, "$GOT,$stringToNewUTF8,$initializeDspRuntime");
 
+EM_JS(bool, DspJitReady, (), {
+    return Boolean(Module["azaharDspJitHost"]);
+});
+
+EM_ASYNC_JS(bool, PrepareDspJit, (), {
+    try {
+        await initializeDspRuntime();
+        return true;
+    } catch (error) {
+        Module["azaharDspCompileError"] = "DSP compiler initialization failed: " + String(error);
+        return false;
+    }
+});
+
 EM_JS(void, InitializeDspJit,
       (const char* json, u8* flags, u32 register_size, u32 semantics_size, u32 memory_size), {
     const imports = {
@@ -77,6 +91,14 @@ namespace {
 
 const std::array<u8, 65536>& OpcodeFlags() {
     static thread_local const auto flags = [] {
+        // Pooled workers load the compiler only when they first execute DSP code.
+        // Emscripten invokes pthread entries through a JSPI promising export.
+        if (!DspJitReady() && !PrepareDspJit()) {
+            char* error = DspCompileError();
+            const std::string message(error ? error : "DSP compiler initialization failed");
+            std::free(error);
+            throw std::runtime_error(message);
+        }
         std::array<u8, 65536> result{};
         InitializeDspJit(azahar_dsp_template_metadata(), result.data(),
                          sizeof(Teakra::RegisterState), sizeof(Web::Dsp::Semantics),
