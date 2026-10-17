@@ -14,6 +14,9 @@ const gameFile = element<HTMLInputElement>("game-file");
 const installButton = element<HTMLButtonElement>("install");
 const ciaFile = element<HTMLInputElement>("cia-file");
 const installProgress = element<HTMLProgressElement>("install-progress");
+const importDspButton = element<HTMLButtonElement>("import-dsp");
+const dspFiles = element<HTMLInputElement>("dsp-files");
+const importProgress = element<HTMLProgressElement>("import-progress");
 const playButton = element<HTMLButtonElement>("play");
 const resetButton = element<HTMLButtonElement>("reset");
 const libraryButton = element<HTMLButtonElement>("library");
@@ -56,6 +59,7 @@ function controls(): undefined {
   const unavailable = busy || fatal || !ready;
   openButton.disabled = unavailable || running;
   installButton.disabled = unavailable || loaded;
+  importDspButton.disabled = unavailable || loaded;
   playButton.disabled = unavailable || !loaded;
   resetButton.disabled = unavailable || !loaded;
   libraryButton.disabled = busy || !loaded;
@@ -215,6 +219,42 @@ ciaFile.addEventListener("change", () => {
       installProgress.hidden = true;
     }
   });
+  return undefined;
+});
+
+async function importFirmware(files: File[]): Promise<undefined> {
+  if (!client || loaded) throw new Error("Return to the library before importing files");
+  const imports = files.map(file => {
+    const name = file.name.toLowerCase();
+    if (name !== "dspfirm.cdc" && name !== "dspaudio.cdc") {
+      throw new Error("Select dspfirm.cdc or dspaudio.cdc");
+    }
+    return { file, path: `sdmc/3ds/${name}` };
+  });
+  importProgress.max = Math.max(1, files.reduce((sum, file) => sum + file.size, 0));
+  importProgress.value = 0;
+  importProgress.hidden = false;
+  let count = 0;
+  try {
+    for (const { file, path } of imports) {
+      message(`Importing ${count + 1} of ${files.length}: ${file.name}`);
+      await client.importUserFile(file, path);
+      count++;
+      importProgress.value += file.size;
+    }
+    message(`Imported ${files.length} DSP firmware ${files.length === 1 ? "file" : "files"}.`);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Import stopped after ${count} of ${files.length} files. ${reason}`);
+  } finally { importProgress.hidden = true; }
+  return undefined;
+}
+
+importDspButton.addEventListener("click", () => { dspFiles.click(); return undefined; });
+dspFiles.addEventListener("change", () => {
+  const files = Array.from(dspFiles.files ?? []);
+  dspFiles.value = "";
+  if (files.length) action("Importing firmware…", () => importFirmware(files));
   return undefined;
 });
 

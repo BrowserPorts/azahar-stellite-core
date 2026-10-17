@@ -61,6 +61,13 @@
         <progress id="install-progress" aria-label="CIA installation progress" hidden></progress>
         <p class="hint">Installed titles and save states stay in this browser.</p>
       </section>
+      <details class="panel">
+        <summary>DSP firmware</summary>
+        <p class="hint">Import dspfirm.cdc or dspaudio.cdc into the SD card's 3ds folder. Existing firmware files are replaced.</p>
+        <button id="import-dsp" class="secondary" disabled>Import DSP firmware</button>
+        <input id="dsp-files" type="file" accept=".cdc" multiple hidden>
+        <progress id="import-progress" aria-label="File import progress" hidden></progress>
+      </details>
       <details class="panel" open>
         <summary>Controls</summary>
         <dl class="bindings">
