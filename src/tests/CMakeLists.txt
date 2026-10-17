@@ -51,6 +51,7 @@ if(EMSCRIPTEN)
             "${PROJECT_SOURCE_DIR}/src/web/arm/ir.ts" "${PROJECT_SOURCE_DIR}/src/web/wasm/binary.ts"
             "${PROJECT_SOURCE_DIR}/src/web/pica/jit-host.ts" "${PROJECT_SOURCE_DIR}/src/web/pica/lower.ts"
             "${PROJECT_SOURCE_DIR}/src/web/pica/control-flow.ts" "${PROJECT_SOURCE_DIR}/src/web/pica/instruction.ts"
+            "${PROJECT_SOURCE_DIR}/src/web/protocol.ts"
         VERBATIM)
     add_custom_target(core_jit_fixture_runner DEPENDS "${CORE_JIT_RUNNER}")
     add_dependencies(tests core_jit_fixture_runner)
