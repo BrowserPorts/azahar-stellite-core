@@ -1349,6 +1349,40 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
           }
           // Zero identities are exact and leave every FPSCR exception flag unchanged.
           body.byte(0x0c).u32(1).byte(0x0b);
+          if (knownFpscrMode === undefined || !(knownFpscrMode & 0xc00000)) {
+            body.byte(0x02).byte(0x40);
+            // Wasm arithmetic rounds to nearest; enabled traps stay in the native helper.
+            if (knownFpscrMode === undefined) {
+              load(options.layout.fpscr); constant(0xc00000).byte(0x71).byte(0x0d).u32(0);
+            }
+            loadFPTrapFlags(); body.byte(0x0d).u32(0);
+            for (const operand of [0, 1]) {
+              arg(operand); constant(0x7fffffff).byte(0x71); constant(0x800000).byte(0x6b);
+              constant(0x7effffff).byte(0x4b).byte(0x0d).u32(0);
+            }
+            const operation = node.op === "FPAdd32" ? 0 : node.op === "FPSub32" ? 1 : 2;
+            arg(0); body.byte(0xbe); arg(1); body.byte(0xbe).byte(0x92 + operation);
+            body.byte(0xbc); set(nodeLocals[index]!);
+            // Retain native before-rounding tininess and overflow handling at boundary binades.
+            get(nodeLocals[index]!); constant(0x7f800000).byte(0x71);
+            constant(0x1000000).byte(0x6b); constant(0x7d800000).byte(0x4b).byte(0x0d).u32(0);
+            // The inexact flag is sticky; an existing flag needs no further precision check.
+            load(options.layout.fpscr); constant(0x10).byte(0x71).byte(0x45).byte(0x04).byte(0x40);
+            // Binary32 products and sums aligned within 28 exponent bits are exact in binary64.
+            arg(0); body.byte(0xbe).byte(0xbb);
+            arg(1); body.byte(0xbe).byte(0xbb).byte(0xa0 + operation);
+            get(nodeLocals[index]!); body.byte(0xbe).byte(0xbb).byte(0x62);
+            if (operation !== 2) {
+              // Beyond 28 exponent bits, binary64 may lose the nonzero smaller operand.
+              arg(0); constant(23).byte(0x76); constant(255).byte(0x71);
+              arg(1); constant(23).byte(0x76); constant(255).byte(0x71).byte(0x6b);
+              constant(28).byte(0x6a); constant(56).byte(0x4b).byte(0x72);
+            }
+            body.byte(0x04).byte(0x40);
+            store(options.layout.fpscr, () => { load(options.layout.fpscr); constant(0x10).byte(0x72); });
+            body.byte(0x0b).byte(0x0b);
+            get(nodeLocals[index]!); body.byte(0x0c).u32(1).byte(0x0b);
+          }
         }
         helper(node.op, node.args.map(argType), ["i32"], () => node.args.forEach(argument));
         if (direct) body.byte(0x0b);
