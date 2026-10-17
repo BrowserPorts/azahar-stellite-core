@@ -205,7 +205,7 @@ export class AzaharClient {
     await this.request({ type: "reset" });
     return undefined;
   }
-  /** Advance one native frame while paused. */
+  /** Advance and finish rendering one native frame while paused. */
   async advanceFrame(): Promise<undefined> {
     await this.request({ type: "advance-frame" });
     return undefined;

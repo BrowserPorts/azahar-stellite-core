@@ -5,7 +5,7 @@ import type { TextureRect } from "./blits";
 import type { NativeSampler } from "./samplers";
 import type { ScreenFrame } from "./screens";
 
-export const graphicsProtocolVersion = 3;
+export const graphicsProtocolVersion = 4;
 
 export interface GraphicsAdapterInfo {
   vendor: string;
@@ -21,6 +21,7 @@ export type GraphicsCommand =
   { type: "video"; bytes: Uint8Array<ArrayBuffer>; width: number; height: number; pitch: number } |
   { type: "screens"; frame: ScreenFrame } |
   { type: "finish"; sequence: number } |
+  { type: "drain"; id: number } |
   { type: "texture-create"; handle: number; width: number; height: number; levels: number; layers: number; format: number } |
   { type: "texture-destroy"; handle: number } |
   { type: "texture-copy"; source: number; dest: number; src: TextureRegion; dst: TextureRegion } |

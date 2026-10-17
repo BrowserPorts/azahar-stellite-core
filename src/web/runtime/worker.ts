@@ -148,8 +148,14 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
         }
         case "advance-frame":
           if (running) throw new Error("Pause Azahar before advancing a frame");
+          if (!graphics) throw new Error("WebGPU is unavailable");
+          // Clear prior presentations so the manually stepped frame cannot be dropped.
+          await graphics.waitForIdle();
           session.microphone.running(true);
-          try { await session.runFrame(); }
+          try {
+            await session.runFrame();
+            await graphics.waitForIdle();
+          }
           finally { session.microphone.running(false); }
           break;
         case "input": session.input(request.state); break;

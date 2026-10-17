@@ -23,6 +23,7 @@ let draws: GraphicsDraws | undefined;
 let screens: GraphicsScreens | undefined;
 let failure: string | undefined;
 let closed = false;
+const presentations = new Set<Promise<undefined>>();
 
 function post(event: GraphicsEvent): undefined {
   worker.postMessage(event);
@@ -41,6 +42,13 @@ function fail(error: unknown, id?: number): undefined {
     }
   }
   post({ type: "error", message: failure, ...(id === undefined ? {} : { id }) });
+  return undefined;
+}
+
+function acknowledgePresentation(): undefined {
+  const completed = device!.queue.onSubmittedWorkDone().then(() => post({ type: "presented" }), fail);
+  presentations.add(completed);
+  completed.then(() => presentations.delete(completed));
   return undefined;
 }
 
@@ -121,12 +129,19 @@ async function execute(request: GraphicsCommand): Promise<undefined> {
         if (!presenter) throw new Error("No WebGPU presentation surface is attached");
         presenter.present(request.bytes, request.width, request.height, request.pitch);
         // Retain the frame limit while later commands are submitted in queue order.
-        device.queue.onSubmittedWorkDone().then(() => post({ type: "presented" }), fail);
+        acknowledgePresentation();
         break;
       case "screens":
         if (!presenter) throw new Error("No WebGPU presentation surface is attached");
         presenter.screens(request.frame, screens);
-        device.queue.onSubmittedWorkDone().then(() => post({ type: "presented" }), fail);
+        acknowledgePresentation();
+        break;
+      case "drain":
+        // Send earlier presentation acknowledgements before replying to the caller.
+        await Promise.all(presentations);
+        await device.queue.onSubmittedWorkDone();
+        if (failure) throw new Error(failure);
+        post({ type: "reply", id: request.id });
         break;
       case "finish":
         await device.queue.onSubmittedWorkDone();

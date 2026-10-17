@@ -135,6 +135,11 @@ export class GraphicsClient {
     return this.synchronize("explicitFinish", (sequence) => ({ type: "finish", sequence }));
   }
 
+  async waitForIdle(): Promise<undefined> {
+    await this.request(id => ({ type: "drain", id }));
+    return undefined;
+  }
+
   takeStatistics(): GraphicsStatistics {
     this.checkOpen();
     if (!this.#adapter) throw new Error("WebGPU adapter information is unavailable");
@@ -409,7 +414,7 @@ export class GraphicsClient {
     if (this.#commands.length >= 64 || this.#batchBytes >= 256 * 1024 ||
       request.type === "initialize" || request.type === "surface" || request.type === "video" ||
       request.type === "screens" || request.type === "finish" || request.type === "texture-download" ||
-      request.type === "close") this.flush();
+      request.type === "drain" || request.type === "close") this.flush();
     return undefined;
   }
 
