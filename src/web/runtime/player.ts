@@ -11,6 +11,9 @@ function element<T extends HTMLElement>(id: string): T {
 
 const openButton = element<HTMLButtonElement>("open");
 const gameFile = element<HTMLInputElement>("game-file");
+const installButton = element<HTMLButtonElement>("install");
+const ciaFile = element<HTMLInputElement>("cia-file");
+const installProgress = element<HTMLProgressElement>("install-progress");
 const playButton = element<HTMLButtonElement>("play");
 const resetButton = element<HTMLButtonElement>("reset");
 const libraryButton = element<HTMLButtonElement>("library");
@@ -39,6 +42,7 @@ let fatal = false;
 let generation = 0;
 let sampling = false;
 let logsDirty = false;
+let installing = false;
 const lines: string[] = [];
 
 function message(text: string, error = false): undefined {
@@ -51,6 +55,7 @@ function message(text: string, error = false): undefined {
 function controls(): undefined {
   const unavailable = busy || fatal || !ready;
   openButton.disabled = unavailable || running;
+  installButton.disabled = unavailable || loaded;
   playButton.disabled = unavailable || !loaded;
   resetButton.disabled = unavailable || !loaded;
   libraryButton.disabled = busy || !loaded;
@@ -137,6 +142,12 @@ async function newSession(): Promise<undefined> {
   title.textContent = "Library";
   const current = new AzaharClient({
     video: () => undefined, audio: () => undefined,
+    installProgress: (written, total) => {
+      if (own !== generation || !installing) return undefined;
+      if (total > 0) { installProgress.max = total; installProgress.value = written; }
+      else installProgress.removeAttribute("value");
+      return undefined;
+    },
     log: line => { if (own === generation) appendLog(line); return undefined; },
     error: text => {
       if (own !== generation) return undefined;
@@ -183,6 +194,27 @@ gameFile.addEventListener("change", () => {
   const file = gameFile.files?.[0];
   gameFile.value = "";
   if (file) action("Opening game…", () => loadGame(file.name, current => current.load(file)));
+  return undefined;
+});
+
+installButton.addEventListener("click", () => { ciaFile.click(); return undefined; });
+ciaFile.addEventListener("change", () => {
+  const file = ciaFile.files?.[0];
+  ciaFile.value = "";
+  if (file) action(`Installing ${file.name}…`, async () => {
+    if (!client || loaded) throw new Error("Return to the library before installing a CIA");
+    installing = true;
+    installProgress.removeAttribute("value");
+    installProgress.hidden = false;
+    try {
+      await client.install(file);
+      showTitles(await client.installedTitles());
+      message(`Installed ${file.name}.`);
+    } finally {
+      installing = false;
+      installProgress.hidden = true;
+    }
+  });
   return undefined;
 });
 

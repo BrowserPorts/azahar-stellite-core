@@ -56,6 +56,9 @@
         <p class="eyebrow">Your library</p><h2 id="installed-heading">Installed titles</h2>
         <p id="empty-library" class="muted">Looking for installed titles…</p>
         <ul id="installed" class="installed"></ul>
+        <button id="install" class="secondary" disabled>Install CIA</button>
+        <input id="cia-file" type="file" accept=".cia,.zcia" hidden>
+        <progress id="install-progress" aria-label="CIA installation progress" hidden></progress>
         <p class="hint">Installed titles and save states stay in this browser.</p>
       </section>
       <details class="panel" open>
