@@ -95,7 +95,7 @@ interface RegionLink {
 interface LowerRegion {
   imports: FunctionImport[];
   links: ReadonlyMap<number, RegionLink>;
-  state: readonly number[];
+  state: readonly { offset: number; wide: boolean }[];
   locals: ValueType[];
   localSlots: Map<string, number[]>;
   blocks: readonly ArmBlock[];
@@ -155,9 +155,11 @@ export function lowerArmRegion(blocks: readonly ArmBlock[], links: ReadonlyMap<n
     }
     if (register < 15) references.set(register, (references.get(register) ?? 0) + 1);
   }
-  // Integer registers and FP words share the same four cached locals.
+  // Integer registers and FP registers share the same four cached locals.
   const fpReferences = new Map<number, number>();
   const vectorWords = new Set<number>();
+  const wideWords = new Set<number>();
+  const narrowWords = new Set<number>();
   for (const block of blocks) for (const node of block.nodes) {
     if (node.op === "A32GetVector" || node.op === "A32SetVector") {
       const argument = node.args[0];
@@ -181,19 +183,28 @@ export function lowerArmRegion(blocks: readonly ArmBlock[], links: ReadonlyMap<n
       throw new JitError("compile", "Invalid ARM FP register index");
     }
     const first = wide ? (register - 32) * 2 : register;
+    if (wide) wideWords.add(first);
+    else narrowWords.add(first);
     for (let word = first; word < first + (wide ? 2 : 1); word++) {
       fpReferences.set(word, (fpReferences.get(word) ?? 0) + 1);
     }
   }
+  // Keep D registers intact when no S or Q access overlaps either word.
+  const wideRegisters = new Set([...wideWords].filter(word =>
+    !narrowWords.has(word) && !narrowWords.has(word + 1) &&
+    !vectorWords.has(word) && !vectorWords.has(word + 1)));
   const registers = [
-    ...[...references].map(([register, count]) => [options.layout.registers + register * 4, count] as const),
-    ...[...fpReferences].filter(([word]) => !vectorWords.has(word))
-      .map(([word, count]) => [options.layout.extendedRegisters + word * 4, count] as const),
-  ].filter(([, count]) => count > 1)
-    .sort(([a, countA], [b, countB]) => countB - countA || a - b).slice(0, 4);
+    ...[...references].map(([register, count]) =>
+      ({ offset: options.layout.registers + register * 4, count, wide: false })),
+    ...[...fpReferences].filter(([word]) => !vectorWords.has(word) && !wideRegisters.has(word & ~1))
+      .map(([word, count]) => ({ offset: options.layout.extendedRegisters + word * 4, count, wide: false })),
+    ...[...wideRegisters].map(word =>
+      ({ offset: options.layout.extendedRegisters + word * 4, count: fpReferences.get(word)!, wide: true })),
+  ].filter(({ count }) => count > 1)
+    .sort((a, b) => b.count - a.count || a.offset - b.offset).slice(0, 4);
   // Internal branches update the PC local; exits and callbacks publish it with the registers.
-  const state = [options.layout.cpsr, options.layout.registers + 60,
-    ...registers.map(([offset]) => offset)];
+  const state = [{ offset: options.layout.cpsr, wide: false },
+    { offset: options.layout.registers + 60, wide: false }, ...registers];
   const region: LowerRegion = { imports: [], links, state, locals: [], localSlots: new Map(), copies: 0,
     blocks: blocks.map(block => ({ ...block, sourceCell: blocks[0]!.sourceCell! })) };
   for (const link of links.values()) {
@@ -205,8 +216,9 @@ export function lowerArmRegion(blocks: readonly ArmBlock[], links: ReadonlyMap<n
   const fn = lowerArmBody(region.blocks[0]!, options, region);
   // One native entry initializes cached state; internal edges stay inside its loop.
   const body = new Bytes();
-  state.forEach((offset, index) => {
-    body.byte(0x20).u32(0).byte(0x28).u32(2).u32(offset).byte(0x21).u32(4 + index);
+  state.forEach(({ offset, wide }, index) => {
+    body.byte(0x20).u32(0).byte(wide ? 0x29 : 0x28).u32(wide ? 3 : 2).u32(offset)
+      .byte(0x21).u32(4 + index);
   });
   // Cache age stays constant until this native entry returns.
   body.byte(0x41).i32(blocks[0]!.sourceCell!).byte(0x20).u32(3)
@@ -214,7 +226,7 @@ export function lowerArmRegion(blocks: readonly ArmBlock[], links: ReadonlyMap<n
   body.append(fn.body.data);
   const entry: ModuleOptions = { ...fn, signature: {
     params: ["i32", "i64", "i64", "i64"], results: ["i64"],
-  }, locals: [...state.map(() => "i32" as const), ...region.locals], body };
+  }, locals: [...state.map(({ wide }) => wide ? "i64" as const : "i32" as const), ...region.locals], body };
   return regionModule(entry);
 }
 
@@ -227,8 +239,9 @@ function lowerArmBody(block: ArmBlock, options: BlockOptions, region?: LowerRegi
   const imports: FunctionImport[] = region?.imports ?? [];
   // Native entries and links carry budget, pending ticks, and cache age without heap round trips.
   const params: ValueType[] = options.execution ? ["i32", "i64", "i64", "i64"] : ["i32", "i64"];
-  const cachedState = region ? new Map(region.state.map((offset, index) => [offset, params.length + index])) : undefined;
-  region?.state.forEach(() => params.push("i32"));
+  const cachedState = region ? new Map(region.state.map(({ offset, wide }, index) =>
+    [offset, { parameter: params.length + index, wide }])) : undefined;
+  region?.state.forEach(({ wide }) => params.push(wide ? "i64" : "i32"));
   const parameterCount = params.length;
   const loopDepth = parentDepth + 1;
   const path = region ? [...ancestors, { index: blockIndex, depth: loopDepth }] : [];
@@ -338,14 +351,15 @@ function lowerArmBody(block: ArmBlock, options: BlockOptions, region?: LowerRegi
   const loadState = (offset: number, wide = false): Bytes =>
     get(0).byte(wide ? 0x29 : 0x28).u32(wide ? 3 : 2).u32(offset);
   const load = (offset: number, wide = false): Bytes => {
+    const cached = cachedState?.get(offset);
+    if (cached && cached.wide === wide) return get(cached.parameter);
     // D registers alias two S words, either of which can live in a cached local.
-    if (wide && (cachedState?.has(offset) || cachedState?.has(offset + 4))) {
+    if (wide && (cached || cachedState?.has(offset + 4))) {
       load(offset).byte(0xad);
       load(offset + 4).byte(0xad).byte(0x42).signed(32n, 64).byte(0x86).byte(0x84);
       return body;
     }
-    const cached = wide ? undefined : cachedState?.get(offset);
-    return cached !== undefined ? get(cached) : loadState(offset, wide);
+    return loadState(offset, wide);
   };
   const storeState = (offset: number, value: () => unknown, wide = false): undefined => {
     get(0); value(); body.byte(wide ? 0x37 : 0x36).u32(wide ? 3 : 2).u32(offset);
@@ -353,7 +367,12 @@ function lowerArmBody(block: ArmBlock, options: BlockOptions, region?: LowerRegi
   };
   let wideStateValue: number | undefined;
   const store = (offset: number, value: () => unknown, wide = false): undefined => {
-    if (wide && (cachedState?.has(offset) || cachedState?.has(offset + 4))) {
+    const cached = cachedState?.get(offset);
+    if (cached && cached.wide === wide) {
+      value(); set(cached.parameter);
+      return undefined;
+    }
+    if (wide && (cached || cachedState?.has(offset + 4))) {
       wideStateValue ??= reserve("i64");
       // Evaluate once before publishing both aliased words.
       value(); set(wideStateValue);
@@ -361,19 +380,18 @@ function lowerArmBody(block: ArmBlock, options: BlockOptions, region?: LowerRegi
       store(offset + 4, () => get(wideStateValue!).byte(0x42).signed(32n, 64).byte(0x88).byte(0xa7));
       return undefined;
     }
-    const cached = wide ? undefined : cachedState?.get(offset);
-    if (cached !== undefined) {
-      value(); set(cached);
-      return undefined;
-    }
     return storeState(offset, value, wide);
   };
   const writeBackState = (): undefined => {
-    if (cachedState) for (const [offset, parameter] of cachedState) storeState(offset, () => get(parameter));
+    if (cachedState) for (const [offset, { parameter, wide }] of cachedState) {
+      storeState(offset, () => get(parameter), wide);
+    }
     return undefined;
   };
   const reloadState = (): undefined => {
-    if (cachedState) for (const [offset, parameter] of cachedState) { loadState(offset); set(parameter); }
+    if (cachedState) for (const [offset, { parameter, wide }] of cachedState) {
+      loadState(offset, wide); set(parameter);
+    }
     return undefined;
   };
   const argument = (value: Argument): undefined => {
