@@ -312,8 +312,9 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
       imports.push({ module: "core", name, type: { params: ["i32", ...params], results } });
     }
     const preservesRegisters = options.fpStatusHelpers?.has(name);
-    // Peripheral helpers can call back into the core and change the processor mode.
-    if (!preservesRegisters) {
+    // Native memory callbacks retain the block's processor and floating point modes.
+    const preservesModes = preservesRegisters || /^A32(Exclusive)?(Read|Write)Memory(8|16|32|64)$/.test(name);
+    if (!preservesModes) {
       knownCpsrMode = undefined;
       knownFpscrMode = undefined;
       fpTrapFlagsValid = false;
