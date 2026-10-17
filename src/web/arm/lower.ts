@@ -1483,6 +1483,39 @@ function lowerArmBody(block: ArmBlock, options: BlockOptions, region?: LowerRegi
         if (direct) body.byte(0x0b);
         break;
       }
+      case "FPAdd64": case "FPSub64": case "FPMul64": {
+        const direct = options.fpStatusHelpers?.has(node.op) &&
+          (knownFpscrMode === undefined || !(knownFpscrMode & 0xc00000));
+        if (direct) {
+          const exponent = (): Bytes => {
+            body.byte(0x42).signed(52n, 64).byte(0x88).byte(0xa7);
+            return constant(0x7ff).byte(0x71);
+          };
+          body.byte(0x02).byte(0x7e).byte(0x02).byte(0x40);
+          // A rounding-mode exit must also initialize the guard reused by the helper.
+          if (fpTrapFlags !== undefined && !fpTrapFlagsValid) { loadFPTrapFlags(); body.byte(0x1a); }
+          if (knownFpscrMode === undefined) {
+            load(options.layout.fpscr); constant(0xc00000).byte(0x71).byte(0x0d).u32(0);
+          }
+          loadFPTrapFlags(); body.byte(0x0d).u32(0);
+          // With inexact already sticky, normal arithmetic has no new status to publish.
+          load(options.layout.fpscr); constant(0x10).byte(0x71).byte(0x45).byte(0x0d).u32(0);
+          for (const operand of [0, 1]) {
+            arg(operand); exponent(); constant(1).byte(0x6b);
+            constant(2045).byte(0x4b).byte(0x0d).u32(0);
+          }
+          const operation = node.op === "FPAdd64" ? 0 : node.op === "FPSub64" ? 1 : 2;
+          arg(0); body.byte(0xbf); arg(1); body.byte(0xbf).byte(0xa0 + operation);
+          body.byte(0xbd); set(nodeLocals[index]!);
+          // Boundary binades retain native before-rounding underflow and overflow handling.
+          get(nodeLocals[index]!); exponent(); constant(2).byte(0x6b);
+          constant(2043).byte(0x4b).byte(0x0d).u32(0);
+          get(nodeLocals[index]!); body.byte(0x0c).u32(1).byte(0x0b);
+        }
+        helper(node.op, node.args.map(argType), ["i64"], () => node.args.forEach(argument));
+        if (direct) body.byte(0x0b);
+        break;
+      }
       case "A32SetFpscr":
         knownFpscrMode = undefined;
         fpTrapFlagsValid = false;
