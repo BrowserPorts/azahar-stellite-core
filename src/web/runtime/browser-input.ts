@@ -2,6 +2,15 @@
 
 import type { InputState } from "./session";
 
+export interface BrowserInputOptions {
+  /** Poll standard gamepads while the canvas has focus; enabled by default. */
+  gamepads?: boolean;
+  /** Default to the first connected standard gamepad. */
+  gamepadIndex?: number;
+  /** Radial deadzone in [0, 1), defaulting to 0.15. */
+  gamepadDeadzone?: number;
+}
+
 // QtConfig::default_buttons, translated to the native LibRetro button mask.
 const buttons: Readonly<Record<string, number>> = {
   KeyA: 1 << 8, KeyS: 1 << 0, KeyZ: 1 << 9, KeyX: 1 << 1,
@@ -11,10 +20,12 @@ const buttons: Readonly<Record<string, number>> = {
 };
 const analogKeys = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
   "KeyI", "KeyK", "KeyJ", "KeyL", "KeyD"]);
+// W3C standard gamepad positions, translated to the native LibRetro button IDs.
+const gamepadButtons = [0, 8, 1, 9, 10, 11, 12, 13, 2, 3, 14, 15, 4, 5, 6, 7];
 const neutral = (): InputState => ({ buttons: 0, circleX: 0, circleY: 0,
   cstickX: 0, cstickY: 0, touchX: 0, touchY: 0, touchPressed: false });
 
-/** Keyboard and pointer capture owned by one canvas and one AzaharClient. */
+/** Keyboard, pointer and gamepad capture owned by one canvas and one AzaharClient. */
 export class BrowserInput {
   #keys = new Set<string>();
   #pointer: number | undefined;
@@ -25,13 +36,18 @@ export class BrowserInput {
   #latest: InputState | undefined;
   #idle: Promise<undefined> = Promise.resolve(undefined);
   #closing: Promise<undefined> | undefined;
+  #focused = false;
+  #frame: number | undefined;
+  #last: InputState | undefined;
   readonly #addedTabIndex: boolean;
   readonly #touchAction: string;
   readonly #touchPriority: string;
 
   private constructor(private readonly canvas: HTMLCanvasElement,
     private readonly send: (state: InputState) => Promise<undefined>,
-    private readonly failed: (message: string) => unknown, private readonly signal: AbortSignal) {
+    private readonly failed: (message: string) => unknown, private readonly signal: AbortSignal,
+    private gamepads: boolean, private readonly gamepadIndex: number | undefined,
+    private readonly gamepadDeadzone: number) {
     this.#addedTabIndex = !canvas.hasAttribute("tabindex");
     if (this.#addedTabIndex) canvas.tabIndex = 0;
     this.#touchAction = canvas.style.getPropertyValue("touch-action");
@@ -44,20 +60,31 @@ export class BrowserInput {
     canvas.addEventListener("pointerup", this.onPointerEnd);
     canvas.addEventListener("pointercancel", this.onPointerEnd);
     canvas.addEventListener("lostpointercapture", this.onPointerEnd);
+    canvas.addEventListener("focus", this.onFocus);
     canvas.addEventListener("blur", this.release);
+    window.addEventListener("focus", this.onFocus);
     window.addEventListener("blur", this.release);
     document.addEventListener("visibilitychange", this.onVisibility);
     signal.addEventListener("abort", this.onAbort, { once: true });
-    this.publish();
+    this.onFocus();
   }
 
   static create(canvas: HTMLCanvasElement, send: (state: InputState) => Promise<undefined>,
-    failed: (message: string) => unknown, signal: AbortSignal): BrowserInput {
+    failed: (message: string) => unknown, signal: AbortSignal,
+    options: BrowserInputOptions = {}): BrowserInput {
     if (!(canvas instanceof HTMLCanvasElement) || canvas.ownerDocument !== document) {
       throw new Error("Browser input requires a canvas in this document");
     }
     if (signal.aborted) throw new Error("Input connection was cancelled");
-    return new BrowserInput(canvas, send, failed, signal);
+    const deadzone = options.gamepadDeadzone ?? 0.15;
+    if (!Number.isFinite(deadzone) || deadzone < 0 || deadzone >= 1 ||
+      (options.gamepadIndex !== undefined &&
+        (!Number.isSafeInteger(options.gamepadIndex) || options.gamepadIndex < 0)) ||
+      (options.gamepads !== undefined && typeof options.gamepads !== "boolean")) {
+      throw new Error("Invalid browser gamepad options");
+    }
+    return new BrowserInput(canvas, send, failed, signal, options.gamepads ?? true,
+      options.gamepadIndex, deadzone);
   }
 
   get closed(): boolean { return this.#closed && !this.#sending; }
@@ -118,6 +145,8 @@ export class BrowserInput {
   };
 
   private readonly release = (): undefined => {
+    this.#focused = false;
+    this.stopPolling();
     this.#keys.clear();
     this.releasePointer();
     if (!this.#closed) this.publish();
@@ -126,8 +155,36 @@ export class BrowserInput {
 
   private readonly onVisibility = (): undefined => {
     if (document.hidden) this.release();
+    else this.onFocus();
     return undefined;
   };
+
+  private readonly onFocus = (): undefined => {
+    if (this.#closed) return undefined;
+    this.#focused = document.activeElement === this.canvas && !document.hidden && document.hasFocus();
+    this.publish();
+    this.startPolling();
+    return undefined;
+  };
+
+  private readonly poll = (): undefined => {
+    this.#frame = undefined;
+    if (!this.#closed && this.#focused) { this.publish(); this.startPolling(); }
+    return undefined;
+  };
+
+  private startPolling(): undefined {
+    if (this.gamepads && this.#focused && this.#frame === undefined) {
+      this.#frame = requestAnimationFrame(this.poll);
+    }
+    return undefined;
+  }
+
+  private stopPolling(): undefined {
+    if (this.#frame !== undefined) cancelAnimationFrame(this.#frame);
+    this.#frame = undefined;
+    return undefined;
+  }
 
   private readonly onAbort = (): undefined => { this.detach(); return undefined; };
 
@@ -143,6 +200,8 @@ export class BrowserInput {
   private detach(): undefined {
     if (this.#closed) return undefined;
     this.#closed = true;
+    this.#focused = false;
+    this.stopPolling();
     this.#latest = undefined;
     this.#keys.clear();
     this.releasePointer();
@@ -153,13 +212,29 @@ export class BrowserInput {
     this.canvas.removeEventListener("pointerup", this.onPointerEnd);
     this.canvas.removeEventListener("pointercancel", this.onPointerEnd);
     this.canvas.removeEventListener("lostpointercapture", this.onPointerEnd);
+    this.canvas.removeEventListener("focus", this.onFocus);
     this.canvas.removeEventListener("blur", this.release);
+    window.removeEventListener("focus", this.onFocus);
     window.removeEventListener("blur", this.release);
     document.removeEventListener("visibilitychange", this.onVisibility);
     this.signal.removeEventListener("abort", this.onAbort);
     if (this.#addedTabIndex && this.canvas.getAttribute("tabindex") === "0") this.canvas.removeAttribute("tabindex");
     if (this.canvas.style.getPropertyValue("touch-action") === "none") {
       this.canvas.style.setProperty("touch-action", this.#touchAction, this.#touchPriority);
+    }
+    return undefined;
+  }
+
+  private readGamepad(): Gamepad | undefined {
+    if (!this.#focused || !this.gamepads) return undefined;
+    try {
+      for (const pad of navigator.getGamepads()) {
+        if (pad?.connected && pad.mapping === "standard" &&
+          (this.gamepadIndex === undefined || pad.index === this.gamepadIndex)) return pad;
+      }
+    } catch (error) {
+      this.gamepads = false;
+      this.failed(`Browser gamepads are unavailable: ${String(error)}`);
     }
     return undefined;
   }
@@ -175,9 +250,40 @@ export class BrowserInput {
     };
     [state.circleX, state.circleY] = stick("ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown");
     [state.cstickX, state.cstickY] = stick("KeyJ", "KeyL", "KeyI", "KeyK");
+    const pad = this.readGamepad();
+    if (pad) {
+      for (let index = 0; index < gamepadButtons.length; index++) {
+        if (pad.buttons[index]?.pressed) state.buttons |= 1 << gamepadButtons[index]!;
+      }
+      const analog = (offset: number): [number, number] => {
+        const x = pad.axes[offset] ?? 0;
+        const y = pad.axes[offset + 1] ?? 0;
+        const radius = Math.hypot(x, y);
+        if (radius <= this.gamepadDeadzone) return [0, 0];
+        // Native SDLAnalog's radial deadzone, bounded to the 3DS circle pad's travel.
+        const scale = Math.min(1, (radius - this.gamepadDeadzone) /
+          (1 - this.gamepadDeadzone)) * 32767 / radius;
+        return [Math.round(x * scale), Math.round(y * scale)];
+      };
+      const [x, y] = analog(0);
+      if (Math.hypot(x, y) > Math.hypot(state.circleX, state.circleY)) {
+        state.circleX = x; state.circleY = y;
+      }
+      const [cx, cy] = analog(2);
+      if (Math.hypot(cx, cy) > Math.hypot(state.cstickX, state.cstickY)) {
+        state.cstickX = cx; state.cstickY = cy;
+      }
+    }
     state.touchX = this.#touchX;
     state.touchY = this.#touchY;
     state.touchPressed = this.#pointer !== undefined;
+    const previous = this.#last;
+    if (previous && previous.buttons === state.buttons &&
+      previous.circleX === state.circleX && previous.circleY === state.circleY &&
+      previous.cstickX === state.cstickX && previous.cstickY === state.cstickY &&
+      previous.touchX === state.touchX && previous.touchY === state.touchY &&
+      previous.touchPressed === state.touchPressed) return this.#idle;
+    this.#last = state;
     const pending = this.queue(state);
     pending.catch(error => {
       if (!this.signal.aborted && !this.#closed) { this.detach(); this.failed(String(error)); }

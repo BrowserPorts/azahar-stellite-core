@@ -8,9 +8,11 @@ import { BrowserMicrophoneInput } from "./microphone-input";
 export { BrowserMicrophoneInput } from "./microphone-input";
 import { BrowserMotionInput } from "./motion-input";
 import { BrowserInput } from "./browser-input";
+import type { BrowserInputOptions } from "./browser-input";
 export { BrowserAudioOutput } from "./audio-output";
 export { BrowserMotionInput } from "./motion-input";
 export { BrowserInput } from "./browser-input";
+export type { BrowserInputOptions } from "./browser-input";
 export type { AudioOutputStatistics } from "./audio-output";
 
 export interface ClientOutput {
@@ -218,13 +220,14 @@ export class AzaharClient {
     this.#motionConnection = connection;
     return connection;
   }
-  /** Attach keyboard and touchscreen controls to the displayed canvas. */
-  connectInput(canvas: HTMLCanvasElement): BrowserInput {
+
+  /** Attach keyboard, touchscreen and standard gamepad controls to the displayed canvas. */
+  connectInput(canvas: HTMLCanvasElement, options: BrowserInputOptions = {}): BrowserInput {
     if (!this.#initialized || this.#disposed || this.#closing) throw new Error("Azahar is not ready for input");
     if (this.#input && !this.#input.closed) throw new Error("Browser input is already connected");
     const controller = new AbortController();
     const input = BrowserInput.create(canvas, state => this.input(state),
-      message => this.output.error(message), controller.signal);
+      message => this.output.error(message), controller.signal, options);
     this.#inputController = controller;
     this.#input = input;
     return input;
