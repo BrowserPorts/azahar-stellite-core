@@ -309,8 +309,26 @@ function lowerArmBody(block: ArmBlock, options: BlockOptions, region?: LowerRegi
   const constant = (value: number): Bytes => body.byte(0x41).i32(value);
   const metadata = (value: number): Bytes => options.constants
     ? options.constants.emit(body, BigInt(value), 32) : constant(value);
-  const get = (index: number): Bytes => body.byte(0x20).u32(index);
-  const set = (index: number): Bytes => body.byte(0x21).u32(index);
+  let lastSet: number | undefined;
+  let lastSetStart = 0;
+  let lastSetEnd = 0;
+  const get = (index: number): Bytes => {
+    if (lastSet === index && body.length === lastSetEnd) {
+      // Adjacent local writes and reads retain the same value with one instruction.
+      body.data[lastSetStart] = 0x22;
+      lastSet = undefined;
+      return body;
+    }
+    lastSet = undefined;
+    return body.byte(0x20).u32(index);
+  };
+  const set = (index: number): Bytes => {
+    lastSet = index;
+    lastSetStart = body.length;
+    body.byte(0x21).u32(index);
+    lastSetEnd = body.length;
+    return body;
+  };
   const simd = (opcode: number): Bytes => body.byte(0xfd).u32(opcode);
   const zeroVector = (): Bytes => simd(0x0c).append(new Uint8Array(16));
   const vector64 = (emit: () => unknown): undefined => {

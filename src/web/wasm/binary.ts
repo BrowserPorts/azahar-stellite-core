@@ -5,6 +5,8 @@ export class Bytes {
   #buffer = new Uint8Array(64);
   #length = 0;
 
+  get length(): number { return this.#length; }
+
   get data(): Uint8Array<ArrayBuffer> {
     return this.#buffer.subarray(0, this.#length);
   }
