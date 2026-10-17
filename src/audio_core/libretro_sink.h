@@ -8,6 +8,9 @@
 #include <string>
 #include <vector>
 #include "audio_core/sink.h"
+#ifdef __EMSCRIPTEN__
+#include "common/ring_buffer.h"
+#endif
 
 namespace AudioCore {
 
@@ -26,6 +29,14 @@ public:
     }
 
     void PushSamples(const void* data, std::size_t num_samples) override;
+
+#ifdef __EMSCRIPTEN__
+    // Browser callbacks belong to the emulation worker, including audio produced by the DSP thread.
+    void Flush();
+
+private:
+    Common::RingBuffer<s16, 0x4000, 2> pending_samples;
+#endif
 };
 
 std::vector<std::string> ListLibretroSinkDevices();

@@ -16,6 +16,7 @@
 #endif
 #include "libretro.h"
 
+#include "audio_core/dsp_interface.h"
 #include "audio_core/libretro_input.h"
 #include "audio_core/libretro_sink.h"
 #include "video_core/gpu.h"
@@ -211,6 +212,13 @@ static void UpdateSettings() {
     Core::System::GetInstance().ApplySettings();
 }
 
+#ifdef __EMSCRIPTEN__
+static void FlushBrowserAudio(Core::System& system) {
+    if (auto* sink = dynamic_cast<AudioCore::LibRetroSink*>(&system.DSP().GetSink()))
+        sink->Flush();
+}
+#endif
+
 /// Runs one frame for libretro and browser frontends.
 bool LibRetro::RunFrame() {
     if (!emu_instance->game_loaded) {
@@ -306,6 +314,9 @@ bool LibRetro::RunFrame() {
             return false;
         }
     }
+#ifdef __EMSCRIPTEN__
+    FlushBrowserAudio(Core::System::GetInstance());
+#endif
     return true;
 }
 
@@ -694,6 +705,9 @@ static bool DrainAsyncOperations(Core::System& system) {
     }
 
     emu_instance->emu_window->suppressPresentation = false;
+#ifdef __EMSCRIPTEN__
+    FlushBrowserAudio(system);
+#endif
     return true;
 }
 
