@@ -1,15 +1,34 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+/** Grow a contiguous buffer so section assembly can copy bytes in bulk. */
 export class Bytes {
-  readonly data: number[] = [];
+  #buffer = new Uint8Array(64);
+  #length = 0;
+
+  get data(): Uint8Array<ArrayBuffer> {
+    return this.#buffer.subarray(0, this.#length);
+  }
+
+  #grow(required: number): undefined {
+    if (required <= this.#buffer.length) return undefined;
+    const buffer = new Uint8Array(Math.max(required, this.#buffer.length * 2));
+    buffer.set(this.#buffer.subarray(0, this.#length));
+    this.#buffer = buffer;
+    return undefined;
+  }
 
   byte(value: number): this {
-    this.data.push(value & 255);
+    this.#grow(this.#length + 1);
+    this.#buffer[this.#length++] = value;
     return this;
   }
 
   append(values: Iterable<number>): this {
-    for (const value of values) this.byte(value);
+    if (values instanceof Uint8Array || Array.isArray(values)) {
+      this.#grow(this.#length + values.length);
+      this.#buffer.set(values, this.#length);
+      this.#length += values.length;
+    } else for (const value of values) this.byte(value);
     return this;
   }
 
@@ -63,7 +82,7 @@ export class Bytes {
   }
 
   finish(): Uint8Array<ArrayBuffer> {
-    return Uint8Array.from(this.data);
+    return this.#buffer.slice(0, this.#length);
   }
 }
 
