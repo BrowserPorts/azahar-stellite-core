@@ -1,7 +1,6 @@
 // Copyright 2019 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
-#if defined(HAVE_MF) || defined(HAVE_FFMPEG)
 
 #include <catch2/catch_test_macros.hpp>
 #include "core/core.h"
@@ -11,24 +10,15 @@
 #include "core/hle/kernel/shared_page.h"
 #include "core/memory.h"
 
+#include "audio_core/hle/aac_decoder.h"
 #include "audio_core/hle/decoder.h"
-#ifdef HAVE_MF
-#include "audio_core/hle/wmf_decoder.h"
-#elif HAVE_FFMPEG
-#include "audio_core/hle/ffmpeg_decoder.h"
-#endif
 #include "audio_fixures.h"
 
 TEST_CASE("DSP HLE Audio Decoder", "[audio_core]") {
     Core::System system;
     Memory::MemorySystem memory{system};
     SECTION("decoder should produce correct samples") {
-        auto decoder =
-#ifdef HAVE_MF
-            std::make_unique<AudioCore::HLE::WMFDecoder>(memory);
-#elif HAVE_FFMPEG
-            std::make_unique<AudioCore::HLE::FFMPEGDecoder>(memory);
-#endif
+        auto decoder = std::make_unique<AudioCore::HLE::AACDecoder>(memory);
         AudioCore::HLE::BinaryMessage request{};
 
         request.header.codec = AudioCore::HLE::DecoderCodec::DecodeAAC;
@@ -51,5 +41,3 @@ TEST_CASE("DSP HLE Audio Decoder", "[audio_core]") {
         request.decode_aac_request.src_addr = Memory::FCRAM_PADDR;
     }
 }
-
-#endif
