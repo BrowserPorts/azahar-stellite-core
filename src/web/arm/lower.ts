@@ -127,12 +127,45 @@ export function lowerArmRegion(blocks: readonly ArmBlock[], links: ReadonlyMap<n
     }
     if (register < 15) references.set(register, (references.get(register) ?? 0) + 1);
   }
-  // Keep frequently referenced registers in locals throughout the region.
-  const registers = [...references].filter(([, count]) => count > 1)
+  // Integer registers and FP words share the same four cached locals.
+  const fpReferences = new Map<number, number>();
+  const vectorWords = new Set<number>();
+  for (const block of blocks) for (const node of block.nodes) {
+    if (node.op === "A32GetVector" || node.op === "A32SetVector") {
+      const argument = node.args[0];
+      if (!argument || !("imm" in argument)) throw new JitError("compile", "Invalid ARM vector register reference");
+      const register = Number(BigInt(argument.imm));
+      if (!Number.isInteger(register) || register < 32 || register > 79) {
+        throw new JitError("compile", "Invalid ARM vector register index");
+      }
+      // Q registers use v128 memory accesses, so their overlapping words stay uncached.
+      if (register >= 64) for (let word = (register - 64) * 4; word < (register - 63) * 4; word++) {
+        vectorWords.add(word);
+      }
+      continue;
+    }
+    const wide = node.op === "A32GetExtendedRegister64" || node.op === "A32SetExtendedRegister64";
+    if (!wide && node.op !== "A32GetExtendedRegister32" && node.op !== "A32SetExtendedRegister32") continue;
+    const argument = node.args[0];
+    if (!argument || !("imm" in argument)) throw new JitError("compile", "Invalid ARM FP register reference");
+    const register = Number(BigInt(argument.imm));
+    if (!Number.isInteger(register) || register < (wide ? 32 : 0) || register > 63) {
+      throw new JitError("compile", "Invalid ARM FP register index");
+    }
+    const first = wide ? (register - 32) * 2 : register;
+    for (let word = first; word < first + (wide ? 2 : 1); word++) {
+      fpReferences.set(word, (fpReferences.get(word) ?? 0) + 1);
+    }
+  }
+  const registers = [
+    ...[...references].map(([register, count]) => [options.layout.registers + register * 4, count] as const),
+    ...[...fpReferences].filter(([word]) => !vectorWords.has(word))
+      .map(([word, count]) => [options.layout.extendedRegisters + word * 4, count] as const),
+  ].filter(([, count]) => count > 1)
     .sort(([a, countA], [b, countB]) => countB - countA || a - b).slice(0, 4);
   // Internal branches update the PC local; exits and callbacks publish it with the registers.
   const state = [options.layout.cpsr, options.layout.registers + 60,
-    ...registers.map(([register]) => options.layout.registers + register * 4)];
+    ...registers.map(([offset]) => offset)];
   const region: LowerRegion = { imports: [], links, state, locals: [], localSlots: new Map(), copies: 0,
     blocks: blocks.map(block => ({ ...block, sourceCell: blocks[0]!.sourceCell! })) };
   for (const link of links.values()) {
@@ -257,6 +290,12 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
   const loadState = (offset: number, wide = false): Bytes =>
     get(0).byte(wide ? 0x29 : 0x28).u32(wide ? 3 : 2).u32(offset);
   const load = (offset: number, wide = false): Bytes => {
+    // D registers alias two S words, either of which can live in a cached local.
+    if (wide && (cachedState?.has(offset) || cachedState?.has(offset + 4))) {
+      load(offset).byte(0xad);
+      load(offset + 4).byte(0xad).byte(0x42).signed(32n, 64).byte(0x86).byte(0x84);
+      return body;
+    }
     const cached = wide ? undefined : cachedState?.get(offset);
     return cached !== undefined ? get(cached) : loadState(offset, wide);
   };
@@ -264,7 +303,16 @@ function lowerArmBody(block: ArmBlock, options: LowerOptions, region?: LowerRegi
     get(0); value(); body.byte(wide ? 0x37 : 0x36).u32(wide ? 3 : 2).u32(offset);
     return undefined;
   };
+  let wideStateValue: number | undefined;
   const store = (offset: number, value: () => unknown, wide = false): undefined => {
+    if (wide && (cachedState?.has(offset) || cachedState?.has(offset + 4))) {
+      wideStateValue ??= reserve("i64");
+      // Evaluate once before publishing both aliased words.
+      value(); set(wideStateValue);
+      store(offset, () => get(wideStateValue!).byte(0xa7));
+      store(offset + 4, () => get(wideStateValue!).byte(0x42).signed(32n, 64).byte(0x88).byte(0xa7));
+      return undefined;
+    }
     const cached = wide ? undefined : cachedState?.get(offset);
     if (cached !== undefined) {
       value(); set(cached);
