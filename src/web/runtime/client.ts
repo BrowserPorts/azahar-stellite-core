@@ -7,8 +7,10 @@ import { BrowserAudioOutput } from "./audio-output";
 import { BrowserMicrophoneInput } from "./microphone-input";
 export { BrowserMicrophoneInput } from "./microphone-input";
 import { BrowserMotionInput } from "./motion-input";
+import { BrowserInput } from "./browser-input";
 export { BrowserAudioOutput } from "./audio-output";
 export { BrowserMotionInput } from "./motion-input";
+export { BrowserInput } from "./browser-input";
 export type { AudioOutputStatistics } from "./audio-output";
 
 export interface ClientOutput {
@@ -41,6 +43,8 @@ export class AzaharClient {
   #motion: BrowserMotionInput | undefined;
   #motionController: AbortController | undefined;
   #motionConnection: Promise<BrowserMotionInput> | undefined;
+  #input: BrowserInput | undefined;
+  #inputController: AbortController | undefined;
   #microphone: BrowserMicrophoneInput | undefined;
   #microphoneController: AbortController | undefined;
   #microphoneConnection: Promise<BrowserMicrophoneInput> | undefined;
@@ -214,6 +218,18 @@ export class AzaharClient {
     this.#motionConnection = connection;
     return connection;
   }
+  /** Attach keyboard and touchscreen controls to the displayed canvas. */
+  connectInput(canvas: HTMLCanvasElement): BrowserInput {
+    if (!this.#initialized || this.#disposed || this.#closing) throw new Error("Azahar is not ready for input");
+    if (this.#input && !this.#input.closed) throw new Error("Browser input is already connected");
+    const controller = new AbortController();
+    const input = BrowserInput.create(canvas, state => this.input(state),
+      message => this.output.error(message), controller.signal);
+    this.#inputController = controller;
+    this.#input = input;
+    return input;
+  }
+
   async pause(): Promise<undefined> {
     await this.request({ type: "pause" });
     await this.#audio?.suspend();
@@ -277,6 +293,7 @@ export class AzaharClient {
     if (this.#closing) return this.#closing;
     this.#motionController?.abort();
     this.#microphoneController?.abort();
+    this.#inputController?.abort();
     if (this.#disposed) return Promise.all([
       this.#audioClosing, this.#audioConnection?.catch(() => undefined),
       this.#motionConnection?.catch(() => undefined),
@@ -329,6 +346,7 @@ export class AzaharClient {
     this.#connectingAudio?.abort();
     this.#motionController?.abort();
     this.#microphoneController?.abort();
+    this.#inputController?.abort();
     this.#microphoneClosing = this.#microphone?.close();
     this.#microphoneClosing?.catch(error => this.output.error(String(error)));
     this.#audioClosing = this.#audio?.close();

@@ -1,0 +1,204 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+import type { InputState } from "./session";
+
+// QtConfig::default_buttons, translated to the native LibRetro button mask.
+const buttons: Readonly<Record<string, number>> = {
+  KeyA: 1 << 8, KeyS: 1 << 0, KeyZ: 1 << 9, KeyX: 1 << 1,
+  KeyT: 1 << 4, KeyG: 1 << 5, KeyF: 1 << 6, KeyH: 1 << 7,
+  KeyQ: 1 << 10, KeyW: 1 << 11, KeyM: 1 << 3, KeyN: 1 << 2,
+  Digit1: 1 << 12, Digit2: 1 << 13,
+};
+const analogKeys = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+  "KeyI", "KeyK", "KeyJ", "KeyL", "KeyD"]);
+const neutral = (): InputState => ({ buttons: 0, circleX: 0, circleY: 0,
+  cstickX: 0, cstickY: 0, touchX: 0, touchY: 0, touchPressed: false });
+
+/** Keyboard and pointer capture owned by one canvas and one AzaharClient. */
+export class BrowserInput {
+  #keys = new Set<string>();
+  #pointer: number | undefined;
+  #touchX = 0;
+  #touchY = 0;
+  #closed = false;
+  #sending = false;
+  #latest: InputState | undefined;
+  #idle: Promise<undefined> = Promise.resolve(undefined);
+  #closing: Promise<undefined> | undefined;
+  readonly #addedTabIndex: boolean;
+  readonly #touchAction: string;
+  readonly #touchPriority: string;
+
+  private constructor(private readonly canvas: HTMLCanvasElement,
+    private readonly send: (state: InputState) => Promise<undefined>,
+    private readonly failed: (message: string) => unknown, private readonly signal: AbortSignal) {
+    this.#addedTabIndex = !canvas.hasAttribute("tabindex");
+    if (this.#addedTabIndex) canvas.tabIndex = 0;
+    this.#touchAction = canvas.style.getPropertyValue("touch-action");
+    this.#touchPriority = canvas.style.getPropertyPriority("touch-action");
+    canvas.style.setProperty("touch-action", "none");
+    canvas.addEventListener("keydown", this.onKey);
+    canvas.addEventListener("keyup", this.onKey);
+    canvas.addEventListener("pointerdown", this.onPointerDown);
+    canvas.addEventListener("pointermove", this.onPointerMove);
+    canvas.addEventListener("pointerup", this.onPointerEnd);
+    canvas.addEventListener("pointercancel", this.onPointerEnd);
+    canvas.addEventListener("lostpointercapture", this.onPointerEnd);
+    canvas.addEventListener("blur", this.release);
+    window.addEventListener("blur", this.release);
+    document.addEventListener("visibilitychange", this.onVisibility);
+    signal.addEventListener("abort", this.onAbort, { once: true });
+    this.publish();
+  }
+
+  static create(canvas: HTMLCanvasElement, send: (state: InputState) => Promise<undefined>,
+    failed: (message: string) => unknown, signal: AbortSignal): BrowserInput {
+    if (!(canvas instanceof HTMLCanvasElement) || canvas.ownerDocument !== document) {
+      throw new Error("Browser input requires a canvas in this document");
+    }
+    if (signal.aborted) throw new Error("Input connection was cancelled");
+    return new BrowserInput(canvas, send, failed, signal);
+  }
+
+  get closed(): boolean { return this.#closed && !this.#sending; }
+
+  /** Apply the current browser input before manually advancing a frame. */
+  flush(): Promise<undefined> {
+    if (this.#closed) throw new Error("Browser input is closed");
+    return this.publish();
+  }
+
+  /** Detach listeners and release held controls before resolving. */
+  close(): Promise<undefined> {
+    if (this.#closing) return this.#closing;
+    this.detach();
+    this.#closing = this.signal.aborted ? this.#idle : this.queue(neutral());
+    return this.#closing;
+  }
+
+  private readonly onKey = (event: KeyboardEvent): undefined => {
+    if (this.#closed || document.hidden ||
+      (buttons[event.code] === undefined && !analogKeys.has(event.code))) return undefined;
+    if (event.type === "keydown") {
+      if (event.altKey || event.ctrlKey || event.metaKey) return undefined;
+      this.#keys.add(event.code);
+    } else this.#keys.delete(event.code);
+    event.preventDefault();
+    this.publish();
+    return undefined;
+  };
+
+  private readonly onPointerDown = (event: PointerEvent): undefined => {
+    if (this.#closed || document.hidden || !event.isPrimary || event.button !== 0 ||
+      this.#pointer !== undefined) return undefined;
+    this.canvas.focus({ preventScroll: true });
+    this.canvas.setPointerCapture(event.pointerId);
+    this.#pointer = event.pointerId;
+    return this.onPointerMove(event);
+  };
+
+  private readonly onPointerMove = (event: PointerEvent): undefined => {
+    if (this.#closed || this.#pointer !== event.pointerId) return undefined;
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return undefined;
+    const coordinate = (value: number): number =>
+      Math.round((Math.max(0, Math.min(1, value)) * 2 - 1) * 32767);
+    this.#touchX = coordinate((event.clientX - rect.left) / rect.width);
+    this.#touchY = coordinate((event.clientY - rect.top) / rect.height);
+    event.preventDefault();
+    this.publish();
+    return undefined;
+  };
+
+  private readonly onPointerEnd = (event: PointerEvent): undefined => {
+    if (this.#closed || this.#pointer !== event.pointerId) return undefined;
+    this.releasePointer();
+    this.publish();
+    return undefined;
+  };
+
+  private readonly release = (): undefined => {
+    this.#keys.clear();
+    this.releasePointer();
+    if (!this.#closed) this.publish();
+    return undefined;
+  };
+
+  private readonly onVisibility = (): undefined => {
+    if (document.hidden) this.release();
+    return undefined;
+  };
+
+  private readonly onAbort = (): undefined => { this.detach(); return undefined; };
+
+  private releasePointer(): undefined {
+    const pointer = this.#pointer;
+    this.#pointer = undefined;
+    if (pointer !== undefined && this.canvas.hasPointerCapture(pointer)) {
+      this.canvas.releasePointerCapture(pointer);
+    }
+    return undefined;
+  }
+
+  private detach(): undefined {
+    if (this.#closed) return undefined;
+    this.#closed = true;
+    this.#latest = undefined;
+    this.#keys.clear();
+    this.releasePointer();
+    this.canvas.removeEventListener("keydown", this.onKey);
+    this.canvas.removeEventListener("keyup", this.onKey);
+    this.canvas.removeEventListener("pointerdown", this.onPointerDown);
+    this.canvas.removeEventListener("pointermove", this.onPointerMove);
+    this.canvas.removeEventListener("pointerup", this.onPointerEnd);
+    this.canvas.removeEventListener("pointercancel", this.onPointerEnd);
+    this.canvas.removeEventListener("lostpointercapture", this.onPointerEnd);
+    this.canvas.removeEventListener("blur", this.release);
+    window.removeEventListener("blur", this.release);
+    document.removeEventListener("visibilitychange", this.onVisibility);
+    this.signal.removeEventListener("abort", this.onAbort);
+    if (this.#addedTabIndex && this.canvas.getAttribute("tabindex") === "0") this.canvas.removeAttribute("tabindex");
+    if (this.canvas.style.getPropertyValue("touch-action") === "none") {
+      this.canvas.style.setProperty("touch-action", this.#touchAction, this.#touchPriority);
+    }
+    return undefined;
+  }
+
+  private publish(): Promise<undefined> {
+    const state = neutral();
+    for (const code of this.#keys) state.buttons |= buttons[code] ?? 0;
+    const stick = (left: string, right: string, up: string, down: string): [number, number] => {
+      const x = Number(this.#keys.has(right)) - Number(this.#keys.has(left));
+      const y = Number(this.#keys.has(down)) - Number(this.#keys.has(up));
+      const scale = (this.#keys.has("KeyD") ? 0.5 : 1) * 32767 / Math.max(1, Math.hypot(x, y));
+      return [Math.round(x * scale), Math.round(y * scale)];
+    };
+    [state.circleX, state.circleY] = stick("ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown");
+    [state.cstickX, state.cstickY] = stick("KeyJ", "KeyL", "KeyI", "KeyK");
+    state.touchX = this.#touchX;
+    state.touchY = this.#touchY;
+    state.touchPressed = this.#pointer !== undefined;
+    const pending = this.queue(state);
+    pending.catch(error => {
+      if (!this.signal.aborted && !this.#closed) { this.detach(); this.failed(String(error)); }
+    });
+    return pending;
+  }
+
+  private queue(state: InputState): Promise<undefined> {
+    this.#latest = state;
+    if (this.#sending) return this.#idle;
+    this.#sending = true;
+    this.#idle = (async () => {
+      try {
+        while (this.#latest !== undefined && !this.signal.aborted) {
+          const next = this.#latest;
+          this.#latest = undefined;
+          await this.send(next);
+        }
+      } finally { this.#sending = false; }
+      return undefined;
+    })();
+    return this.#idle;
+  }
+}
