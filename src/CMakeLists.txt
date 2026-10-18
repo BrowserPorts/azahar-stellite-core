@@ -198,6 +198,10 @@ if (ENABLE_TESTS)
     add_subdirectory(tests)
 endif()
 
+if (EMSCRIPTEN AND (ENABLE_QT OR ENABLE_LIBRETRO))
+    add_subdirectory(web/gpu)
+endif()
+
 if (ENABLE_QT)
     add_subdirectory(citra_qt)
 endif()

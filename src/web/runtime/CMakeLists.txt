@@ -1,19 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-add_subdirectory(../gpu/compiler "${CMAKE_CURRENT_BINARY_DIR}/shader-compiler")
-
-add_executable(azahar_pica_shader_generator ../gpu/native-shaders.cpp)
-target_link_libraries(azahar_pica_shader_generator PRIVATE video_core)
-set_target_properties(azahar_pica_shader_generator PROPERTIES
-    OUTPUT_NAME "azahar-pica-shaders" SUFFIX ".mjs"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
-target_link_options(azahar_pica_shader_generator PRIVATE
-    --no-entry --emit-symbol-map -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createAzaharPicaShaders
-    -sENVIRONMENT=web,worker,node -sDYNAMIC_EXECUTION=0
-    -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=4194304 -sEXIT_RUNTIME=0
-    "-sEXPORTED_RUNTIME_METHODS=['HEAPU8','UTF8ToString']"
-    "-sEXPORTED_FUNCTIONS=['_malloc','_free']")
-
 add_executable(azahar_browser entry.cpp file-system.cpp)
 azahar_enable_dsp_runtime(azahar_browser)
 target_link_libraries(azahar_browser PRIVATE citra_libretro libretro Boost::boost fmt::fmt cryptopp emscripten_opfs json-headers)
@@ -39,11 +25,9 @@ set(CMAKE_ADD_CUSTOM_COMMAND_DEPENDS_EXPLICIT_ONLY ON)
 find_program(BUN_EXECUTABLE NAMES bun REQUIRED)
 set(WORKER_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-worker.js")
 set(CLIENT_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar.js")
-set(GPU_WORKER_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-gpu-worker.js")
 set(MICROPHONE_WORKLET_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-microphone-worklet.js")
 set(AUDIO_WORKLET_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-audio-worklet.js")
 file(GLOB RUNTIME_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.ts")
-file(GLOB GPU_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../gpu/*.ts")
 add_custom_command(OUTPUT "${WORKER_OUTPUT}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/worker.ts"
         --target browser --outfile "${WORKER_OUTPUT}"
@@ -51,11 +35,6 @@ add_custom_command(OUTPUT "${WORKER_OUTPUT}"
         ../arm/jit-host.ts ../arm/lower.ts ../arm/ir.ts
         ../pica/jit-host.ts ../pica/lower.ts ../pica/control-flow.ts ../pica/instruction.ts
         ../wasm/binary.ts ../protocol.ts
-    VERBATIM)
-add_custom_command(OUTPUT "${GPU_WORKER_OUTPUT}"
-    COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/../gpu/worker.ts"
-        --target browser --outfile "${GPU_WORKER_OUTPUT}"
-    DEPENDS ${GPU_SOURCES}
     VERBATIM)
 add_custom_command(OUTPUT "${CLIENT_OUTPUT}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/client.ts"
@@ -73,6 +52,5 @@ add_custom_command(OUTPUT "${MICROPHONE_WORKLET_OUTPUT}"
         --target browser --outfile "${MICROPHONE_WORKLET_OUTPUT}"
     DEPENDS microphone-worklet.ts microphone-ring.ts
     VERBATIM)
-add_custom_target(azahar_browser_runtime DEPENDS azahar_browser azahar_shader_compiler azahar_glslang
-    azahar_pica_shader_generator azahar_dsp_templates
-    "${WORKER_OUTPUT}" "${GPU_WORKER_OUTPUT}" "${CLIENT_OUTPUT}" "${AUDIO_WORKLET_OUTPUT}" "${MICROPHONE_WORKLET_OUTPUT}")
+add_custom_target(azahar_browser_runtime DEPENDS azahar_browser azahar_graphics_runtime azahar_dsp_templates
+    "${WORKER_OUTPUT}" "${CLIENT_OUTPUT}" "${AUDIO_WORKLET_OUTPUT}" "${MICROPHONE_WORKLET_OUTPUT}")

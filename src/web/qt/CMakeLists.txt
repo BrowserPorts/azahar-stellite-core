@@ -32,4 +32,4 @@ add_custom_command(OUTPUT "${QT_RUNTIME}"
         --target browser --outfile "${QT_RUNTIME}"
     DEPENDS runtime.ts ../runtime/storage-lock.ts
     VERBATIM)
-add_custom_target(azahar_qt_runtime DEPENDS citra_meta "${QT_RUNTIME}")
+add_custom_target(azahar_qt_runtime DEPENDS citra_meta azahar_graphics_runtime "${QT_RUNTIME}")
