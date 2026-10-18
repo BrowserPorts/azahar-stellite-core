@@ -6,6 +6,7 @@
   "scripts": {
     "check": "tsc --noEmit",
     "configure:runtime": "cmake -S ../.. --preset web-release",
+    "build:core": "cmake --build ../../build/web-core --target azahar_libretro",
     "build:runtime": "cmake --build ../../build/web-core --target azahar_browser_runtime",
     "build:core-fixtures": "cmake --build ../../build/web-core --target tests browser_core_fixtures",
     "test:core-fixtures": "ctest --test-dir ../../build/web-core --output-on-failure",
