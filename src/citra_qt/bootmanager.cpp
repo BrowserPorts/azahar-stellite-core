@@ -51,6 +51,16 @@ static Frontend::WindowSystemType GetWindowSystemType();
 EmuThread::EmuThread(Core::System& system_, Frontend::GraphicsContext& core_context)
     : system{system_}, core_context(core_context) {}
 
+#ifdef __EMSCRIPTEN__
+EmuThread::EmuThread(Core::System& system_, GRenderWindow& window, std::string path,
+                     GRenderWindow* secondary)
+    : EmuThread(system_, window) {
+    load_window = &window;
+    secondary_window = secondary;
+    game_path = std::move(path);
+}
+#endif
+
 EmuThread::~EmuThread() = default;
 
 static GMainWindow* GetMainWindow() {
@@ -67,6 +77,27 @@ static GMainWindow* GetMainWindow() {
 void EmuThread::run() {
     MicroProfileOnThreadCreate("EmuThread");
     const auto scope = core_context.Acquire();
+
+#ifdef __EMSCRIPTEN__
+    Core::System::ResultStatus load_result = Core::System::ResultStatus::ErrorUnknown;
+    if (Web::Qt::InitializeEmulation()) {
+        load_result = system.Load(*load_window, game_path, secondary_window);
+    } else {
+        system.SetStatus(load_result, Web::Qt::EmulationError().c_str());
+    }
+    if (load_result != Core::System::ResultStatus::Success) {
+        system.Shutdown();
+        Web::Qt::ShutdownEmulation();
+        emit LoadCompleted(load_result);
+        return;
+    }
+    emit LoadCompleted(load_result);
+    {
+        // The UI connects progress handlers and prepares the loading screen before resuming.
+        std::unique_lock lock{running_mutex};
+        running_cv.wait(lock, [this] { return running || stop_run; });
+    }
+#endif
 
     if (Settings::values.custom_textures && Settings::values.preload_textures) {
         emit LoadProgress(VideoCore::LoadCallbackStage::Preload, 0, 0, "");
@@ -110,12 +141,27 @@ void EmuThread::run() {
     // so that the DebugModeLeft signal can be emitted before the
     // next execution step.
     bool was_active = false;
+#ifdef __EMSCRIPTEN__
+    u64 presented_frame = system.GPU().Renderer().GetCurrentFrame();
+#endif
     while (!stop_run) {
         if (running) {
             if (!was_active)
                 emit DebugModeLeft();
 
-            const Core::System::ResultStatus result = system.RunLoop();
+            Core::System::ResultStatus result = system.RunLoop();
+#ifdef __EMSCRIPTEN__
+            if (result == Core::System::ResultStatus::Success &&
+                system.GPU().Renderer().GetCurrentFrame() != presented_frame) {
+                auto& renderer = system.GPU().Renderer();
+                presented_frame = renderer.GetCurrentFrame();
+                renderer.TryPresent(0, false);
+                if (!Web::Qt::YieldEmulation()) {
+                    result = Core::System::ResultStatus::ErrorUnknown;
+                    system.SetStatus(result, Web::Qt::EmulationError().c_str());
+                }
+            }
+#endif
             if (result == Core::System::ResultStatus::ShutdownRequested) {
                 // Notify frontend we shutdown
                 emit ErrorThrown(result, "");
@@ -148,6 +194,9 @@ void EmuThread::run() {
 
     // Shutdown the core emulation
     system.Shutdown();
+#ifdef __EMSCRIPTEN__
+    Web::Qt::ShutdownEmulation();
+#endif
 
 #if MICROPROFILE_ENABLED
     MicroProfileOnThreadExit();

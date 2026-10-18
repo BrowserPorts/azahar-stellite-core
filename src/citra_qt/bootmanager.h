@@ -31,6 +31,10 @@ class EmuThread final : public QThread {
 
 public:
     explicit EmuThread(Core::System& system_, Frontend::GraphicsContext& context);
+#ifdef __EMSCRIPTEN__
+    EmuThread(Core::System& system_, GRenderWindow& window, std::string path,
+              GRenderWindow* secondary);
+#endif
     ~EmuThread() override;
 
     /**
@@ -86,8 +90,16 @@ private:
 
     Core::System& system;
     Frontend::GraphicsContext& core_context;
+#ifdef __EMSCRIPTEN__
+    GRenderWindow* load_window = nullptr;
+    GRenderWindow* secondary_window = nullptr;
+    std::string game_path;
+#endif
 
 signals:
+#ifdef __EMSCRIPTEN__
+    void LoadCompleted(Core::System::ResultStatus result);
+#endif
     /**
      * Emitted when the CPU has halted execution
      *

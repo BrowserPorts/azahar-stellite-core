@@ -20,17 +20,31 @@ set_target_properties(citra_meta PROPERTIES
 target_link_options(citra_meta PRIVATE
     --emit-symbol-map
     "SHELL:--pre-js \"${CMAKE_CURRENT_SOURCE_DIR}/bootstrap.js\""
+    "SHELL:--js-library \"${CMAKE_CURRENT_SOURCE_DIR}/emulation.js\""
     "SHELL:--js-library \"${CMAKE_CURRENT_SOURCE_DIR}/../runtime/file-system.js\""
     -sENVIRONMENT=web,worker -sDYNAMIC_EXECUTION=0 -sPTHREAD_POOL_SIZE_STRICT=2)
 set_property(TARGET citra_meta APPEND PROPERTY LINK_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/bootstrap.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/emulation.js"
     "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/file-system.js")
 
 find_program(BUN_EXECUTABLE NAMES bun REQUIRED)
 set(QT_RUNTIME "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-qt-runtime.js")
+set(QT_EMULATION_RUNTIME "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-qt-emulation.js")
 add_custom_command(OUTPUT "${QT_RUNTIME}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/runtime.ts"
         --target browser --outfile "${QT_RUNTIME}"
     DEPENDS runtime.ts ../runtime/storage-lock.ts
     VERBATIM)
-add_custom_target(azahar_qt_runtime DEPENDS citra_meta azahar_graphics_runtime "${QT_RUNTIME}")
+file(GLOB QT_EMULATION_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/../arm/*.ts"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../pica/*.ts"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../gpu/*.ts"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../wasm/*.ts")
+add_custom_command(OUTPUT "${QT_EMULATION_RUNTIME}"
+    COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/emulation.ts"
+        --target browser --outfile "${QT_EMULATION_RUNTIME}"
+    DEPENDS emulation.ts ${QT_EMULATION_SOURCES}
+    VERBATIM)
+add_custom_target(azahar_qt_runtime DEPENDS citra_meta azahar_graphics_runtime
+    "${QT_RUNTIME}" "${QT_EMULATION_RUNTIME}")

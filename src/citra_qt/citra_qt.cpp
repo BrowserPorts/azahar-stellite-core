@@ -1380,8 +1380,27 @@ bool GMainWindow::LoadROM(const QString& filename) {
         system.InsertCartridge(UISettings::values.inserted_cartridge.GetValue());
     }
 
+#ifdef __EMSCRIPTEN__
+    auto result = Core::System::ResultStatus::ErrorUnknown;
+    QEventLoop loading;
+    qRegisterMetaType<Core::System::ResultStatus>("Core::System::ResultStatus");
+    emu_thread = std::make_unique<EmuThread>(
+        system, *render_window, filename.toStdString(), secondary_window);
+    connect(emu_thread.get(), &EmuThread::LoadCompleted, &loading,
+            [&](Core::System::ResultStatus status) {
+                result = status;
+                loading.quit();
+            }, Qt::QueuedConnection);
+    emu_thread->start();
+    loading.exec(QEventLoop::ExcludeUserInputEvents);
+    if (result != Core::System::ResultStatus::Success) {
+        emu_thread->wait();
+        emu_thread.reset();
+    }
+#else
     const Core::System::ResultStatus result{
         system.Load(*render_window, filename.toStdString(), secondary_window)};
+#endif
 
     if (result != Core::System::ResultStatus::Success) {
         QString invalid_format = tr("Invalid application format");
@@ -1450,6 +1469,12 @@ bool GMainWindow::LoadROM(const QString& filename) {
                    "application.<br/>Please make sure you are using the patches for "
                    "the right application, region and version."));
             break;
+#ifdef __EMSCRIPTEN__
+        case Core::System::ResultStatus::ErrorUnknown:
+            QMessageBox::critical(this, tr("Error while loading application"),
+                                  QString::fromStdString(system.GetStatusDetails()));
+            break;
+#endif
         default:
             QMessageBox::critical(
                 this, tr("Error while loading application"),
@@ -1579,9 +1604,13 @@ void GMainWindow::BootGame(const QString& filename) {
     }
 
     // Create and start the emulation thread
+#ifndef __EMSCRIPTEN__
     emu_thread = std::make_unique<EmuThread>(system, *render_window);
+#endif
     emit EmulationStarting(emu_thread.get());
+#ifndef __EMSCRIPTEN__
     emu_thread->start();
+#endif
 
     connect(render_window, &GRenderWindow::Closed, this, &GMainWindow::OnStopGame);
     connect(render_window, &GRenderWindow::MouseActivity, this, &GMainWindow::OnMouseActivity);

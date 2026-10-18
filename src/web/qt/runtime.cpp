@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <atomic>
+#include <cstdlib>
 #include <thread>
 #include <emscripten.h>
+#include <pthread.h>
 #include "common/file_util.h"
 #include "web/qt/runtime.h"
 
 extern "C" bool azahar_mount_storage();
+
+EM_JS_DEPS(qt_emulation, "azahar_qt_request_surface,$stringToNewUTF8");
 
 namespace {
 
@@ -36,6 +40,68 @@ EM_JS(void, UnregisterBrowserSurface, (EM_VAL surface), {
     if (Module["azaharQtCanvas"] === Emval.toValue(surface)) {
         delete Module["azaharQtCanvas"];
     }
+});
+
+EM_ASYNC_JS(bool, InitializeBrowserEmulation, (unsigned thread), {
+    try {
+        Module["azaharQtEmulationError"] = "";
+        const surface = new Promise((resolve, reject) => {
+            const receive = (event) => {
+                if (event.data.azaharQtSurface instanceof OffscreenCanvas) {
+                    self.removeEventListener("message", receive);
+                    resolve(event.data.azaharQtSurface);
+                } else if (typeof event.data.azaharQtSurfaceError === "string") {
+                    self.removeEventListener("message", receive);
+                    reject(new Error(event.data.azaharQtSurfaceError));
+                }
+            };
+            self.addEventListener("message", receive);
+            try {
+                if (!_azahar_qt_request_surface(thread)) {
+                    throw new Error("Qt emulation worker is unavailable");
+                }
+            } catch (error) {
+                self.removeEventListener("message", receive);
+                reject(error);
+            }
+        });
+        const [canvas, runtime] = await Promise.all([
+            surface,
+            import(new URL(locateFile("azahar-qt-emulation.js"), location.href).href)
+        ]);
+        await runtime.initializeEmulation(Module, canvas);
+        Module["azaharQtEmulation"] = runtime;
+        return true;
+    } catch (error) {
+        Module["azaharQtEmulationError"] = String(error);
+        err(String(error));
+        return false;
+    }
+});
+
+EM_ASYNC_JS(bool, YieldBrowserEmulation, (), {
+    try {
+        await Module["azaharQtEmulation"].yieldEmulation();
+        return true;
+    } catch (error) {
+        Module["azaharQtEmulationError"] = String(error);
+        err(String(error));
+        return false;
+    }
+});
+
+EM_ASYNC_JS(void, ShutdownBrowserEmulation, (), {
+    try {
+        await Module["azaharQtEmulation"]?.shutdownEmulation();
+    } catch (error) {
+        err(String(error));
+    } finally {
+        delete Module["azaharQtEmulation"];
+    }
+});
+
+EM_JS(char*, CopyBrowserEmulationError, (), {
+    return stringToNewUTF8(Module["azaharQtEmulationError"] || "Browser emulation failed");
 });
 
 EM_ASYNC_JS(int, WaitForStorage, (const void* result), {
@@ -84,6 +150,25 @@ void RegisterRenderSurface(const emscripten::val& canvas) {
 
 void UnregisterRenderSurface(const emscripten::val& canvas) {
     UnregisterBrowserSurface(canvas.as_handle());
+}
+
+bool InitializeEmulation() {
+    return InitializeBrowserEmulation(static_cast<unsigned>(pthread_self()));
+}
+
+bool YieldEmulation() {
+    return YieldBrowserEmulation();
+}
+
+void ShutdownEmulation() {
+    ShutdownBrowserEmulation();
+}
+
+std::string EmulationError() {
+    char* message = CopyBrowserEmulationError();
+    std::string result{message};
+    std::free(message);
+    return result;
 }
 
 } // namespace Web::Qt
