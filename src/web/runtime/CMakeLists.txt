@@ -39,9 +39,6 @@ set(CMAKE_ADD_CUSTOM_COMMAND_DEPENDS_EXPLICIT_ONLY ON)
 find_program(BUN_EXECUTABLE NAMES bun REQUIRED)
 set(WORKER_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-worker.js")
 set(CLIENT_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar.js")
-set(PLAYER_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-player.js")
-set(PLAYER_HTML "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar.html")
-set(PLAYER_STYLE "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar.css")
 set(GPU_WORKER_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-gpu-worker.js")
 set(MICROPHONE_WORKLET_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-microphone-worklet.js")
 set(AUDIO_WORKLET_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-audio-worklet.js")
@@ -71,16 +68,6 @@ add_custom_command(OUTPUT "${AUDIO_WORKLET_OUTPUT}"
         --target browser --outfile "${AUDIO_WORKLET_OUTPUT}"
     DEPENDS audio-worklet.ts audio-ring.ts
     VERBATIM)
-add_custom_command(OUTPUT "${PLAYER_OUTPUT}"
-    COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/player.ts"
-        --target browser --outfile "${PLAYER_OUTPUT}"
-    DEPENDS ${RUNTIME_SOURCES}
-    VERBATIM)
-add_custom_command(OUTPUT "${PLAYER_HTML}" "${PLAYER_STYLE}"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/azahar.html" "${PLAYER_HTML}"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/azahar.css" "${PLAYER_STYLE}"
-    DEPENDS azahar.html azahar.css
-    VERBATIM)
 add_custom_command(OUTPUT "${MICROPHONE_WORKLET_OUTPUT}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/microphone-worklet.ts"
         --target browser --outfile "${MICROPHONE_WORKLET_OUTPUT}"
@@ -88,5 +75,4 @@ add_custom_command(OUTPUT "${MICROPHONE_WORKLET_OUTPUT}"
     VERBATIM)
 add_custom_target(azahar_browser_runtime DEPENDS azahar_browser azahar_shader_compiler azahar_glslang
     azahar_pica_shader_generator azahar_dsp_templates
-    "${WORKER_OUTPUT}" "${GPU_WORKER_OUTPUT}" "${CLIENT_OUTPUT}" "${AUDIO_WORKLET_OUTPUT}" "${MICROPHONE_WORKLET_OUTPUT}"
-    "${PLAYER_OUTPUT}" "${PLAYER_HTML}" "${PLAYER_STYLE}")
+    "${WORKER_OUTPUT}" "${GPU_WORKER_OUTPUT}" "${CLIENT_OUTPUT}" "${AUDIO_WORKLET_OUTPUT}" "${MICROPHONE_WORKLET_OUTPUT}")
