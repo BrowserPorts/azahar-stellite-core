@@ -24,6 +24,29 @@
         "CITRA_WARNINGS_AS_ERRORS": false,
         "BUILD_TESTING": false
       }
+    },
+    {
+      "name": "web-qt",
+      "displayName": "Azahar Web Qt frontend",
+      "description": "Set AZAHAR_QT_SDK to the Qt Wasm SDK built with the pinned Qt Multimedia fork",
+      "inherits": "web-release",
+      "toolchainFile": "$env{AZAHAR_QT_SDK}/lib/cmake/Qt6/qt.toolchain.cmake",
+      "binaryDir": "${sourceDir}/build/web-qt",
+      "cacheVariables": {
+        "ENABLE_LIBRETRO": false,
+        "ENABLE_QT": true,
+        "USE_SYSTEM_QT": true,
+        "ENABLE_QT_TRANSLATION": false,
+        "ENABLE_SDL2": false,
+        "ENABLE_OPENAL": false,
+        "ENABLE_CUBEB": false,
+        "ENABLE_WEB_SERVICE": false,
+        "ENABLE_SCRIPTING": false,
+        "ENABLE_GDBSTUB": false,
+        "ENABLE_ROOM": false,
+        "ENABLE_ROOM_STANDALONE": false,
+        "ENABLE_LIBUSB": false
+      }
     }
   ],
   "buildPresets": [
@@ -36,6 +59,11 @@
       "name": "web-libretro",
       "configurePreset": "web-release",
       "targets": ["azahar_libretro"]
+    },
+    {
+      "name": "web-qt",
+      "configurePreset": "web-qt",
+      "targets": ["azahar_qt_runtime"]
     },
     {
       "name": "web-native-fixtures",
