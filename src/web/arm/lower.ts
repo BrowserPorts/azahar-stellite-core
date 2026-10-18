@@ -279,8 +279,46 @@ function lowerArmBody(block: ArmBlock, options: BlockOptions, region?: LowerRegi
     slots.push(start);
     return parameterCount + start;
   };
-  // Reentered blocks assign IR values and scratch locals before reading them.
-  const nodeLocals = block.nodes.map(node => reserve(wasmType(node.type)));
+  const nodeLocals = (() => {
+    // Baseline blocks keep their cheap allocation; hot regions reuse dead values.
+    if (!region) return block.nodes.map(node => reserve(wasmType(node.type)));
+    // Projection lowering can read a producer's operands after its result was computed.
+    const lastUses = Uint32Array.from(block.nodes, (_, index) => index);
+    const use = (argument: Argument, index: number): undefined => {
+      if ("ref" in argument) {
+        if (!Number.isInteger(argument.ref) || argument.ref < 0 || argument.ref >= index) {
+          throw new JitError("compile", "Invalid ARM IR reference");
+        }
+        lastUses[argument.ref] = Math.max(lastUses[argument.ref]!, index);
+      }
+      return undefined;
+    };
+    block.nodes.forEach((node, index) => {
+      node.args.forEach(argument => use(argument, index));
+      if (["GetCarryFromOp", "GetOverflowFromOp", "GetNZCVFromOp", "GetGEFromOp"].includes(node.op) ||
+        node.op === "VectorTableLookup64") {
+        const producer = node.args[node.op === "VectorTableLookup64" ? 1 : 0];
+        if (producer && "ref" in producer) {
+          block.nodes[producer.ref]!.args.forEach(argument => use(argument, index));
+        }
+      }
+    });
+    const released: { type: ValueType; slot: number }[][] = [];
+    const reusable = new Map<ValueType, number[]>();
+    return block.nodes.map((node, index) => {
+      // A lowering may read its operands more than once, so release them after the node.
+      for (const { type, slot } of released[index - 1] ?? []) {
+        let slots = reusable.get(type);
+        if (!slots) { slots = []; reusable.set(type, slots); }
+        slots.push(slot);
+      }
+      if (node.type === "Void") return undefined;
+      const type = wasmType(node.type);
+      const slot = reusable.get(type)?.pop() ?? reserve(type);
+      (released[lastUses[index]!] ??= []).push({ type, slot });
+      return slot;
+    });
+  })();
   const carryLocals = new Map<number, number>();
   const wideLocals = new Map<number, number>();
   const narrowArithmetic = new Set<number>();
