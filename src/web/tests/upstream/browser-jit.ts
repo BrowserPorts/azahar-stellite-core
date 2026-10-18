@@ -25,7 +25,7 @@ const firmware = firmwareDirectory ? await Promise.all(["dspfirm.cdc", "dspaudio
   if (!response.ok) throw new Error(`Could not load DSP firmware ${name}`);
   return { name, data: new Uint8Array(await response.arrayBuffer()) };
 })) : [];
-if (storage !== null && storage !== "setup" && storage !== "resume" && storage !== "errors") {
+if (storage !== null && !["setup", "resume", "errors", "unlink"].includes(storage)) {
   throw new Error("Invalid OPFS fixture mode");
 }
 const fixtureUrl = new URL(dsp && !core ? "./teakra_reference_fixtures.mjs" : storage ? `./wasmfs_opfs_${storage}.mjs` : core ? "./tests.mjs" : fuzz ? "./dynarmic_arm_fuzz_fixtures.mjs" : recordings ? "./dynarmic_vfp_recordings.mjs" :

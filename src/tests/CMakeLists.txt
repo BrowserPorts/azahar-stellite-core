@@ -115,10 +115,12 @@ if(EMSCRIPTEN)
         "${TEST_WEB_DIRECTORY}/browser-jit.js" "${TEST_WEB_DIRECTORY}/browser-worker.js")
 
     # Compile the SDK's original OPFS cases, including its cross-session persistence checks.
-    foreach(mode IN ITEMS setup resume errors)
+    foreach(mode IN ITEMS setup resume errors unlink)
         set(opfs_source "${PROJECT_SOURCE_DIR}/externals/emscripten/test/wasmfs/wasmfs_opfs.c")
         if(mode STREQUAL "errors")
             set(opfs_source "${PROJECT_SOURCE_DIR}/externals/emscripten/test/wasmfs/wasmfs_opfs_errors.c")
+        elseif(mode STREQUAL "unlink")
+            set(opfs_source "${PROJECT_SOURCE_DIR}/externals/emscripten/test/other/test_unlink.cpp")
         endif()
         add_executable(wasmfs_opfs_${mode} "${opfs_source}")
         target_link_libraries(wasmfs_opfs_${mode} PRIVATE emscripten_opfs)
@@ -129,6 +131,10 @@ if(EMSCRIPTEN)
             set(opfs_post_js "${PROJECT_SOURCE_DIR}/externals/emscripten/test/wasmfs/wasmfs_opfs_errors_post.js")
             target_link_options(wasmfs_opfs_${mode} PRIVATE "SHELL:--post-js \"${opfs_post_js}\"")
             set_property(TARGET wasmfs_opfs_${mode} APPEND PROPERTY LINK_DEPENDS "${opfs_post_js}")
+        elseif(mode STREQUAL "unlink")
+            target_sources(wasmfs_opfs_${mode} PRIVATE
+                "${PROJECT_SOURCE_DIR}/src/web/tests/upstream/opfs-main.cpp")
+            target_compile_definitions(wasmfs_opfs_${mode} PRIVATE main=upstream_main WASMFS)
         else()
             string(TOUPPER "${mode}" mode_define)
             target_compile_definitions(wasmfs_opfs_${mode} PRIVATE WASMFS_${mode_define})
@@ -139,7 +145,7 @@ if(EMSCRIPTEN)
             -sPTHREAD_POOL_SIZE=1 -sJSPI=1 -sEXIT_RUNTIME=1 -sDYNAMIC_EXECUTION=0)
         set_target_properties(wasmfs_opfs_${mode} PROPERTIES SUFFIX ".mjs")
     endforeach()
-    add_custom_target(browser_storage_fixtures DEPENDS wasmfs_opfs_setup wasmfs_opfs_resume wasmfs_opfs_errors
+    add_custom_target(browser_storage_fixtures DEPENDS wasmfs_opfs_setup wasmfs_opfs_resume wasmfs_opfs_errors wasmfs_opfs_unlink
         "${TEST_WEB_DIRECTORY}/browser-jit.js" "${TEST_WEB_DIRECTORY}/browser-worker.js")
 
     # Build the SDK's original browser audio cases with their native inputs and assertions.

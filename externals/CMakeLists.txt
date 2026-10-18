@@ -30,7 +30,10 @@ if(EMSCRIPTEN)
     endif()
     set(OPFS_LIBRARY "${CMAKE_CURRENT_SOURCE_DIR}/emscripten/src/lib/libwasmfs_opfs.js")
     set(SOCKET_EVENTS_LIBRARY "${CMAKE_CURRENT_SOURCE_DIR}/emscripten/src/lib/libsocket_events.js")
-    add_library(emscripten_opfs INTERFACE)
+    set(OPFS_NATIVE "${CMAKE_CURRENT_SOURCE_DIR}/emscripten/system/lib/wasmfs")
+    add_library(emscripten_opfs STATIC "${OPFS_NATIVE}/backends/opfs_backend.cpp")
+    target_include_directories(emscripten_opfs PRIVATE "${OPFS_NATIVE}")
+    target_compile_options(emscripten_opfs PRIVATE -fno-exceptions)
     target_link_options(emscripten_opfs INTERFACE -sWASMFS=1
         "SHELL:--js-library \"${OPFS_LIBRARY}\""
         "SHELL:--js-library \"${SOCKET_EVENTS_LIBRARY}\"")
