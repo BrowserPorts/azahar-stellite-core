@@ -29,9 +29,13 @@ if(EMSCRIPTEN)
         message(FATAL_ERROR "The pinned OPFS library requires Emscripten ${opfs_emscripten_version}")
     endif()
     set(OPFS_LIBRARY "${CMAKE_CURRENT_SOURCE_DIR}/emscripten/src/lib/libwasmfs_opfs.js")
+    set(SOCKET_EVENTS_LIBRARY "${CMAKE_CURRENT_SOURCE_DIR}/emscripten/src/lib/libsocket_events.js")
     add_library(emscripten_opfs INTERFACE)
-    target_link_options(emscripten_opfs INTERFACE -sWASMFS=1 "SHELL:--js-library \"${OPFS_LIBRARY}\"")
-    set_property(TARGET emscripten_opfs PROPERTY INTERFACE_LINK_DEPENDS "${OPFS_LIBRARY}")
+    target_link_options(emscripten_opfs INTERFACE -sWASMFS=1
+        "SHELL:--js-library \"${OPFS_LIBRARY}\""
+        "SHELL:--js-library \"${SOCKET_EVENTS_LIBRARY}\"")
+    set_property(TARGET emscripten_opfs PROPERTY INTERFACE_LINK_DEPENDS
+        "${OPFS_LIBRARY}" "${SOCKET_EVENTS_LIBRARY}")
 endif()
 
 # Boost
