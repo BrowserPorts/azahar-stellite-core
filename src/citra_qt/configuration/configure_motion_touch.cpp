@@ -3,6 +3,7 @@
 // Refer to the license.txt file included.
 
 #include <array>
+#include <string_view>
 #include <QCloseEvent>
 #include <QLabel>
 #include <QMessageBox>
@@ -91,9 +92,19 @@ ConfigureMotionTouch::ConfigureMotionTouch(QWidget* parent)
       timeout_timer(std::make_unique<QTimer>()), poll_timer(std::make_unique<QTimer>()) {
     ui->setupUi(this);
     for (const auto& [provider, name] : MotionProviders) {
+#ifdef __EMSCRIPTEN__
+        if (std::string_view{provider} == "cemuhookudp" || std::string_view{provider} == "sdl") {
+            continue;
+        }
+#endif
         ui->motion_provider->addItem(tr(name), QString::fromUtf8(provider));
     }
     for (const auto& [provider, name] : TouchProviders) {
+#ifdef __EMSCRIPTEN__
+        if (std::string_view{provider} == "cemuhookudp") {
+            continue;
+        }
+#endif
         ui->touch_provider->addItem(tr(name), QString::fromUtf8(provider));
     }
 
@@ -132,10 +143,10 @@ void ConfigureMotionTouch::SetConfiguration() {
     const std::string motion_engine = motion_param.Get("engine", "motion_emu");
     const std::string touch_engine = touch_param.Get("engine", "emu_window");
 
-    ui->motion_provider->setCurrentIndex(
-        ui->motion_provider->findData(QString::fromStdString(motion_engine)));
-    ui->touch_provider->setCurrentIndex(
-        ui->touch_provider->findData(QString::fromStdString(touch_engine)));
+    const int motion_index = ui->motion_provider->findData(QString::fromStdString(motion_engine));
+    const int touch_index = ui->touch_provider->findData(QString::fromStdString(touch_engine));
+    ui->motion_provider->setCurrentIndex(motion_index < 0 ? 0 : motion_index);
+    ui->touch_provider->setCurrentIndex(touch_index < 0 ? 0 : touch_index);
     ui->touch_from_button_checkbox->setChecked(
         Settings::values.current_input_profile.use_touch_from_button);
     ui->touchpad_checkbox->setChecked(Settings::values.current_input_profile.use_touchpad);
