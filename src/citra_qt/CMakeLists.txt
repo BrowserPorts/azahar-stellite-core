@@ -109,8 +109,6 @@ add_library(citra_qt STATIC EXCLUDE_FROM_ALL
     debugger/graphics/graphics_surface.h
     debugger/graphics/graphics_tracing.cpp
     debugger/graphics/graphics_tracing.h
-    debugger/graphics/graphics_vertex_shader.cpp
-    debugger/graphics/graphics_vertex_shader.h
     debugger/ipc/record_dialog.cpp
     debugger/ipc/record_dialog.h
     debugger/ipc/record_dialog.ui
@@ -284,6 +282,12 @@ target_sources(citra_qt
         ${LANGUAGES}
         ${THEMES}
 )
+
+if (NOT EMSCRIPTEN)
+    target_sources(citra_qt PRIVATE
+        debugger/graphics/graphics_vertex_shader.cpp
+        debugger/graphics/graphics_vertex_shader.h)
+endif()
 
 if (WIN32)
     target_link_libraries(citra_qt PRIVATE Qt6::EntryPointImplementation)

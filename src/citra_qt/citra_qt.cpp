@@ -55,7 +55,9 @@
 #include "citra_qt/debugger/graphics/graphics_cmdlists.h"
 #include "citra_qt/debugger/graphics/graphics_surface.h"
 #include "citra_qt/debugger/graphics/graphics_tracing.h"
+#ifndef __EMSCRIPTEN__
 #include "citra_qt/debugger/graphics/graphics_vertex_shader.h"
+#endif
 #include "citra_qt/debugger/ipc/recorder.h"
 #include "citra_qt/debugger/lle_service_modules.h"
 #if MICROPROFILE_ENABLED
@@ -750,11 +752,13 @@ void GMainWindow::InitializeDebugWidgets() {
         graphicsBreakpointsWidget->hide();
         debug_menu->addAction(graphicsBreakpointsWidget->toggleViewAction());
 
+#ifndef __EMSCRIPTEN__
         graphicsVertexShaderWidget =
             new GraphicsVertexShaderWidget(system, Pica::g_debug_context, this);
         addDockWidget(Qt::RightDockWidgetArea, graphicsVertexShaderWidget);
         graphicsVertexShaderWidget->hide();
         debug_menu->addAction(graphicsVertexShaderWidget->toggleViewAction());
+#endif
 
         graphicsTracingWidget = new GraphicsTracingWidget(system, Pica::g_debug_context, this);
         addDockWidget(Qt::RightDockWidgetArea, graphicsTracingWidget);
