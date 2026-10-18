@@ -1,7 +1,7 @@
 # Repository instructions
 
 - The standalone web player is for agent use only. Keep its source and assets in ignored local build directories; do not commit them or add them to shared build or package targets.
-- Preserve the independent Stellite core build when porting the upstream Qt frontend. The standard web build must continue to produce the core archive and runtime without requiring Qt; frontend validation uses a separate build configuration.
+- Keep Stellite core support in emulator builds while porting the upstream Qt frontend. Preserve the independent Qt-free core archive and runtime as supported outputs; the Qt frontend uses a separate build configuration and must not replace or remove those outputs.
 - Do not write new smoke tests or unit tests
 - For validation, port and run Azahar's existing native tests, including the native fixtures in its pinned dependencies
 - Preserve upstream test cases and expected results when adapting their build or execution harness for Wasm
