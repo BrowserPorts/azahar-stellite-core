@@ -1,4 +1,9 @@
-add_executable(citra_meta
+if (EMSCRIPTEN)
+    qt_add_executable(citra_meta MANUAL_FINALIZATION)
+else()
+    add_executable(citra_meta)
+endif()
+target_sources(citra_meta PRIVATE
     citra.rc
     main.cpp
     precompiled_headers.h
@@ -104,6 +109,9 @@ if (ENABLE_QT AND MSVC)
     qt_bundle_target_in_place(citra_meta)
 endif()
 
-if(UNIX AND NOT APPLE)
+if (EMSCRIPTEN)
+    add_subdirectory("${PROJECT_SOURCE_DIR}/src/web/qt" "${CMAKE_CURRENT_BINARY_DIR}/web")
+    qt_finalize_executable(citra_meta)
+elseif(UNIX AND NOT APPLE)
     install(TARGETS citra_meta RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}/bin")
 endif()

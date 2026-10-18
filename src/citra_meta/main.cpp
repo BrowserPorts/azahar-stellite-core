@@ -7,6 +7,9 @@
 #include "citra_cli/citra_cli.h"
 #include "common/detached_tasks.h"
 #include "common/scope_exit.h"
+#ifdef __EMSCRIPTEN__
+#include "web/qt/runtime.h"
+#endif
 
 #if !defined(ENABLE_QT)
 #error "citra_meta is somehow building with no frontend. This should be impossible!"
@@ -51,6 +54,12 @@ static bool CheckAndReportSSE42() {
 #endif
 
 int main(int argc, char* argv[]) {
+#ifdef __EMSCRIPTEN__
+    if (!Web::Qt::InitializeFrontend()) {
+        return 1;
+    }
+    SCOPE_EXIT({ Web::Qt::ShutdownFrontend(); });
+#endif
     Common::DetachedTasks detached_tasks;
     SCOPE_EXIT({ detached_tasks.WaitForAllTasks(); });
 
