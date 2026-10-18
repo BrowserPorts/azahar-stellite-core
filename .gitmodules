@@ -119,3 +119,7 @@
     path = externals/qtmultimedia
     url = https://origin.cursor.com/mov/qtmultimedia-stellite-wasm.git
     branch = main
+[submodule "qtbase"]
+    path = externals/qtbase
+    url = https://origin.cursor.com/mov/qtbase-stellite-wasm.git
+    branch = main
