@@ -18,6 +18,7 @@ set_target_properties(citra_meta PROPERTIES
     QT_WASM_PTHREAD_POOL_SIZE 16
     QT_WASM_EXTRA_EXPORTED_METHODS "HEAPU8,HEAPU32,HEAP16,UTF8ToString,stringToNewUTF8")
 target_link_options(citra_meta PRIVATE
+    --emit-symbol-map
     "SHELL:--pre-js \"${CMAKE_CURRENT_SOURCE_DIR}/bootstrap.js\""
     "SHELL:--js-library \"${CMAKE_CURRENT_SOURCE_DIR}/../runtime/file-system.js\""
     -sENVIRONMENT=web,worker -sDYNAMIC_EXECUTION=0 -sPTHREAD_POOL_SIZE_STRICT=2)
