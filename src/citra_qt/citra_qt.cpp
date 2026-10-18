@@ -3797,11 +3797,19 @@ void GMainWindow::UpdateVolumeUI() {
 }
 
 void GMainWindow::UpdateAPIIndicator(bool update) {
-    static std::array graphics_apis = {QStringLiteral("SOFTWARE"), QStringLiteral("OPENGL"),
-                                       QStringLiteral("VULKAN")};
+    static const std::array graphics_apis = {
+        QStringLiteral("SOFTWARE"), QStringLiteral("OPENGL"), QStringLiteral("VULKAN"),
+#ifdef __EMSCRIPTEN__
+        QStringLiteral("WEBGPU"),
+#endif
+    };
 
-    static std::array graphics_api_colors = {QStringLiteral("#3ae400"), QStringLiteral("#00ccdd"),
-                                             QStringLiteral("#91242a")};
+    static const std::array graphics_api_colors = {
+        QStringLiteral("#3ae400"), QStringLiteral("#00ccdd"), QStringLiteral("#91242a"),
+#ifdef __EMSCRIPTEN__
+        QStringLiteral("#0078d4"),
+#endif
+    };
 
     u32 api_index = static_cast<u32>(Settings::values.graphics_api.GetValue());
     if (update) {

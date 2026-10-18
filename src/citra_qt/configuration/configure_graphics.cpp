@@ -17,6 +17,9 @@ ConfigureGraphics::ConfigureGraphics(QString gl_renderer, std::span<const QStrin
     : QWidget(parent), ui(std::make_unique<Ui::ConfigureGraphics>()) {
     ui->setupUi(this);
 
+#ifdef __EMSCRIPTEN__
+    ui->graphics_api_combo->addItem(QStringLiteral("WebGPU"));
+#endif
     SetupPerGameUI();
 
     ui->graphics_api_combo->setEnabled(!is_powered_on);
