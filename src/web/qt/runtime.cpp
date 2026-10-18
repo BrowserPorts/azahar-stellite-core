@@ -10,6 +10,8 @@ extern "C" bool azahar_mount_storage();
 
 namespace {
 
+using emscripten::EM_VAL;
+
 EM_ASYNC_JS(bool, InitializeBrowserFrontend, (), {
     try {
         const runtime = await import(new URL(locateFile("azahar-qt-runtime.js"), location.href).href);
@@ -24,6 +26,16 @@ EM_ASYNC_JS(bool, InitializeBrowserFrontend, (), {
 
 EM_JS(void, ReleaseBrowserFrontend, (), {
     Module["azaharQtRuntime"]?.shutdownFrontend();
+});
+
+EM_JS(void, RegisterBrowserSurface, (EM_VAL surface), {
+    Module["azaharQtCanvas"] = Emval.toValue(surface);
+});
+
+EM_JS(void, UnregisterBrowserSurface, (EM_VAL surface), {
+    if (Module["azaharQtCanvas"] === Emval.toValue(surface)) {
+        delete Module["azaharQtCanvas"];
+    }
 });
 
 EM_ASYNC_JS(int, WaitForStorage, (const void* result), {
@@ -64,6 +76,14 @@ bool InitializeFrontend() {
 
 void ShutdownFrontend() {
     ReleaseBrowserFrontend();
+}
+
+void RegisterRenderSurface(const emscripten::val& canvas) {
+    RegisterBrowserSurface(canvas.as_handle());
+}
+
+void UnregisterRenderSurface(const emscripten::val& canvas) {
+    UnregisterBrowserSurface(canvas.as_handle());
 }
 
 } // namespace Web::Qt

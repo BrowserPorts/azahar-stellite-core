@@ -200,6 +200,9 @@ private:
 #ifdef ENABLE_SOFTWARE_RENDERER
     void InitializeSoftware();
 #endif
+#ifdef __EMSCRIPTEN__
+    void InitializeWebGPU();
+#endif
 
     QWidget* child_widget = nullptr;
 

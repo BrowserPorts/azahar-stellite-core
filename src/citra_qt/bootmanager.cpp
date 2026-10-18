@@ -28,6 +28,10 @@
 #include "video_core/renderer_base.h"
 #include "video_core/renderer_software/renderer_software.h"
 
+#ifdef __EMSCRIPTEN__
+#include "web/qt/runtime.h"
+#endif
+
 #ifdef ENABLE_OPENGL
 // clang-format off
 #include <glad/glad.h> // Must be included first
@@ -270,6 +274,40 @@ public:
 
     virtual ~RenderWidget() = default;
 };
+
+#ifdef __EMSCRIPTEN__
+class WebGPURenderWidget final : public RenderWidget {
+public:
+    WebGPURenderWidget(GRenderWindow* parent, bool secondary)
+        : RenderWidget(parent),
+          canvas{emscripten::val::global("document").call<emscripten::val>(
+              "createElement", std::string{"canvas"})},
+          secondary{secondary} {
+        canvas.set("width", Core::kScreenTopWidth);
+        canvas.set("height", Core::kScreenTopHeight + Core::kScreenBottomHeight);
+        auto* window = QWindow::fromWinId(reinterpret_cast<WId>(&canvas));
+        container = QWidget::createWindowContainer(window, this);
+        auto* contents = new QHBoxLayout(this);
+        contents->setContentsMargins(0, 0, 0, 0);
+        contents->addWidget(container);
+        if (!secondary) {
+            Web::Qt::RegisterRenderSurface(canvas);
+        }
+    }
+
+    ~WebGPURenderWidget() override {
+        delete container;
+        if (!secondary) {
+            Web::Qt::UnregisterRenderSurface(canvas);
+        }
+    }
+
+private:
+    emscripten::val canvas;
+    QWidget* container;
+    bool secondary;
+};
+#endif
 
 #ifdef ENABLE_OPENGL
 class OpenGLRenderWidget : public RenderWidget {
@@ -654,6 +692,11 @@ bool GRenderWindow::InitRenderTarget() {
 
     const auto graphics_api = Settings::GetWorkingGraphicsAPI();
     switch (graphics_api) {
+#ifdef __EMSCRIPTEN__
+    case Settings::GraphicsAPI::WebGPU:
+        InitializeWebGPU();
+        break;
+#endif
 #ifdef ENABLE_SOFTWARE_RENDERER
     case Settings::GraphicsAPI::Software:
         InitializeSoftware();
@@ -675,7 +718,9 @@ bool GRenderWindow::InitRenderTarget() {
         LOG_CRITICAL(Frontend,
                      "Unknown or unsupported graphics API {}, falling back to available default",
                      graphics_api);
-#ifdef ENABLE_OPENGL
+#ifdef __EMSCRIPTEN__
+        InitializeWebGPU();
+#elif defined(ENABLE_OPENGL)
         if (!InitializeOpenGL() || !LoadOpenGL()) {
             return false;
         }
@@ -821,6 +866,13 @@ void GRenderWindow::InitializeVulkan() {
 #ifdef ENABLE_SOFTWARE_RENDERER
 void GRenderWindow::InitializeSoftware() {
     child_widget = new SoftwareRenderWidget(this, system);
+    main_context = std::make_unique<DummyContext>();
+}
+#endif
+
+#ifdef __EMSCRIPTEN__
+void GRenderWindow::InitializeWebGPU() {
+    child_widget = new WebGPURenderWidget(this, is_secondary);
     main_context = std::make_unique<DummyContext>();
 }
 #endif
