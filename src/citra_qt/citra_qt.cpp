@@ -31,7 +31,7 @@
 #else
 #include <getopt.h>
 #endif
-#ifdef __unix__
+#if defined(__unix__) && !defined(__EMSCRIPTEN__)
 #include <QVariant>
 #include <QtDBus/QDBusInterface>
 #include <QtDBus/QtDBus>
@@ -397,7 +397,7 @@ GMainWindow::GMainWindow(Core::System& system_)
         }
     }
 
-#ifdef __unix__
+#if defined(__unix__) && !defined(__EMSCRIPTEN__)
     SetGamemodeEnabled(Settings::values.enable_gamemode.GetValue());
 #endif
 
@@ -1291,7 +1291,7 @@ void GMainWindow::OnDisplayTitleBars(bool show) {
     }
 }
 
-#if defined(HAVE_SDL2) && defined(__unix__) && !defined(__APPLE__)
+#if defined(HAVE_SDL2) && defined(__unix__) && !defined(__APPLE__) && !defined(__EMSCRIPTEN__)
 static std::optional<QDBusObjectPath> HoldWakeLockLinux(u32 window_id = 0) {
     if (!QDBusConnection::sessionBus().isConnected()) {
         return {};
@@ -1337,7 +1337,7 @@ void GMainWindow::PreventOSSleep() {
     SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED);
 #elif defined(HAVE_SDL2)
     SDL_DisableScreenSaver();
-#if defined(__unix__) && !defined(__APPLE__)
+#if defined(__unix__) && !defined(__APPLE__) && !defined(__EMSCRIPTEN__)
     auto reply = HoldWakeLockLinux(winId());
     if (reply) {
         wake_lock = std::move(reply.value());
@@ -1351,7 +1351,7 @@ void GMainWindow::AllowOSSleep() {
     SetThreadExecutionState(ES_CONTINUOUS);
 #elif defined(HAVE_SDL2)
     SDL_EnableScreenSaver();
-#if defined(__unix__) && !defined(__APPLE__)
+#if defined(__unix__) && !defined(__APPLE__) && !defined(__EMSCRIPTEN__)
     if (!wake_lock.path().isEmpty()) {
         ReleaseWakeLockLinux(wake_lock);
     }
@@ -1680,7 +1680,7 @@ void GMainWindow::ShutdownGame() {
 #ifdef ENABLE_DISCORD_RPC
     discord_rpc->Update(false);
 #endif
-#ifdef __unix__
+#if defined(__unix__) && !defined(__EMSCRIPTEN__)
     Common::Linux::StopGamemode();
 #endif
 
@@ -2626,7 +2626,7 @@ void GMainWindow::OnResumeGame(bool first_start) {
 #endif
     }
 
-#ifdef __unix__
+#if defined(__unix__) && !defined(__EMSCRIPTEN__)
     Common::Linux::StartGamemode();
 #endif
 
@@ -2651,7 +2651,7 @@ void GMainWindow::OnPauseGame() {
     UpdateMenuState();
     AllowOSSleep();
 
-#ifdef __unix__
+#if defined(__unix__) && !defined(__EMSCRIPTEN__)
     Common::Linux::StopGamemode();
 #endif
 }
@@ -2989,7 +2989,7 @@ void GMainWindow::OnConfigure() {
 #ifdef ENABLE_DISCORD_RPC
     const bool old_discord_presence = UISettings::values.enable_discord_presence.GetValue();
 #endif
-#ifdef __unix__
+#if defined(__unix__) && !defined(__EMSCRIPTEN__)
     const bool old_gamemode = Settings::values.enable_gamemode.GetValue();
 #endif
     auto result = configureDialog.exec();
@@ -3006,7 +3006,7 @@ void GMainWindow::OnConfigure() {
             discord_rpc->Update(system.IsPoweredOn());
         }
 #endif
-#ifdef __unix__
+#if defined(__unix__) && !defined(__EMSCRIPTEN__)
         if (Settings::values.enable_gamemode.GetValue() != old_gamemode) {
             SetGamemodeEnabled(Settings::values.enable_gamemode.GetValue());
         }
@@ -4444,7 +4444,7 @@ void GMainWindow::SetDiscordEnabled([[maybe_unused]] bool state) {
 }
 #endif
 
-#ifdef __unix__
+#if defined(__unix__) && !defined(__EMSCRIPTEN__)
 void GMainWindow::SetGamemodeEnabled(bool state) {
     if (emulation_running) {
         Common::Linux::SetGamemodeState(state);

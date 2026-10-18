@@ -398,13 +398,20 @@ set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
 if (ENABLE_QT)
+    if (EMSCRIPTEN AND NOT USE_SYSTEM_QT)
+        message(FATAL_ERROR "Qt for WebAssembly requires USE_SYSTEM_QT and a Qt Wasm toolchain")
+    endif()
     if (NOT USE_SYSTEM_QT)
         download_qt(6.10.3)
     endif()
 
     find_package(Qt6 REQUIRED COMPONENTS Widgets Multimedia Concurrent)
+    if (EMSCRIPTEN AND (NOT QT_FEATURE_thread OR NOT QT_FEATURE_wasm_exceptions OR
+                       NOT QT_FEATURE_wasm_jspi))
+        message(FATAL_ERROR "Qt for WebAssembly must be built with threads, Wasm exceptions and JSPI")
+    endif()
 
-    if (UNIX AND NOT APPLE)
+    if (UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
         find_package(Qt6 REQUIRED COMPONENTS DBus)
     endif()
 
@@ -633,7 +640,7 @@ endif()
 # http://standards.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html
 # http://standards.freedesktop.org/icon-theme-spec/icon-theme-spec-latest.html
 # http://standards.freedesktop.org/shared-mime-info-spec/shared-mime-info-spec-latest.html
-if(ENABLE_QT AND UNIX AND NOT APPLE)
+if(ENABLE_QT AND UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
     install(FILES "${PROJECT_SOURCE_DIR}/dist/azahar.desktop"
             DESTINATION "${CMAKE_INSTALL_PREFIX}/share/applications"
             RENAME "org.azahar_emu.Azahar.desktop")

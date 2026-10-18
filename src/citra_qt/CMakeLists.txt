@@ -313,7 +313,7 @@ if (ENABLE_VULKAN)
     target_link_libraries(citra_qt PRIVATE vulkan-headers)
 endif()
 
-if (NOT WIN32)
+if (NOT WIN32 AND NOT EMSCRIPTEN)
     find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
     if(Qt6_VERSION VERSION_GREATER_EQUAL "6.10.0")
         set(QT_NO_PRIVATE_MODULE_WARNING ON)
@@ -326,7 +326,7 @@ endif()
 
 if (APPLE)
     target_link_libraries(citra_qt PRIVATE Qt6::QDarwinCameraPermissionPlugin)
-elseif (UNIX)
+elseif (UNIX AND NOT EMSCRIPTEN)
     target_link_libraries(citra_qt PUBLIC Qt6::DBus gamemode)
 endif()
 

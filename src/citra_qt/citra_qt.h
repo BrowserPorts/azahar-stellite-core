@@ -7,7 +7,7 @@
 #include <array>
 #include <memory>
 #include <vector>
-#ifdef __unix__
+#if defined(__unix__) && !defined(__EMSCRIPTEN__)
 #include <QDBusObjectPath>
 #endif
 #ifdef ENABLE_QT_UPDATE_CHECKER
@@ -338,7 +338,7 @@ private:
     void UpdateVolumeUI();
     void UpdateAPIIndicator(bool update = false);
     void UpdateStatusButtons();
-#ifdef __unix__
+#if defined(__unix__) && !defined(__EMSCRIPTEN__)
     void SetGamemodeEnabled(bool state);
 #endif
 
@@ -461,7 +461,7 @@ private:
     QFutureWatcher<QString> update_watcher;
 #endif
 
-#ifdef __unix__
+#if defined(__unix__) && !defined(__EMSCRIPTEN__)
     QDBusObjectPath wake_lock{};
 #endif
 

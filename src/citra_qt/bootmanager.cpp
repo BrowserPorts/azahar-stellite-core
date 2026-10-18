@@ -38,7 +38,7 @@
 
 #if defined(__APPLE__)
 #include "util/metal_util.h"
-#elif !defined(WIN32)
+#elif !defined(WIN32) && !defined(__EMSCRIPTEN__)
 #include <qpa/qplatformnativeinterface.h>
 #endif
 
@@ -407,6 +407,8 @@ static Frontend::WindowSystemType GetWindowSystemType() {
         return Frontend::WindowSystemType::Wayland;
     else if (platform_name == QStringLiteral("cocoa") || platform_name == QStringLiteral("ios"))
         return Frontend::WindowSystemType::MacOS;
+    else if (platform_name == QStringLiteral("wasm"))
+        return Frontend::WindowSystemType::Web;
 
     LOG_CRITICAL(Frontend, "Unknown Qt platform!");
     return Frontend::WindowSystemType::Windows;
@@ -417,8 +419,8 @@ static Frontend::EmuWindow::WindowSystemInfo GetWindowSystemInfo(QWindow* window
     wsi.type = GetWindowSystemType();
 
     if (window) {
-#if defined(WIN32)
-        // Our Win32 Qt external doesn't have the private API.
+#if defined(WIN32) || defined(__EMSCRIPTEN__)
+        // These Qt platforms expose the render surface through the window identifier.
         wsi.render_surface = reinterpret_cast<void*>(window->winId());
 #elif defined(__APPLE__)
         wsi.render_surface = MetalUtil::CreateMetalLayer(window->winId());
