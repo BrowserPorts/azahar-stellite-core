@@ -66,6 +66,11 @@
       "targets": ["azahar_qt_runtime"]
     },
     {
+      "name": "web-qt-native-fixtures",
+      "configurePreset": "web-qt",
+      "targets": ["azahar_qt_native_fixtures"]
+    },
+    {
       "name": "web-native-fixtures",
       "configurePreset": "web-release",
       "targets": ["tests", "browser_core_fixtures"]

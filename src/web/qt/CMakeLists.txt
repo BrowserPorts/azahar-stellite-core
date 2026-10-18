@@ -48,3 +48,7 @@ add_custom_command(OUTPUT "${QT_EMULATION_RUNTIME}"
     VERBATIM)
 add_custom_target(azahar_qt_runtime DEPENDS citra_meta azahar_graphics_runtime
     "${QT_RUNTIME}" "${QT_EMULATION_RUNTIME}")
+
+if (ENABLE_TESTS)
+    add_subdirectory(tests)
+endif()
