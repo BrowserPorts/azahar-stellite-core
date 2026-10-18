@@ -10,12 +10,12 @@ addToLibrary({
         }
     `,
     $initializeDspRuntime: async () => {
-        const { DspJitHost } = await import(new URL("azahar-dsp-jit.js", import.meta.url).href);
+        const { DspJitHost } = await import(locateFile("azahar-dsp-jit.js"));
         const assets = await Promise.all(["azahar-dsp-templates.wasm", "azahar-dsp-families.bin"].map(async (name) => {
-            const url = new URL(name, import.meta.url);
+            const url = locateFile(name);
             if (ENVIRONMENT_IS_NODE) {
                 const { readFile } = await import("node:fs/promises");
-                return new Uint8Array(await readFile(url));
+                return new Uint8Array(await readFile(url.startsWith("file:") ? new URL(url) : url));
             }
             const response = await fetch(url);
             if (!response.ok) throw new Error("Could not load DSP compiler input " + name);
