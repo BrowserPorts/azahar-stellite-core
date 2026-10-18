@@ -15,7 +15,9 @@
 #include "input_common/main.h"
 #include "input_common/motion_emu.h"
 #include "input_common/sdl/sdl.h"
+#ifdef HAVE_SDL2
 #include "input_common/sdl/sdl_impl.h"
+#endif
 #include "input_common/touch_from_button.h"
 #include "input_common/udp/udp.h"
 
@@ -200,32 +202,42 @@ std::string GenerateAnalogParamFromKeys(int key_up, int key_down, int key_left, 
     return circle_pad_param.Serialize();
 }
 
-Common::ParamPackage GetControllerButtonBinds(const Common::ParamPackage& params, int button) {
+Common::ParamPackage GetControllerButtonBinds([[maybe_unused]] const Common::ParamPackage& params,
+                                            [[maybe_unused]] int button) {
+#if defined(HAVE_SDL2) || defined(ENABLE_GCADAPTER)
     const auto native_button{static_cast<Settings::NativeButton::Values>(button)};
     const auto engine{params.Get("engine", "")};
+#ifdef HAVE_SDL2
     if (engine == "sdl") {
         return dynamic_cast<SDL::SDLState*>(sdl.get())->GetSDLControllerButtonBind(params,
                                                                                    native_button);
     }
+#endif
 #ifdef ENABLE_GCADAPTER
     if (engine == "gcpad") {
         return gcbuttons->GetGcTo3DSMappedButton(params.Get("port", 0), native_button);
     }
 #endif
+#endif
     return {};
 }
 
-Common::ParamPackage GetControllerAnalogBinds(const Common::ParamPackage& params, int analog) {
+Common::ParamPackage GetControllerAnalogBinds([[maybe_unused]] const Common::ParamPackage& params,
+                                            [[maybe_unused]] int analog) {
+#if defined(HAVE_SDL2) || defined(ENABLE_GCADAPTER)
     const auto native_analog{static_cast<Settings::NativeAnalog::Values>(analog)};
     const auto engine{params.Get("engine", "")};
+#ifdef HAVE_SDL2
     if (engine == "sdl") {
         return dynamic_cast<SDL::SDLState*>(sdl.get())->GetSDLControllerAnalogBindByGUID(
             params.Get("guid", "0"), params.Get("port", 0), native_analog);
     }
+#endif
 #ifdef ENABLE_GCADAPTER
     if (engine == "gcpad") {
         return gcanalog->GetGcTo3DSMappedAnalog(params.Get("port", 0), native_analog);
     }
+#endif
 #endif
     return {};
 }
