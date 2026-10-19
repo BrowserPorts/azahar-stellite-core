@@ -17,6 +17,7 @@
         "CMAKE_BUILD_TYPE": "Release",
         "EMSCRIPTEN_ROOT_PATH": "${sourceDir}/externals/emscripten",
         "ENABLE_LIBRETRO": true,
+        "ENABLE_QT": false,
         "ENABLE_LTO": true,
         "AZAHAR_ARM_JIT_STATISTICS": false,
         "AZAHAR_ARM_JIT_BLOCK_PROFILING": false,
