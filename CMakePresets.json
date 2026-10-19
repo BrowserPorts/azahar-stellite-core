@@ -33,7 +33,7 @@
     {
       "name": "web-qt",
       "displayName": "Azahar Web Qt frontend",
-      "description": "Set AZAHAR_QT_SDK to the Qt Wasm SDK built with the pinned Qt Base and Qt Multimedia forks",
+      "description": "Set AZAHAR_QT_SDK to Qt Wasm built from the pinned Qt Base, ShaderTools and Multimedia sources",
       "inherits": "web-release",
       "toolchainFile": "$env{AZAHAR_QT_SDK}/lib/cmake/Qt6/qt.toolchain.cmake",
       "binaryDir": "${sourceDir}/build/web-qt",

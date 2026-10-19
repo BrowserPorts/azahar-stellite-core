@@ -123,3 +123,6 @@
     path = externals/qtbase
     url = https://origin.cursor.com/mov/qtbase-stellite-wasm.git
     branch = main
+[submodule "externals/qtshadertools"]
+    path = externals/qtshadertools
+    url = https://code.qt.io/qt/qtshadertools.git
