@@ -372,10 +372,12 @@ private:
  * Installs a CIA file from a specified file path.
  * @param path file path of the CIA file to install
  * @param update_callback callback function called during filesystem write
- * @returns bool whether the install was successful
+ * @param installed_title_id receives the installed title ID on success, or zero on failure
+ * @returns installation status
  */
 InstallStatus InstallCIA(const std::string& path,
-                         std::function<ProgressCallback>&& update_callback = nullptr);
+                         std::function<ProgressCallback>&& update_callback = nullptr,
+                         u64* installed_title_id = nullptr);
 
 /**
  * Checks if the provided path is a valid CIA file

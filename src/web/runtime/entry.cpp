@@ -44,6 +44,7 @@ std::array<float, 6> motion{0.f, -1.f, 0.f, 0.f, 0.f, 0.f};
 std::array<bool, 2> sensors_enabled{};
 bool initialized = false;
 bool loaded = false;
+std::string installation_title;
 
 EM_JS(void, VideoFrame, (const void* data, unsigned width, unsigned height, size_t pitch), {
     Module["azaharVideo"]?.(data, width, height, pitch);
@@ -201,7 +202,7 @@ int16_t ReadInput(unsigned port, unsigned device, unsigned index, unsigned id) {
 } // namespace
 
 extern "C" EMSCRIPTEN_KEEPALIVE std::uint32_t azahar_web_abi() {
-    return 22;
+    return 23;
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_flush_saves() {
@@ -279,10 +280,36 @@ extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_load_game(const char* path) {
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE u32 azahar_install_cia(const char* path) {
+    installation_title.clear();
     if (!initialized || loaded || !path) return static_cast<u32>(Service::AM::InstallStatus::ErrorInvalid);
-    return static_cast<u32>(Service::AM::InstallCIA(path, [](u64 written, u64 total) {
+    u64 title_id = 0;
+    const auto status = Service::AM::InstallCIA(path, [](u64 written, u64 total) {
         InstallProgress(written, total);
-    }));
+    }, &title_id);
+    if (status == Service::AM::InstallStatus::Success) {
+        const auto media = Service::AM::GetTitleMediaType(title_id);
+        FileSys::TitleMetadata metadata;
+        if (metadata.Load(Service::AM::GetTitleMetadataPath(media, title_id)) ==
+            Loader::ResultStatus::Success) {
+            std::string title;
+            bool executable = false;
+            auto loader = Loader::GetLoader(Service::AM::GetTitleContentPath(media, title_id));
+            if (loader) {
+                loader->ReadTitle(title);
+                loader->IsExecutable(executable);
+            }
+            std::array<char, 17> id{};
+            std::snprintf(id.data(), id.size(), "%016llx", static_cast<unsigned long long>(title_id));
+            installation_title = nlohmann::json{{"id", id.data()}, {"title", title},
+                {"version", metadata.GetTitleVersion()}, {"executable", executable},
+                {"media", media == Service::FS::MediaType::NAND ? "nand" : "sdmc"}}.dump();
+        }
+    }
+    return static_cast<u32>(status);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_last_installed_title() {
+    return initialized && !installation_title.empty() ? installation_title.c_str() : nullptr;
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_installed_title_path(u64 title_id) {
@@ -396,6 +423,7 @@ extern "C" EMSCRIPTEN_KEEPALIVE void azahar_shutdown() {
     loaded = false;
     initialized = false;
     options.clear();
+    installation_title.clear();
     option_definitions.clear();
     options_changed = false;
     buttons = {};

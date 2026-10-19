@@ -130,9 +130,13 @@ export class AzaharClient {
   }
 
   /** Install a CIA package into persistent emulated storage before loading a game. */
-  async install(file: File): Promise<undefined> {
-    await this.request({ type: "install", file });
-    return undefined;
+  async install(file: File): Promise<InstalledTitle> {
+    const result = await this.request({ type: "install", file });
+    if (!result || typeof result !== "object" || Array.isArray(result) || !("id" in result) ||
+      typeof result.id !== "string" || !/^[0-9a-f]{16}$/.test(result.id)) {
+      throw new Error("Invalid installed CIA title returned by Azahar");
+    }
+    return result as InstalledTitle;
   }
 
   async installedTitles(): Promise<InstalledTitle[]> {
@@ -294,7 +298,7 @@ export class AzaharClient {
   /** Read and reset performance counters at an emulation frame boundary. */
   async performance(): Promise<PerformanceStats> {
     const result = await this.request({ type: "performance" });
-    if (!result || typeof result !== "object" || Array.isArray(result)) {
+    if (!result || typeof result !== "object" || Array.isArray(result) || !("completedFrames" in result)) {
       throw new Error("Invalid performance snapshot returned by Azahar");
     }
     return result;

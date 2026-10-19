@@ -116,7 +116,7 @@ export class BrowserSession {
         azaharAudio: (pointer, frames, sampleRate) => output.audio(core.HEAP16.subarray(pointer >>> 1,
           (pointer >>> 1) + frames * 2), sampleRate),
       });
-      if (core._azahar_web_abi() !== 22) throw new Error("Unsupported Azahar browser ABI");
+      if (core._azahar_web_abi() !== 23) throw new Error("Unsupported Azahar browser ABI");
       if (!core._azahar_mount_storage()) throw new Error("Azahar could not mount OPFS user storage");
       if (!await core._azahar_initialize()) throw new Error("Azahar initialization failed");
       return new BrowserSession(core, storage, armJit, graphics, microphone);
@@ -162,7 +162,7 @@ export class BrowserSession {
     }
   }
 
-  async install(file: File): Promise<undefined> {
+  async install(file: File): Promise<InstalledTitle> {
     this.checkOpen();
     if (this.#loaded) throw new Error("Install CIA packages before loading a game");
     if (!file.size || !Number.isSafeInteger(file.size) || /[/\\\0]/.test(file.name)) {
@@ -181,7 +181,9 @@ export class BrowserSession {
           "Invalid CIA package", "The CIA contains encrypted content"];
         throw new Error(messages[status] ?? `CIA installation failed (${status})`);
       }
-      return undefined;
+      const title = this.core._azahar_last_installed_title();
+      if (!title) throw new Error("Installed CIA title metadata is unavailable");
+      return JSON.parse(this.core.UTF8ToString(title)) as InstalledTitle;
     } finally {
       if (mounted) this.core._azahar_unmount_game_file(path);
       this.core.azaharGameFile = undefined;

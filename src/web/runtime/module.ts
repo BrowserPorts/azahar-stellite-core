@@ -37,6 +37,7 @@ export interface AzaharModule {
   _azahar_set_core_option(key: number, value: number): number;
   _azahar_load_game(path: number): Promise<number>;
   _azahar_install_cia(path: number): Promise<number>;
+  _azahar_last_installed_title(): number;
   _azahar_installed_titles(): number;
   _azahar_installed_title_path(title: bigint): number;
   _azahar_program_id(): number;

@@ -10,7 +10,7 @@ export interface SessionInitialize {
   assets: RuntimeAssets;
 }
 
-export type SessionResult = string | number | PerformanceStats | CoreOption[] | InstalledTitle[] | undefined;
+export type SessionResult = string | number | PerformanceStats | CoreOption[] | InstalledTitle | InstalledTitle[] | undefined;
 
 export type SessionRequest = { id: number } & (
   { type: "load"; file: File } |

@@ -1057,7 +1057,11 @@ void ContentFile::Cancel(FS::MediaType media_type, u64 title_id) {
 }
 
 InstallStatus InstallCIA(const std::string& path,
-                         std::function<ProgressCallback>&& update_callback) {
+                         std::function<ProgressCallback>&& update_callback,
+                         u64* installed_title_id) {
+    if (installed_title_id) {
+        *installed_title_id = 0;
+    }
     LOG_INFO(Service_AM, "Installing {}...", path);
 
     if (!FileUtil::Exists(path)) {
@@ -1130,6 +1134,9 @@ InstallStatus InstallCIA(const std::string& path,
             }
         }
         if (install_res == InstallStatus::Success) {
+            if (installed_title_id) {
+                *installed_title_id = container.GetTitleMetadata().GetTitleID();
+            }
             LOG_INFO(Service_AM, "Installed {} successfully.", path);
         }
         return install_res;
