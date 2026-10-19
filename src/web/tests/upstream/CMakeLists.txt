@@ -99,6 +99,7 @@ if(AZAHAR_TEAKRA_JIT)
         COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/run-dsp-jit.ts"
             --target node --outfile "${DSP_JIT_RUNNER}"
         DEPENDS run-dsp-jit.ts "${AZAHAR_ROOT}/src/web/dsp/jit-host.ts"
+            "${AZAHAR_ROOT}/src/web/dsp/optimizer.ts"
             "${AZAHAR_ROOT}/src/web/dsp/compiler.ts"
             "${AZAHAR_ROOT}/src/web/dsp/family-archive.ts"
             "${AZAHAR_ROOT}/src/web/dsp/relocations.ts"

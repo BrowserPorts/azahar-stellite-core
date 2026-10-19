@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import binaryen from "binaryen";
-import { configureOptimizer, features } from "./compiler";
 import { FamilyArchive } from "./family-archive";
-import { foldReadOnlyLoads } from "./fold-readonly-loads.js";
+import { optimizeDsp } from "./optimizer";
 
 type Pattern = [string, number, number, boolean, number, [number, number][], [number, number][]];
 interface Metadata {
@@ -37,9 +35,7 @@ export class DspJitHost {
   optimizedBytes = 0;
   foldedLoads = 0;
 
-  private constructor(readonly archive: FamilyArchive, readonly onCompile?: (count: number) => unknown) {
-    configureOptimizer();
-  }
+  private constructor(readonly archive: FamilyArchive, readonly onCompile?: (count: number) => unknown) {}
 
   static async create(templates: Uint8Array<ArrayBuffer>, families: Uint8Array<ArrayBuffer>,
     onCompile?: (count: number) => unknown): Promise<DspJitHost> {
@@ -103,7 +99,11 @@ export class DspJitHost {
     if (cached && (!optimized || cached.optimized)) return cached.slot;
     let bytes = this.archive.specialize(pattern[4] - this.#tableBase,
       [this.#memoryBase, this.#tableBase, opcode, expansion]);
-    if (optimized) bytes = this.optimize(bytes, pattern[6]);
+    if (optimized) {
+      const result = optimizeDsp(bytes, new Uint8Array(this.#memory.buffer), pattern[6]);
+      bytes = result.bytes;
+      this.foldedLoads += result.foldedLoads;
+    }
     const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes), this.#imports);
     const run = instance.exports.run;
     if (typeof run !== "function") throw new Error("DSP block is missing its Wasm entry");
@@ -121,25 +121,5 @@ export class DspJitHost {
       this.onCompile?.(this.compilations);
     }
     return slot;
-  }
-
-  private optimize(bytes: Uint8Array<ArrayBuffer>, ranges: Pattern[6]): Uint8Array<ArrayBuffer> {
-    const module = binaryen.readBinary(bytes);
-    try {
-      module.setFeatures(features);
-      module.runPasses(["simplify-globals", "precompute-propagate", "dce", "vacuum",
-        "remove-unused-module-elements"]);
-      if (ranges.length) {
-        let folded;
-        do {
-          folded = foldReadOnlyLoads(module, new Uint8Array(this.#memory!.buffer), ranges);
-          this.foldedLoads += folded;
-          if (folded) module.runPasses(["precompute-propagate", "dce", "vacuum"]);
-        } while (folded);
-      }
-      module.runPasses(["simplify-locals-nostructure", "precompute-propagate", "merge-blocks",
-        "remove-unused-brs", "vacuum", "coalesce-locals", "remove-unused-module-elements"]);
-      return module.emitBinary() as Uint8Array<ArrayBuffer>;
-    } finally { module.dispose(); }
   }
 }
