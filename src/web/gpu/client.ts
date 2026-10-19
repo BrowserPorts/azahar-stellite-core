@@ -2,6 +2,8 @@
 
 import type { GraphicsAdapterInfo, GraphicsCommand, GraphicsEvent, GraphicsRequest, GraphicsSurface } from "./messages";
 import { fenceByteLength, fenceErrorOffset, graphicsProtocolVersion } from "./messages";
+import { resolveRuntimeAssets } from "../assets";
+import type { RuntimeAssetOverrides } from "../assets";
 import type { TextureRegion } from "./textures";
 import type { TextureRect } from "./blits";
 import type { NativeSampler } from "./samplers";
@@ -104,12 +106,13 @@ export class GraphicsClient {
     });
   }
 
-  static async create(onError: (error: Error) => unknown): Promise<GraphicsClient> {
+  static async create(onError: (error: Error) => unknown, overrides?: RuntimeAssetOverrides): Promise<GraphicsClient> {
     if (!globalThis.crossOriginIsolated) throw new Error("WebGPU requires cross-origin isolation");
-    const worker = new Worker(new URL("./azahar-gpu-worker.js", import.meta.url), { type: "module" });
+    const assets = resolveRuntimeAssets(import.meta.url, overrides);
+    const worker = new Worker(assets["azahar-gpu-worker.js"], { type: "module" });
     const client = new GraphicsClient(worker, onError);
     try {
-      client.post({ type: "initialize", fence: client.#fence, protocol: graphicsProtocolVersion });
+      client.post({ type: "initialize", fence: client.#fence, protocol: graphicsProtocolVersion, assets });
       await client.#ready;
       return client;
     } catch (error) { worker.terminate(); throw error; }

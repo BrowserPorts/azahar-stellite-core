@@ -48,7 +48,7 @@ file(GLOB QT_EMULATION_SOURCES CONFIGURE_DEPENDS
 add_custom_command(OUTPUT "${QT_EMULATION_RUNTIME}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/emulation.ts"
         --target browser --outfile "${QT_EMULATION_RUNTIME}"
-    DEPENDS emulation.ts audio.ts ../runtime/audio-ring.ts ${QT_EMULATION_SOURCES}
+    DEPENDS emulation.ts audio.ts ../runtime/audio-ring.ts ../assets.ts ${QT_EMULATION_SOURCES}
     VERBATIM)
 set(QT_AUDIO_WORKLET "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-audio-worklet.js")
 add_custom_command(OUTPUT "${QT_AUDIO_WORKLET}"

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import type { RuntimeAssets } from "../assets";
+
 import { GlslangCompiler } from "./glslang";
 import { NativeShaders } from "./native-shaders";
 import { ShaderCompiler } from "./shader-compiler";
@@ -30,9 +32,11 @@ export class PicaShaders {
     this.vertexLayout = native.vertexLayout;
   }
 
-  static async create(device: GPUDevice): Promise<PicaShaders> {
+  static async create(device: GPUDevice, assets?: RuntimeAssets): Promise<PicaShaders> {
     const results = await Promise.allSettled([
-      NativeShaders.create(), GlslangCompiler.create(), ShaderCompiler.create(),
+      NativeShaders.create(assets?.["azahar-pica-shaders.mjs"], assets),
+      GlslangCompiler.create(assets?.["azahar-glslang.mjs"], assets),
+      ShaderCompiler.create(assets?.["azahar-shader-compiler.wasm"]),
     ]);
     const [native, glslang, naga] = results;
     if (native.status !== "fulfilled" || glslang.status !== "fulfilled" || naga.status !== "fulfilled") {

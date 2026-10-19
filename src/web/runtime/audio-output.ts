@@ -27,7 +27,8 @@ export class BrowserAudioOutput {
 
   /** Call from a user gesture after the emulation worker is ready. */
   static async create(sampleRate: number, failed: (message: string) => unknown,
-    signal?: AbortSignal): Promise<BrowserAudioOutput> {
+    signal?: AbortSignal,
+    workletUrl: URL | string = new URL("./azahar-audio-worklet.js", import.meta.url)): Promise<BrowserAudioOutput> {
     if (!globalThis.crossOriginIsolated) throw new Error("Shared audio requires cross-origin isolation");
     if (signal?.aborted) throw new Error("Audio connection was cancelled");
     const context = new AudioContext({ sampleRate, latencyHint: "interactive" });
@@ -40,7 +41,7 @@ export class BrowserAudioOutput {
       // Resume while the caller's user activation is still available.
       const resumed = context.resume();
       await Promise.race([Promise.all([resumed,
-        context.audioWorklet.addModule(new URL("./azahar-audio-worklet.js", import.meta.url))]), cancelled]);
+        context.audioWorklet.addModule(workletUrl)]), cancelled]);
       const capacity = 4096;
       const transport: AudioTransport = {
         buffer: new SharedArrayBuffer(audioHeaderBytes + capacity * 4), capacity, sampleRate,

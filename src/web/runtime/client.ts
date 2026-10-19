@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { SessionEvent, SessionRequest, SessionResult } from "./messages";
+import { resolveRuntimeAssets } from "../assets";
+import type { RuntimeAssets, RuntimeAssetOverrides } from "../assets";
+export { runtimeAssetNames } from "../assets";
+export type { RuntimeAssets, RuntimeAssetOverrides } from "../assets";
 import type { CoreOption, InputState, InstalledTitle, MotionState, PerformanceStats } from "./session";
 export type { CoreOption, InstalledTitle, MotionState } from "./session";
 import { BrowserAudioOutput } from "./audio-output";
@@ -29,10 +33,15 @@ interface Pending {
   reject: (error: Error) => unknown;
 }
 
+export interface ClientOptions {
+  assets?: RuntimeAssetOverrides;
+}
+
 /** Owns one emulation worker, including its native pthread workers. */
 export class AzaharClient {
   readonly ready: Promise<undefined>;
   readonly #worker: Worker;
+  readonly #assets: RuntimeAssets;
   readonly #pending = new Map<number, Pending>();
   #nextId = 0;
   #initialized = false;
@@ -54,9 +63,11 @@ export class AzaharClient {
   #sampleRate = 0;
   #rejectReady: ((error: Error) => unknown) | undefined;
 
-  constructor(readonly output: ClientOutput,
-    workerUrl = new URL("./azahar-worker.js", import.meta.url)) {
-    this.#worker = new Worker(workerUrl, { type: "module", name: "Azahar" });
+  constructor(readonly output: ClientOutput, options: URL | ClientOptions = {}) {
+    this.#assets = options instanceof URL ?
+      resolveRuntimeAssets(options.href, { "azahar-worker.js": options.href }) :
+      resolveRuntimeAssets(import.meta.url, options.assets);
+    this.#worker = new Worker(this.#assets["azahar-worker.js"], { type: "module", name: "Azahar" });
     this.ready = new Promise((resolve, reject) => {
       this.#rejectReady = reject;
       this.#worker.onmessage = (event: MessageEvent<SessionEvent>): undefined => {
@@ -100,6 +111,8 @@ export class AzaharClient {
       };
       this.#worker.onerror = (event) => failed(event.message || "Azahar's worker stopped");
       this.#worker.onmessageerror = () => failed("Azahar's worker message could not be decoded");
+      try { this.#worker.postMessage({ type: "initialize", assets: this.#assets }); }
+      catch (error) { failed(error instanceof Error ? error.message : String(error)); }
     });
   }
 
@@ -151,7 +164,7 @@ export class AzaharClient {
       let audio: BrowserAudioOutput | undefined;
       try {
         audio = await BrowserAudioOutput.create(this.#sampleRate,
-          message => this.output.error(message), controller.signal);
+          message => this.output.error(message), controller.signal, this.#assets["azahar-audio-worklet.js"]);
         await this.request({ type: "audio-output", transport: audio.transport });
         if (this.#closing || this.#disposed) throw new Error("The Azahar session is closing");
         this.#audio = audio;
@@ -176,7 +189,8 @@ export class AzaharClient {
     const connection = (async () => {
       let microphone: BrowserMicrophoneInput | undefined;
       try {
-        microphone = await BrowserMicrophoneInput.create(message => this.output.error(message), controller.signal);
+        microphone = await BrowserMicrophoneInput.create(message => this.output.error(message), controller.signal,
+          this.#assets["azahar-microphone-worklet.js"]);
         await this.request({ type: "microphone-input", transport: microphone.transport });
         if (microphone.closed) throw new Error("The microphone closed while connecting");
         if (this.#closing || this.#disposed) throw new Error("The Azahar session is closing");

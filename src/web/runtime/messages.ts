@@ -3,6 +3,12 @@
 import type { CoreOption, InputState, InstalledTitle, MotionState, PerformanceStats } from "./session";
 import type { MicrophoneTransport } from "./microphone-ring";
 import type { AudioTransport } from "./audio-ring";
+import type { RuntimeAssets } from "../assets";
+
+export interface SessionInitialize {
+  type: "initialize";
+  assets: RuntimeAssets;
+}
 
 export type SessionResult = string | number | PerformanceStats | CoreOption[] | InstalledTitle[] | undefined;
 

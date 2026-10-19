@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { ShaderCompiler } from "./shader-compiler";
+import { wasmAssetOptions } from "../assets";
+import type { RuntimeAssets, WasmAssetOptions } from "../assets";
 
 interface GlslangModule {
   HEAPU8: Uint8Array<SharedArrayBuffer>;
@@ -13,7 +15,7 @@ interface GlslangModule {
   _destroy_output_buffer(handle: number): unknown;
 }
 
-interface GlslangOptions {
+interface GlslangOptions extends WasmAssetOptions {
   printErr(line: string): unknown;
   onAbort(reason: unknown): unknown;
 }
@@ -28,11 +30,13 @@ export class GlslangCompiler {
 
   private constructor() {}
 
-  static async create(url: URL | string = new URL("./azahar-glslang.mjs", import.meta.url)):
+  static async create(url: URL | string = new URL("./azahar-glslang.mjs", import.meta.url),
+    assets?: RuntimeAssets):
     Promise<GlslangCompiler> {
     const compiler = new GlslangCompiler();
     const { default: factory } = await import(String(url)) as { default: GlslangFactory };
     compiler.#module = await factory({
+      ...wasmAssetOptions(assets, "azahar-glslang.mjs"),
       printErr: (line) => compiler.#diagnostics.push(line),
       onAbort: (reason) => {
         compiler.#module = undefined;

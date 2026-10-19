@@ -4,8 +4,9 @@ import type { TextureRegion } from "./textures";
 import type { TextureRect } from "./blits";
 import type { NativeSampler } from "./samplers";
 import type { ScreenFrame } from "./screens";
+import type { RuntimeAssets } from "../assets";
 
-export const graphicsProtocolVersion = 5;
+export const graphicsProtocolVersion = 6;
 
 export type GraphicsSurface = 0 | 1;
 
@@ -18,7 +19,7 @@ export interface GraphicsAdapterInfo {
 }
 
 export type GraphicsCommand =
-  { type: "initialize"; fence: SharedArrayBuffer; protocol: number } |
+  { type: "initialize"; fence: SharedArrayBuffer; protocol: number; assets: RuntimeAssets } |
   { type: "surface"; id: number; surface: GraphicsSurface; canvas: OffscreenCanvas } |
   { type: "video"; surface: GraphicsSurface; bytes: Uint8Array<ArrayBuffer>; width: number; height: number; pitch: number } |
   { type: "screens"; surface: GraphicsSurface; frame: ScreenFrame } |

@@ -8,6 +8,8 @@ import type { AzaharModule, AzaharModuleFactory } from "./module";
 import { OpfsSaveStates } from "./save-states";
 import { MicrophoneConsumer } from "./microphone-ring";
 import { UserStorageLock } from "./storage-lock";
+import { wasmAssetOptions } from "../assets";
+import type { RuntimeAssets } from "../assets";
 
 export interface SessionOutput {
   video(bytes: Uint8Array<SharedArrayBuffer>, width: number, height: number, pitch: number): unknown;
@@ -94,7 +96,7 @@ export class BrowserSession {
     readonly microphone: MicrophoneConsumer) {}
 
   static async create(factory: AzaharModuleFactory, output: SessionOutput,
-    graphics: GraphicsClient): Promise<BrowserSession> {
+    graphics: GraphicsClient, assets?: RuntimeAssets): Promise<BrowserSession> {
     if (!globalThis.crossOriginIsolated) {
       throw new Error("Azahar requires Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy headers");
     }
@@ -103,6 +105,7 @@ export class BrowserSession {
     const microphone = new MicrophoneConsumer();
     try {
       const core = await factory({
+        ...wasmAssetOptions(assets, "azahar-core.mjs"),
         azaharLazyDsp: true,
         azaharInstallProgress: output.installProgress,
         azaharJitHost: armJit,

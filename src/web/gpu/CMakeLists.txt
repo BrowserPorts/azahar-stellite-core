@@ -20,7 +20,7 @@ file(GLOB GPU_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.ts")
 add_custom_command(OUTPUT "${GPU_WORKER_OUTPUT}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/worker.ts"
         --target browser --outfile "${GPU_WORKER_OUTPUT}"
-    DEPENDS ${GPU_SOURCES}
+    DEPENDS ${GPU_SOURCES} ../assets.ts
     VERBATIM)
 add_custom_target(azahar_graphics_runtime DEPENDS azahar_shader_compiler azahar_glslang
     azahar_pica_shader_generator "${GPU_WORKER_OUTPUT}")

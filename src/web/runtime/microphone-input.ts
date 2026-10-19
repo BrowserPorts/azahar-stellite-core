@@ -24,7 +24,9 @@ export class BrowserMicrophoneInput {
 
   /** Call from a user gesture; Web Audio resamples the device to native 48 kHz PCM. */
   static async create(failed: (message: string) => unknown,
-    signal: AbortSignal): Promise<BrowserMicrophoneInput> {
+    signal: AbortSignal,
+    workletUrl: URL | string = new URL("./azahar-microphone-worklet.js", import.meta.url)):
+    Promise<BrowserMicrophoneInput> {
     if (!globalThis.isSecureContext || !globalThis.crossOriginIsolated || !navigator.mediaDevices?.getUserMedia) {
       throw new Error("Microphone capture requires a secure, cross-origin isolated browser");
     }
@@ -54,7 +56,7 @@ export class BrowserMicrophoneInput {
         return value;
       });
       await Promise.race([Promise.all([acquired, resumed,
-        context.audioWorklet.addModule(new URL("./azahar-microphone-worklet.js", import.meta.url))]), cancelled]);
+        context.audioWorklet.addModule(workletUrl)]), cancelled]);
       if (signal.aborted) throw new Error("Microphone connection was cancelled");
       if (!stream?.getAudioTracks().some(track => track.readyState === "live")) {
         throw new Error("The microphone did not provide an audio track");

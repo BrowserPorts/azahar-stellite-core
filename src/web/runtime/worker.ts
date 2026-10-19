@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { AzaharModuleFactory } from "./module";
-import type { SessionEvent, SessionRequest, SessionResult } from "./messages";
+import type { SessionEvent, SessionInitialize, SessionRequest, SessionResult } from "./messages";
+import { resolveRuntimeAssets } from "../assets";
+import type { RuntimeAssets } from "../assets";
 import { BrowserSession } from "./session";
 import { GraphicsClient } from "../gpu/client";
 import { AudioProducer } from "./audio-ring";
@@ -30,6 +32,7 @@ let session: BrowserSession | undefined;
 let graphics: GraphicsClient | undefined;
 let audio: AudioProducer | undefined;
 let commands: Promise<unknown> = Promise.resolve();
+let initialized = false;
 
 function pause(): undefined {
   running = false;
@@ -84,13 +87,12 @@ async function start(): Promise<undefined> {
   return undefined;
 }
 
-async function initialize(): Promise<BrowserSession> {
+async function initialize(assets: RuntimeAssets): Promise<BrowserSession> {
   if (typeof worker.scheduler?.postTask !== "function") {
     throw new Error("Azahar requires browser task scheduling");
   }
-  const url = new URL("./azahar-core.mjs", import.meta.url);
-  const { default: factory } = await import(url.href) as { default: AzaharModuleFactory };
-  graphics = await GraphicsClient.create((error) => { pause(); report(error); });
+  const { default: factory } = await import(assets["azahar-core.mjs"]) as { default: AzaharModuleFactory };
+  graphics = await GraphicsClient.create((error) => { pause(); report(error); }, assets);
   try {
     return await BrowserSession.create(factory, {
       log: (line) => post({ type: "log", line }),
@@ -105,16 +107,27 @@ async function initialize(): Promise<BrowserSession> {
         const samples = view.slice();
         return post({ type: "audio", samples, sampleRate }, [samples.buffer]);
       },
-    }, graphics);
+    }, graphics, assets);
   } catch (error) {
     await graphics.close().catch(() => undefined);
     throw error;
   }
 }
 
-worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
+worker.onmessage = (event: MessageEvent<SessionRequest | SessionInitialize>): undefined => {
+  const request = event.data;
+  if (request.type === "initialize") {
+    if (initialized) { report(new Error("Azahar is already initialized")); return undefined; }
+    initialized = true;
+    commands = Promise.resolve().then(() => initialize(resolveRuntimeAssets(import.meta.url, request.assets)))
+      .then(value => {
+        session = value;
+        frameInterval = 1000 / value.core._azahar_frame_rate();
+        post({ type: "ready", sampleRate: value.core._azahar_audio_sample_rate() });
+      }).catch(report);
+    return undefined;
+  }
   commands = commands.then(async () => {
-    const request = event.data;
     if (!Number.isSafeInteger(request.id) || request.id < 0) throw new Error("Invalid session request ID");
     try {
       if (!session) throw new Error("Azahar is unavailable");
@@ -194,9 +207,3 @@ worker.onmessage = (event: MessageEvent<SessionRequest>): undefined => {
   }).catch(report);
   return undefined;
 };
-
-commands = initialize().then((value) => {
-  session = value;
-  frameInterval = 1000 / value.core._azahar_frame_rate();
-  post({ type: "ready", sampleRate: value.core._azahar_audio_sample_rate() });
-}).catch(report);

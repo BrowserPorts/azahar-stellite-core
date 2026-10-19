@@ -4,6 +4,7 @@ import type { ArmJitHost } from "../arm/jit-host";
 import type { PicaJitHost } from "../pica/jit-host";
 import type { DspJitHost } from "../dsp/jit-host";
 import type { GraphicsClient } from "../gpu/client";
+import type { WasmAssetOptions } from "../assets";
 
 /** Exported by the azahar_browser Emscripten target. */
 export interface AzaharModule {
@@ -65,7 +66,7 @@ export interface AzaharModule {
   _retro_unserialize(pointer: number, length: number): Promise<number>;
 }
 
-export interface AzaharModuleOptions {
+export interface AzaharModuleOptions extends WasmAssetOptions {
   azaharDspJitHost?: DspJitHost;
   azaharLazyDsp?: boolean;
   azaharJitHost: ArmJitHost;

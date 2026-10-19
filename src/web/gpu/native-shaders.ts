@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { wasmAssetOptions } from "../assets";
+import type { RuntimeAssets, WasmAssetOptions } from "../assets";
+
 interface NativeShaderModule {
   HEAPU8: Uint8Array<ArrayBufferLike>;
   UTF8ToString(pointer: number): string;
@@ -13,7 +16,9 @@ interface NativeShaderModule {
   _azahar_pica_vertex_layout(): number;
 }
 
-type NativeShaderFactory = (options: { onAbort(reason: unknown): unknown }) => Promise<NativeShaderModule>;
+type NativeShaderFactory = (options: WasmAssetOptions & {
+  onAbort(reason: unknown): unknown;
+}) => Promise<NativeShaderModule>;
 
 /** Runs Azahar's shader generators on the graphics worker using native FSConfig bytes. */
 export class NativeShaders {
@@ -43,11 +48,12 @@ export class NativeShaders {
     this.#module = module;
   }
 
-  static async create(url: URL | string = new URL("./azahar-pica-shaders.mjs", import.meta.url)):
+  static async create(url: URL | string = new URL("./azahar-pica-shaders.mjs", import.meta.url),
+    assets?: RuntimeAssets):
     Promise<NativeShaders> {
     const { default: factory } = await import(String(url)) as { default: NativeShaderFactory };
     let shaders: NativeShaders | undefined;
-    const module = await factory({ onAbort: (reason) => {
+    const module = await factory({ ...wasmAssetOptions(assets, "azahar-pica-shaders.mjs"), onAbort: (reason) => {
       if (shaders) shaders.#module = undefined;
       throw new Error(`PICA shader generator stopped: ${String(reason)}`);
     } });

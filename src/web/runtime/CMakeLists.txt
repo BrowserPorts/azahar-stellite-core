@@ -34,13 +34,13 @@ add_custom_command(OUTPUT "${WORKER_OUTPUT}"
     DEPENDS ${RUNTIME_SOURCES} ../gpu/client.ts ../gpu/messages.ts ../gpu/draw-types.ts
         ../arm/jit-host.ts ../arm/lower.ts ../arm/ir.ts
         ../pica/jit-host.ts ../pica/lower.ts ../pica/control-flow.ts ../pica/instruction.ts
-        ../wasm/binary.ts ../protocol.ts
+        ../wasm/binary.ts ../protocol.ts ../assets.ts
     VERBATIM)
 add_custom_command(OUTPUT "${CLIENT_OUTPUT}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/client.ts"
         --target browser --outfile "${CLIENT_OUTPUT}"
     DEPENDS client.ts messages.ts session.ts audio-output.ts audio-ring.ts motion-input.ts browser-input.ts
-        microphone-input.ts microphone-ring.ts
+        microphone-input.ts microphone-ring.ts ../assets.ts
     VERBATIM)
 add_custom_command(OUTPUT "${AUDIO_WORKLET_OUTPUT}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/audio-worklet.ts"

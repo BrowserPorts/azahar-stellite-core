@@ -9,6 +9,7 @@ import { GraphicsSamplers } from "./samplers";
 import { GraphicsDraws } from "./draws";
 import { unpackNativeDraw } from "./draw-types";
 import { GraphicsScreens } from "./screens";
+import type { RuntimeAssets } from "../assets";
 
 const worker = self as unknown as DedicatedWorkerGlobalScope;
 let commands: Promise<unknown> = Promise.resolve();
@@ -54,7 +55,7 @@ function acknowledgePresentation(): undefined {
   return undefined;
 }
 
-async function initialize(fence: SharedArrayBuffer, protocol: number): Promise<undefined> {
+async function initialize(fence: SharedArrayBuffer, protocol: number, assets: RuntimeAssets): Promise<undefined> {
   if (protocol !== graphicsProtocolVersion) throw new Error("Incompatible WebGPU client protocol");
   if (control || fence.byteLength !== fenceByteLength) throw new Error("Invalid graphics initialization");
   control = new Int32Array(fence, 0, 3);
@@ -70,7 +71,7 @@ async function initialize(fence: SharedArrayBuffer, protocol: number): Promise<u
   device = await adapter.requestDevice({ label: "Azahar graphics", requiredFeatures });
   device.onuncapturederror = (event): undefined => fail(event.error.message);
   device.lost.then((info) => { if (!closed) fail(new Error(`WebGPU device lost: ${info.message}`)); });
-  shaders = await PicaShaders.create(device);
+  shaders = await PicaShaders.create(device, assets);
   textures = await GraphicsTextures.create(device);
   samplers = new GraphicsSamplers(device);
   draws = await GraphicsDraws.create(device, shaders, textures, samplers);
@@ -89,7 +90,7 @@ async function execute(request: GraphicsCommand): Promise<undefined> {
   try {
     if (closed) throw new Error("The graphics worker is closed");
     if (failure) throw new Error(failure);
-    if (request.type === "initialize") return await initialize(request.fence, request.protocol);
+    if (request.type === "initialize") return await initialize(request.fence, request.protocol, request.assets);
     if (!device || !shaders || !textures || !samplers || !draws || !screens || !control) throw new Error("WebGPU is unavailable");
     // Submit prior draws before a queue write, resource mutation, presentation, or fence.
     if (request.type !== "draw") draws.flush();
