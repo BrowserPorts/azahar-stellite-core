@@ -6,6 +6,7 @@ import { PicaJitHost } from "../../pica/jit-host";
 
 export interface FixtureRequest {
   url: string;
+  assets?: Readonly<Record<string, string>>;
   args: string[];
   dispatch: boolean;
   dsp?: boolean;
@@ -55,6 +56,10 @@ worker.onmessage = async (event: MessageEvent<FixtureRequest>): Promise<undefine
       ? lowerArmRegion([block], new Map(), options) : lowerArm(block, options) : undefined);
     if (event.data.regionTier) append("ARM JIT: upstream fixtures use the region compiler");
     await createModule({
+      ...(event.data.assets ? {
+        locateFileMap: event.data.assets,
+        mainScriptUrlOrBlob: event.data.url,
+      } : {}),
       ...(dspHost ? { azaharDspJitHost: dspHost } : {}),
       azaharLazyDsp: event.data.lazyDsp ?? false,
       azaharJitHost: armJit,

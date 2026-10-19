@@ -114,6 +114,30 @@ if(EMSCRIPTEN)
     add_custom_target(browser_jspi_fixtures DEPENDS wasm_jspi_wildcard wasm_jspi_add_function
         "${TEST_WEB_DIRECTORY}/browser-jit.js" "${TEST_WEB_DIRECTORY}/browser-worker.js")
 
+    # Preserve the SDK's original pthread/dlopen cases and side-module bodies.
+    set(PTHREAD_NATIVE_FIXTURES "${PROJECT_SOURCE_DIR}/externals/emscripten/test/core/pthread")
+    add_executable(wasm_pthread_dlopen_side "${PTHREAD_NATIVE_FIXTURES}/test_pthread_dlopen_side.c")
+    # CMake emits PIE for executables; side-module exports require PIC.
+    set_target_properties(wasm_pthread_dlopen_side PROPERTIES
+        POSITION_INDEPENDENT_CODE OFF OUTPUT_NAME libside SUFFIX ".so")
+    target_compile_options(wasm_pthread_dlopen_side PRIVATE -fPIC)
+    target_link_options(wasm_pthread_dlopen_side PRIVATE -sSIDE_MODULE=1)
+    add_executable(wasm_pthread_dlopen "${PTHREAD_NATIVE_FIXTURES}/test_pthread_dlopen.c")
+    target_compile_options(wasm_pthread_dlopen PRIVATE -UNDEBUG)
+    target_link_options(wasm_pthread_dlopen PRIVATE
+        -sMAIN_MODULE=1 -sPROXY_TO_PTHREAD=1 -sPTHREAD_POOL_SIZE=4
+        -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker,node
+        -sJSPI=1 -sASSERTIONS=1 -sEXIT_RUNTIME=1 -sDYNAMIC_EXECUTION=0)
+    set_target_properties(wasm_pthread_dlopen PROPERTIES SUFFIX ".mjs")
+    add_dependencies(wasm_pthread_dlopen wasm_pthread_dlopen_side core_jit_fixture_runner)
+    add_test(NAME wasm_pthread_dlopen COMMAND "${NODE_EXECUTABLE}"
+        "${CORE_JIT_RUNNER}" "$<TARGET_FILE:wasm_pthread_dlopen>")
+    set_tests_properties(wasm_pthread_dlopen PROPERTIES
+        PASS_REGULAR_EXPRESSION "side module ctor(.|\n)*done join(.|\n)*side module atexit")
+    add_dependencies(browser_core_fixtures wasm_pthread_dlopen)
+    add_custom_target(browser_pthread_fixtures DEPENDS wasm_pthread_dlopen
+        "${TEST_WEB_DIRECTORY}/browser-jit.js" "${TEST_WEB_DIRECTORY}/browser-worker.js")
+
     # Compile the SDK's original OPFS cases, including its cross-session persistence checks.
     foreach(mode IN ITEMS setup resume errors unlink)
         set(opfs_source "${PROJECT_SOURCE_DIR}/externals/emscripten/test/wasmfs/wasmfs_opfs.c")
