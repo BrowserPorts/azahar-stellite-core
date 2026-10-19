@@ -10,6 +10,9 @@ import { MicrophoneConsumer } from "./microphone-ring";
 import { UserStorageLock } from "./storage-lock";
 import { wasmAssetOptions } from "../assets";
 import type { RuntimeAssets } from "../assets";
+import { checkInputState } from "./input-state";
+import type { InputState } from "./input-state";
+export type { InputState } from "./input-state";
 
 export interface SessionOutput {
   video(bytes: Uint8Array<SharedArrayBuffer>, width: number, height: number, pitch: number): unknown;
@@ -24,17 +27,6 @@ export interface InstalledTitle {
   version: number;
   executable: boolean;
   media: "nand" | "sdmc";
-}
-
-export interface InputState {
-  buttons: number;
-  circleX: number;
-  circleY: number;
-  cstickX: number;
-  cstickY: number;
-  touchX: number;
-  touchY: number;
-  touchPressed: boolean;
 }
 
 export interface MotionState {
@@ -289,10 +281,7 @@ export class BrowserSession {
 
   input(value: InputState): undefined {
     this.checkOpen();
-    if (!Number.isInteger(value.buttons) || value.buttons < 0 || value.buttons > 0xffff ||
-      ![value.circleX, value.circleY, value.cstickX, value.cstickY, value.touchX, value.touchY]
-        .every((axis) => Number.isInteger(axis) && axis >= -32768 && axis <= 32767) ||
-      typeof value.touchPressed !== "boolean") throw new Error("Invalid input state");
+    checkInputState(value);
     this.core._azahar_set_input(value.buttons, value.circleX, value.circleY,
       value.cstickX, value.cstickY, value.touchX, value.touchY, Number(value.touchPressed));
     return undefined;

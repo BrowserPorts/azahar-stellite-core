@@ -40,7 +40,7 @@ add_custom_command(OUTPUT "${CLIENT_OUTPUT}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/client.ts"
         --target browser --outfile "${CLIENT_OUTPUT}"
     DEPENDS client.ts messages.ts session.ts audio-output.ts audio-ring.ts motion-input.ts browser-input.ts
-        microphone-input.ts microphone-ring.ts ../assets.ts
+        input-state.ts microphone-input.ts microphone-ring.ts ../assets.ts
     VERBATIM)
 add_custom_command(OUTPUT "${AUDIO_WORKLET_OUTPUT}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/audio-worklet.ts"

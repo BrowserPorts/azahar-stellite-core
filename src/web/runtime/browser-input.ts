@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { InputState } from "./session";
+import { checkInputState } from "./input-state";
+import type { InputState } from "./input-state";
 
 export interface BrowserInputOptions {
   /** Poll standard gamepads while the canvas has focus; enabled by default. */
@@ -31,6 +32,7 @@ export class BrowserInput {
   #pointer: number | undefined;
   #touchX = 0;
   #touchY = 0;
+  #host = neutral();
   #closed = false;
   #sending = false;
   #latest: InputState | undefined;
@@ -63,7 +65,7 @@ export class BrowserInput {
     canvas.addEventListener("focus", this.onFocus);
     canvas.addEventListener("blur", this.release);
     window.addEventListener("focus", this.onFocus);
-    window.addEventListener("blur", this.release);
+    window.addEventListener("blur", this.releaseAll);
     document.addEventListener("visibilitychange", this.onVisibility);
     signal.addEventListener("abort", this.onAbort, { once: true });
     this.onFocus();
@@ -92,6 +94,14 @@ export class BrowserInput {
   /** Apply the current browser input before manually advancing a frame. */
   flush(): Promise<undefined> {
     if (this.#closed) throw new Error("Browser input is closed");
+    return this.publish();
+  }
+
+  /** Preserve host controls across canvas focus changes and local input updates. */
+  setHostInput(state: InputState): Promise<undefined> {
+    if (this.#closed) throw new Error("Browser input is closed");
+    checkInputState(state);
+    this.#host = document.hidden ? neutral() : { ...state };
     return this.publish();
   }
 
@@ -154,8 +164,14 @@ export class BrowserInput {
   };
 
   private readonly onVisibility = (): undefined => {
-    if (document.hidden) this.release();
+    if (document.hidden) this.releaseAll();
     else this.onFocus();
+    return undefined;
+  };
+
+  private readonly releaseAll = (): undefined => {
+    this.#host = neutral();
+    this.release();
     return undefined;
   };
 
@@ -204,6 +220,7 @@ export class BrowserInput {
     this.stopPolling();
     this.#latest = undefined;
     this.#keys.clear();
+    this.#host = neutral();
     this.releasePointer();
     this.canvas.removeEventListener("keydown", this.onKey);
     this.canvas.removeEventListener("keyup", this.onKey);
@@ -215,7 +232,7 @@ export class BrowserInput {
     this.canvas.removeEventListener("focus", this.onFocus);
     this.canvas.removeEventListener("blur", this.release);
     window.removeEventListener("focus", this.onFocus);
-    window.removeEventListener("blur", this.release);
+    window.removeEventListener("blur", this.releaseAll);
     document.removeEventListener("visibilitychange", this.onVisibility);
     this.signal.removeEventListener("abort", this.onAbort);
     if (this.#addedTabIndex && this.canvas.getAttribute("tabindex") === "0") this.canvas.removeAttribute("tabindex");
@@ -277,6 +294,19 @@ export class BrowserInput {
     state.touchX = this.#touchX;
     state.touchY = this.#touchY;
     state.touchPressed = this.#pointer !== undefined;
+    const host = this.#host;
+    state.buttons |= host.buttons;
+    if (Math.hypot(host.circleX, host.circleY) > Math.hypot(state.circleX, state.circleY)) {
+      state.circleX = host.circleX; state.circleY = host.circleY;
+    }
+    if (Math.hypot(host.cstickX, host.cstickY) > Math.hypot(state.cstickX, state.cstickY)) {
+      state.cstickX = host.cstickX; state.cstickY = host.cstickY;
+    }
+    if (!state.touchPressed && host.touchPressed) {
+      state.touchX = host.touchX;
+      state.touchY = host.touchY;
+      state.touchPressed = true;
+    }
     const previous = this.#last;
     if (previous && previous.buttons === state.buttons &&
       previous.circleX === state.circleX && previous.circleY === state.circleY &&

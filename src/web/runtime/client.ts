@@ -6,7 +6,7 @@ import type { RuntimeAssets, RuntimeAssetOverrides } from "../assets";
 export { runtimeAssetNames } from "../assets";
 export type { RuntimeAssets, RuntimeAssetOverrides } from "../assets";
 import type { CoreOption, InputState, InstalledTitle, MotionState, PerformanceStats } from "./session";
-export type { CoreOption, InstalledTitle, MotionState } from "./session";
+export type { CoreOption, InputState, InstalledTitle, MotionState } from "./session";
 import { BrowserAudioOutput } from "./audio-output";
 import { BrowserMicrophoneInput } from "./microphone-input";
 export { BrowserMicrophoneInput } from "./microphone-input";
@@ -240,7 +240,7 @@ export class AzaharClient {
     if (!this.#initialized || this.#disposed || this.#closing) throw new Error("Azahar is not ready for input");
     if (this.#input && !this.#input.closed) throw new Error("Browser input is already connected");
     const controller = new AbortController();
-    const input = BrowserInput.create(canvas, state => this.input(state),
+    const input = BrowserInput.create(canvas, state => this.sendInput(state),
       message => this.output.error(message), controller.signal, options);
     this.#inputController = controller;
     this.#input = input;
@@ -263,7 +263,13 @@ export class AzaharClient {
     await this.request({ type: "advance-frame" });
     return undefined;
   }
+  /** Merge host controls with any connected canvas controls. */
   async input(state: InputState): Promise<undefined> {
+    if (this.#input && !this.#input.closed) return this.#input.setHostInput(state);
+    return this.sendInput(state);
+  }
+
+  private async sendInput(state: InputState): Promise<undefined> {
     await this.request({ type: "input", state }); return undefined;
   }
 
