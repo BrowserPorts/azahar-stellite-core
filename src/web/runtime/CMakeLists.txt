@@ -52,9 +52,6 @@ add_custom_command(OUTPUT "${MICROPHONE_WORKLET_OUTPUT}"
         --target browser --outfile "${MICROPHONE_WORKLET_OUTPUT}"
     DEPENDS microphone-worklet.ts microphone-ring.ts
     VERBATIM)
-add_custom_target(azahar_browser_runtime DEPENDS azahar_browser azahar_graphics_runtime azahar_dsp_templates
-    "${WORKER_OUTPUT}" "${CLIENT_OUTPUT}" "${AUDIO_WORKLET_OUTPUT}" "${MICROPHONE_WORKLET_OUTPUT}")
-
 # Install only production runtime assets, independently of frontend and fixture output.
 set(WEB_RUNTIME_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
 set(WEB_RUNTIME_FILES
@@ -74,7 +71,16 @@ set(WEB_RUNTIME_FILES
     azahar-audio-worklet.js
     azahar-microphone-worklet.js)
 list(TRANSFORM WEB_RUNTIME_FILES PREPEND "${WEB_RUNTIME_DIRECTORY}/")
-install(FILES ${WEB_RUNTIME_FILES} "${PROJECT_SOURCE_DIR}/license.txt"
+set(WEB_MANIFEST_OUTPUT "${WEB_RUNTIME_DIRECTORY}/manifest.json")
+add_custom_target(azahar_browser_runtime
+    COMMAND "${CMAKE_COMMAND}" "-DFILES=${WEB_RUNTIME_FILES};${PROJECT_SOURCE_DIR}/license.txt"
+        "-DOUTPUT=${WEB_MANIFEST_OUTPUT}" -P "${CMAKE_CURRENT_SOURCE_DIR}/manifest.cmake"
+    BYPRODUCTS "${WEB_MANIFEST_OUTPUT}"
+    DEPENDS azahar_browser azahar_graphics_runtime azahar_dsp_templates
+        "${WORKER_OUTPUT}" "${CLIENT_OUTPUT}" "${AUDIO_WORKLET_OUTPUT}" "${MICROPHONE_WORKLET_OUTPUT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/manifest.cmake" "${PROJECT_SOURCE_DIR}/license.txt"
+    VERBATIM)
+install(FILES ${WEB_RUNTIME_FILES} "${WEB_MANIFEST_OUTPUT}" "${PROJECT_SOURCE_DIR}/license.txt"
     DESTINATION . COMPONENT azahar_web_runtime)
 install(FILES "${WEB_RUNTIME_DIRECTORY}/libretro_emscripten.a" "${PROJECT_SOURCE_DIR}/license.txt"
     DESTINATION . COMPONENT azahar_libretro)
