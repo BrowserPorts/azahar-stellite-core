@@ -51,7 +51,8 @@ void OpenGameFile(QWidget* parent, const QStringList& extensions,
     // Start the progress timer only after the browser picker has supplied a file.
     progress->reset();
     QObject::connect(progress, &QProgressDialog::canceled, [] { CancelGameImport(); });
-    QObject::connect(progress, &QObject::destroyed, [] { CancelGameImport(); });
+    const auto destroyed =
+        QObject::connect(progress, &QObject::destroyed, [] { CancelGameImport(); });
 
     auto* timer = new QTimer(progress);
     const QPointer<QWidget> owner(parent);
@@ -68,7 +69,7 @@ void OpenGameFile(QWidget* parent, const QStringList& extensions,
         const auto path = QString::fromStdString(status["path"].as<std::string>());
         const auto error = QString::fromStdString(status["error"].as<std::string>());
         FinishGameImport();
-        QObject::disconnect(progress, nullptr, nullptr, nullptr);
+        QObject::disconnect(destroyed);
         progress->deleteLater();
         if (!owner) return;
         QTimer::singleShot(0, owner, [=] {
