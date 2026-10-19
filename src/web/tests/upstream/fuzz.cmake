@@ -1,12 +1,22 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 include(ExternalProject)
+# CMake caches its toolchain include in CMakeSystem.cmake. Separate compiler
+# selections so incremental builds can retain that configuration safely.
+file(REAL_PATH "${CMAKE_C_COMPILER}" UNICORN_ORACLE_COMPILER)
+set(UNICORN_ORACLE_TOOLCHAIN_PATH "")
+if(CMAKE_TOOLCHAIN_FILE)
+    file(REAL_PATH "${CMAKE_TOOLCHAIN_FILE}" UNICORN_ORACLE_TOOLCHAIN_PATH)
+endif()
+string(SHA256 UNICORN_ORACLE_CONFIGURATION
+    "${UNICORN_ORACLE_COMPILER};${CMAKE_C_COMPILER_VERSION};${CMAKE_SYSTEM_NAME};${CMAKE_SYSTEM_PROCESSOR};${UNICORN_ORACLE_TOOLCHAIN_PATH}")
+string(SUBSTRING "${UNICORN_ORACLE_CONFIGURATION}" 0 12 UNICORN_ORACLE_CONFIGURATION)
 set(UNICORN_ORACLE_TOOLCHAIN)
 set(UNICORN_ORACLE_DOWNLOAD
     GIT_REPOSITORY https://origin.cursor.com/mov/unicorn-stellite-wasm.git
     GIT_TAG 7e1831168fcd576e6715a7092e55c09fc8999d90)
 if(EMSCRIPTEN)
-    set(UNICORN_ORACLE_BINARY "${CMAKE_CURRENT_BINARY_DIR}/unicorn-wasm-oracle")
+    set(UNICORN_ORACLE_BINARY "${CMAKE_CURRENT_BINARY_DIR}/unicorn-wasm-oracle-${UNICORN_ORACLE_CONFIGURATION}")
     set(UNICORN_ORACLE_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/unicorn-wasm-source")
     set(UNICORN_ORACLE_C_FLAGS "${CMAKE_C_FLAGS} -fwasm-exceptions")
     if(AZAHAR_TEAKRA_JIT OR AZAHAR_ARM_JIT_THREADS)
@@ -20,7 +30,7 @@ if(EMSCRIPTEN)
     set(UNICORN_ORACLE_ARM_TEST "${UNICORN_ORACLE_BINARY}/test_arm.js")
 else()
     # The fork also fixes the native AArch64 oracle's single-lane encodings.
-    set(UNICORN_ORACLE_BINARY "${CMAKE_CURRENT_BINARY_DIR}/unicorn-native-oracle")
+    set(UNICORN_ORACLE_BINARY "${CMAKE_CURRENT_BINARY_DIR}/unicorn-native-oracle-${UNICORN_ORACLE_CONFIGURATION}")
     set(UNICORN_ORACLE_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/unicorn-native-source")
     set(UNICORN_ORACLE_ARM_TEST "${UNICORN_ORACLE_BINARY}/test_arm${CMAKE_EXECUTABLE_SUFFIX}")
     if(APPLE)
@@ -33,9 +43,7 @@ ExternalProject_Add(unicorn_test_oracle
     ${UNICORN_ORACLE_DOWNLOAD}
     GIT_SUBMODULES ""
     BINARY_DIR "${UNICORN_ORACLE_BINARY}"
-    # Cached CMakeSystem.cmake retains its original toolchain include even when
-    # the parent passes a replacement. Recreate that configuration before probing.
-    CMAKE_ARGS --fresh -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+    CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
         -DUNICORN_ARCH=arm -DUNICORN_BUILD_TESTS=ON -DUNICORN_INSTALL=OFF
         -DUNICORN_LEGACY_STATIC_ARCHIVE=ON ${UNICORN_ORACLE_TOOLCHAIN}
     BUILD_COMMAND "${CMAKE_COMMAND}" --build <BINARY_DIR>
