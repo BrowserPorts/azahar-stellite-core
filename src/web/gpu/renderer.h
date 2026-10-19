@@ -13,7 +13,8 @@ namespace WebGPU {
 
 class Renderer : public VideoCore::RendererBase {
 public:
-    Renderer(Core::System& system, Pica::PicaCore& pica, Frontend::EmuWindow& window);
+    Renderer(Core::System& system, Pica::PicaCore& pica, Frontend::EmuWindow& window,
+             Frontend::EmuWindow* secondary_window);
     VideoCore::RasterizerInterface* Rasterizer() override { return &rasterizer; }
     void SwapBuffers() override;
     void TryPresent(int timeout_ms, bool secondary) override;
@@ -30,12 +31,12 @@ private:
     };
     void PrepareScreens();
     void FillScreen(u32 index, u32 color);
-    void DrawScreens(const Layout::FramebufferLayout& layout);
+    void DrawScreens(const Layout::FramebufferLayout& layout, const Frontend::EmuWindow& window);
     void DrawScreen(const Layout::FramebufferLayout& layout, bool bottom,
                     const Common::Rectangle<u32>& rect, f32 opacity);
     void DrawQuad(u32 left, u32 right, u32 mode, f32 x, f32 y, f32 width, f32 height,
                   bool rotated, f32 opacity);
-    void DrawCursor(const Layout::FramebufferLayout& layout);
+    void DrawCursor(const Layout::FramebufferLayout& layout, const Frontend::EmuWindow& window);
 
     Pica::PicaCore& pica;
     WebGPU::Rasterizer rasterizer;

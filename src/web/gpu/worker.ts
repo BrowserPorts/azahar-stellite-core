@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { GraphicsCommand, GraphicsEvent, GraphicsRequest } from "./messages";
+import type { GraphicsCommand, GraphicsEvent, GraphicsRequest, GraphicsSurface } from "./messages";
 import { fenceByteLength, fenceErrorOffset, graphicsProtocolVersion } from "./messages";
 import { PicaShaders } from "./pica-shaders";
 import { WebGpuPresenter } from "./presenter";
@@ -16,7 +16,7 @@ let control: Int32Array<SharedArrayBuffer> | undefined;
 let errorBytes: Uint8Array<SharedArrayBuffer> | undefined;
 let device: GPUDevice | undefined;
 let shaders: PicaShaders | undefined;
-let presenter: WebGpuPresenter | undefined;
+const presenters = new Map<GraphicsSurface, WebGpuPresenter>();
 let textures: GraphicsTextures | undefined;
 let samplers: GraphicsSamplers | undefined;
 let draws: GraphicsDraws | undefined;
@@ -121,23 +121,28 @@ async function execute(request: GraphicsCommand): Promise<undefined> {
         break;
       }
       case "surface": {
+        if (request.surface !== 0 && request.surface !== 1) throw new Error("Invalid WebGPU surface");
         const next = await WebGpuPresenter.create(request.canvas, fail, device);
-        presenter?.close();
-        presenter = next;
+        presenters.get(request.surface)?.close();
+        presenters.set(request.surface, next);
         post({ type: "reply", id: request.id });
         break;
       }
-      case "video":
+      case "video": {
+        const presenter = presenters.get(request.surface);
         if (!presenter) throw new Error("No WebGPU presentation surface is attached");
         presenter.present(request.bytes, request.width, request.height, request.pitch);
         // Retain the frame limit while later commands are submitted in queue order.
         acknowledgePresentation();
         break;
-      case "screens":
+      }
+      case "screens": {
+        const presenter = presenters.get(request.surface);
         if (!presenter) throw new Error("No WebGPU presentation surface is attached");
         presenter.screens(request.frame, screens);
         acknowledgePresentation();
         break;
+      }
       case "drain":
         // Send earlier presentation acknowledgements before replying to the caller.
         await Promise.all(presentations);
@@ -154,7 +159,8 @@ async function execute(request: GraphicsCommand): Promise<undefined> {
       case "close":
         await device.queue.onSubmittedWorkDone();
         closed = true;
-        presenter?.close();
+        for (const presenter of presenters.values()) presenter.close();
+        presenters.clear();
         draws.close();
         screens.close();
         shaders.close();

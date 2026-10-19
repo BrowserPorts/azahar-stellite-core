@@ -32,7 +32,7 @@ std::unique_ptr<RendererBase> CreateRenderer(Frontend::EmuWindow& emu_window,
     switch (graphics_api) {
 #ifdef __EMSCRIPTEN__
     case Settings::GraphicsAPI::WebGPU:
-        return std::make_unique<WebGPU::Renderer>(system, pica, emu_window);
+        return std::make_unique<WebGPU::Renderer>(system, pica, emu_window, secondary_window);
 #endif
 #ifdef ENABLE_SOFTWARE_RENDERER
     case Settings::GraphicsAPI::Software:
@@ -57,7 +57,7 @@ std::unique_ptr<RendererBase> CreateRenderer(Frontend::EmuWindow& emu_window,
                      "Unknown or unsupported graphics API {}, falling back to available default",
                      graphics_api);
 #ifdef __EMSCRIPTEN__
-        return std::make_unique<WebGPU::Renderer>(system, pica, emu_window);
+        return std::make_unique<WebGPU::Renderer>(system, pica, emu_window, secondary_window);
 #elif defined(ENABLE_OPENGL)
         return std::make_unique<OpenGL::RendererOpenGL>(system, pica, emu_window, secondary_window);
 #elif ENABLE_VULKAN

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { GraphicsAdapterInfo, GraphicsCommand, GraphicsEvent, GraphicsRequest } from "./messages";
+import type { GraphicsAdapterInfo, GraphicsCommand, GraphicsEvent, GraphicsRequest, GraphicsSurface } from "./messages";
 import { fenceByteLength, fenceErrorOffset, graphicsProtocolVersion } from "./messages";
 import type { TextureRegion } from "./textures";
 import type { TextureRect } from "./blits";
@@ -55,9 +55,10 @@ export class GraphicsClient {
   #indexBytes = 0;
   #nextVertexProgram = 0;
   #closed = false;
-  #hasSurface = false;
+  #surfaces = new Set<GraphicsSurface>();
+  #queuedSurfaceFrames: [number, number] = [0, 0];
   // Outstanding snapshot bytes through each submitted frame.
-  #queuedFrameBytes: number[] = [];
+  #queuedFrames: { surface: GraphicsSurface; bytes: number }[] = [];
   #queuedBytes = 0;
   #failure: Error | undefined;
   #reported = false;
@@ -84,12 +85,13 @@ export class GraphicsClient {
           this.configurationSchema = response.configurationSchema;
           resolve(undefined);
         } else if (response.type === "presented") {
-          const completed = this.#queuedFrameBytes.shift();
+          const completed = this.#queuedFrames.shift();
           if (completed === undefined) {
             this.fail(new Error("Unexpected graphics presentation completion"), reject, onError);
           } else {
-            this.#queuedBytes -= completed;
-            this.#queuedFrameBytes = this.#queuedFrameBytes.map(bytes => bytes - completed);
+            this.#queuedBytes -= completed.bytes;
+            this.#queuedSurfaceFrames[completed.surface]--;
+            for (const frame of this.#queuedFrames) frame.bytes -= completed.bytes;
           }
         } else if (response.type === "reply") {
           this.#pending.get(response.id)?.resolve();
@@ -113,21 +115,22 @@ export class GraphicsClient {
     } catch (error) { worker.terminate(); throw error; }
   }
 
-  async surface(canvas: OffscreenCanvas): Promise<undefined> {
-    await this.request((id) => ({ type: "surface", id, canvas }), [canvas]);
-    this.#hasSurface = true;
+  async surface(canvas: OffscreenCanvas, surface: GraphicsSurface = 0): Promise<undefined> {
+    await this.request((id) => ({ type: "surface", id, surface, canvas }), [canvas]);
+    this.#surfaces.add(surface);
     return undefined;
   }
 
   present(view: Uint8Array<SharedArrayBuffer>, width: number, height: number, pitch: number): boolean {
     this.checkOpen();
-    if (!this.#hasSurface) { this.flush(); return false; }
+    if (!this.#surfaces.has(0)) { this.flush(); return false; }
     // Presentation can drop old frames without dropping native rasterizer commands.
-    if (this.#queuedFrameBytes.length >= 2) { this.flush(); return true; }
+    if (this.#queuedSurfaceFrames[0] >= 2) { this.flush(); return true; }
     // The native framebuffer can change as soon as the callback returns.
     const bytes = view.slice();
-    this.post({ type: "video", bytes, width, height, pitch }, [bytes.buffer]);
-    this.#queuedFrameBytes.push(this.#queuedBytes);
+    this.post({ type: "video", surface: 0, bytes, width, height, pitch }, [bytes.buffer]);
+    this.#queuedFrames.push({ surface: 0, bytes: this.#queuedBytes });
+    this.#queuedSurfaceFrames[0]++;
     return true;
   }
 
@@ -168,13 +171,14 @@ export class GraphicsClient {
       programmableDraws, indexedDraws, vertexBytes, indexBytes };
   }
 
-  screens(frame: ScreenFrame): boolean {
+  screens(frame: ScreenFrame, surface: GraphicsSurface = 0): boolean {
     this.checkOpen();
-    if (!this.#hasSurface) { this.flush(); return false; }
-    if (this.#queuedFrameBytes.length >= 2) { this.flush(); return true; }
+    if (!this.#surfaces.has(surface)) { this.flush(); return false; }
+    if (this.#queuedSurfaceFrames[surface] >= 2) { this.flush(); return true; }
     const quads = frame.quads.map(quad => ({ ...quad, vertices: quad.vertices.slice() }));
-    this.post({ type: "screens", frame: { ...frame, quads } }, quads.map(quad => quad.vertices.buffer));
-    this.#queuedFrameBytes.push(this.#queuedBytes);
+    this.post({ type: "screens", surface, frame: { ...frame, quads } }, quads.map(quad => quad.vertices.buffer));
+    this.#queuedFrames.push({ surface, bytes: this.#queuedBytes });
+    this.#queuedSurfaceFrames[surface]++;
     return true;
   }
 
@@ -349,7 +353,7 @@ export class GraphicsClient {
     this.#fences[reason].count++;
     this.#queuedBytes = 0;
     // Presentation replies queued during the synchronous wait cover these bytes too.
-    this.#queuedFrameBytes.fill(0);
+    for (const frame of this.#queuedFrames) frame.bytes = 0;
     return undefined;
   }
 

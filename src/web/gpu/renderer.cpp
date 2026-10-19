@@ -13,7 +13,7 @@
 namespace WebGPU {
 namespace {
 
-EM_JS(void, PresentScreens, (u32 width, u32 height, f32 r, f32 g, f32 b, bool linear,
+EM_JS(void, PresentScreens, (bool secondary, u32 width, u32 height, f32 r, f32 g, f32 b, bool linear,
                             const u8* quads, u32 count), {
     const p = quads >>> 2;
     const screens = Array.from({length: count}, (_, index) => {
@@ -24,13 +24,14 @@ EM_JS(void, PresentScreens, (u32 width, u32 height, f32 r, f32 g, f32 b, bool li
             vertices: HEAPF32.subarray(offset + 5, offset + 21)
         };
     });
-    Module["azaharGraphicsHost"].screens({width, height, background: [r, g, b, 1], linear: linear !== 0, quads: screens});
+    Module["azaharGraphicsHost"].screens({width, height, background: [r, g, b, 1], linear: linear !== 0, quads: screens}, Number(secondary));
 });
 
 } // namespace
 
-Renderer::Renderer(Core::System& system, Pica::PicaCore& pica, Frontend::EmuWindow& window)
-    : RendererBase{system, window, nullptr}, pica{pica},
+Renderer::Renderer(Core::System& system, Pica::PicaCore& pica, Frontend::EmuWindow& window,
+                   Frontend::EmuWindow* secondary_window)
+    : RendererBase{system, window, secondary_window}, pica{pica},
       rasterizer{system.Memory(), pica, system.CustomTexManager(), *this} {
     static_assert(sizeof(ScreenQuad) == 84 && offsetof(ScreenQuad, vertices) == 20);
     VideoCore::SurfaceParams params;
@@ -146,8 +147,8 @@ void Renderer::DrawScreen(const Layout::FramebufferLayout& layout, bool bottom,
     }
 }
 
-void Renderer::DrawCursor(const Layout::FramebufferLayout& layout) {
-    const auto cursor = render_window.GetCursorInfo();
+void Renderer::DrawCursor(const Layout::FramebufferLayout& layout, const Frontend::EmuWindow& window) {
+    const auto cursor = window.GetCursorInfo();
     if (!cursor.visible || !layout.bottom_screen_enabled) return;
     const auto& rect = layout.bottom_screen;
     const f32 x = rect.left + cursor.projected_x, y = rect.top + cursor.projected_y;
@@ -166,7 +167,7 @@ void Renderer::DrawCursor(const Layout::FramebufferLayout& layout) {
     bar(ratio, ratio / 5);
 }
 
-void Renderer::DrawScreens(const Layout::FramebufferLayout& layout) {
+void Renderer::DrawScreens(const Layout::FramebufferLayout& layout, const Frontend::EmuWindow& window) {
     quads.clear();
     if (!Settings::values.swap_screen.GetValue()) {
         DrawScreen(layout, false, layout.top_screen, 1);
@@ -178,14 +179,18 @@ void Renderer::DrawScreens(const Layout::FramebufferLayout& layout) {
     if (layout.additional_screen_enabled) {
         DrawScreen(layout, layout.additional_screen_is_bottom, layout.additional_screen, 1);
     }
-    DrawCursor(layout);
+    DrawCursor(layout, window);
 }
 
 void Renderer::TryPresent(int, bool secondary) {
-    if (secondary) return;
-    const auto& layout = render_window.GetFramebufferLayout();
-    DrawScreens(layout);
-    PresentScreens(layout.width, layout.height, Settings::values.bg_red.GetValue(),
+    if (secondary && (!secondary_window ||
+                      Settings::values.layout_option.GetValue() != Settings::LayoutOption::SeparateWindows)) {
+        return;
+    }
+    const auto& window = secondary ? *secondary_window : render_window;
+    const auto& layout = window.GetFramebufferLayout();
+    DrawScreens(layout, window);
+    PresentScreens(secondary, layout.width, layout.height, Settings::values.bg_red.GetValue(),
                    Settings::values.bg_green.GetValue(), Settings::values.bg_blue.GetValue(),
                    Settings::values.filter_mode.GetValue(), reinterpret_cast<const u8*>(quads.data()),
                    static_cast<u32>(quads.size()));
@@ -195,6 +200,10 @@ void Renderer::SwapBuffers() {
     system.perf_stats->StartSwap();
     PrepareScreens();
     render_window.SwapBuffers();
+    if (secondary_window &&
+        Settings::values.layout_option.GetValue() == Settings::LayoutOption::SeparateWindows) {
+        secondary_window->PollEvents();
+    }
     system.perf_stats->EndSwap();
     rasterizer.TickFrame();
     EndFrame();
