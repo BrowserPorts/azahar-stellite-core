@@ -29,6 +29,8 @@
 #include "video_core/renderer_software/renderer_software.h"
 
 #ifdef __EMSCRIPTEN__
+#include "audio_core/dsp_interface.h"
+#include "web/qt/audio-sink.h"
 #include "web/qt/runtime.h"
 #endif
 
@@ -156,6 +158,9 @@ void EmuThread::run() {
                 auto& renderer = system.GPU().Renderer();
                 presented_frame = renderer.GetCurrentFrame();
                 renderer.TryPresent(0, false);
+                if (auto* sink = dynamic_cast<AudioCore::WebAudioSink*>(&system.DSP().GetSink())) {
+                    sink->Flush();
+                }
                 if (!Web::Qt::YieldEmulation()) {
                     result = Core::System::ResultStatus::ErrorUnknown;
                     system.SetStatus(result, Web::Qt::EmulationError().c_str());

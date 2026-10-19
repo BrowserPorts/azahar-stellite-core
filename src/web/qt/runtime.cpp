@@ -5,21 +5,22 @@
 #include <thread>
 #include <emscripten.h>
 #include <pthread.h>
+#include "audio_core/audio_types.h"
 #include "common/file_util.h"
 #include "web/qt/runtime.h"
 
 extern "C" bool azahar_mount_storage();
 
-EM_JS_DEPS(qt_emulation, "azahar_qt_request_surface,$stringToNewUTF8");
+EM_JS_DEPS(qt_emulation, "azahar_qt_request_surface,azahar_qt_release_audio,$stringToNewUTF8");
 
 namespace {
 
 using emscripten::EM_VAL;
 
-EM_ASYNC_JS(bool, InitializeBrowserFrontend, (), {
+EM_ASYNC_JS(bool, InitializeBrowserFrontend, (unsigned sample_rate), {
     try {
         const runtime = await import(new URL(locateFile("azahar-qt-runtime.js"), location.href).href);
-        await runtime.initializeFrontend();
+        await runtime.initializeFrontend(sample_rate);
         Module["azaharQtRuntime"] = runtime;
         return true;
     } catch (error) {
@@ -30,6 +31,10 @@ EM_ASYNC_JS(bool, InitializeBrowserFrontend, (), {
 
 EM_JS(void, ReleaseBrowserFrontend, (), {
     Module["azaharQtRuntime"]?.shutdownFrontend();
+});
+
+EM_JS(void, SetBrowserAudioRunning, (bool running), {
+    Module["azaharQtRuntime"]?.setAudioRunning(Boolean(running));
 });
 
 EM_JS(void, RegisterBrowserSurface, (EM_VAL surface), {
@@ -90,13 +95,14 @@ EM_ASYNC_JS(bool, YieldBrowserEmulation, (), {
     }
 });
 
-EM_ASYNC_JS(void, ShutdownBrowserEmulation, (), {
+EM_ASYNC_JS(void, ShutdownBrowserEmulation, (unsigned thread), {
     try {
         await Module["azaharQtEmulation"]?.shutdownEmulation();
     } catch (error) {
         err(String(error));
     } finally {
         delete Module["azaharQtEmulation"];
+        _azahar_qt_release_audio(thread);
     }
 });
 
@@ -121,7 +127,7 @@ EM_JS(void, NotifyStorageReady, (const void* result), {
 namespace Web::Qt {
 
 bool InitializeFrontend() {
-    if (!InitializeBrowserFrontend()) {
+    if (!InitializeBrowserFrontend(AudioCore::native_sample_rate)) {
         return false;
     }
     std::atomic<int> result{0};
@@ -144,6 +150,10 @@ void ShutdownFrontend() {
     ReleaseBrowserFrontend();
 }
 
+void SetAudioRunning(bool running) {
+    SetBrowserAudioRunning(running);
+}
+
 void RegisterRenderSurface(const emscripten::val& canvas) {
     RegisterBrowserSurface(canvas.as_handle());
 }
@@ -161,7 +171,7 @@ bool YieldEmulation() {
 }
 
 void ShutdownEmulation() {
-    ShutdownBrowserEmulation();
+    ShutdownBrowserEmulation(static_cast<unsigned>(pthread_self()));
 }
 
 std::string EmulationError() {

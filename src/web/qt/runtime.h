@@ -9,6 +9,7 @@ namespace Web::Qt {
 
 bool InitializeFrontend();
 void ShutdownFrontend();
+void SetAudioRunning(bool running);
 void RegisterRenderSurface(const emscripten::val& canvas);
 void UnregisterRenderSurface(const emscripten::val& canvas);
 bool InitializeEmulation();

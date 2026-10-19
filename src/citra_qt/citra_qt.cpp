@@ -118,6 +118,9 @@
 #include "ui_main.h"
 #include "video_core/gpu.h"
 #include "video_core/renderer_base.h"
+#ifdef __EMSCRIPTEN__
+#include "web/qt/runtime.h"
+#endif
 
 #ifdef __APPLE__
 #include "common/apple_authorization.h"
@@ -2637,6 +2640,9 @@ void GMainWindow::OnMenuRecentFile() {
 }
 
 void GMainWindow::OnResumeGame(bool first_start) {
+#ifdef __EMSCRIPTEN__
+    Web::Qt::SetAudioRunning(true);
+#endif
     qt_cameras->ResumeCameras();
 
     PreventOSSleep();
@@ -2676,6 +2682,9 @@ void GMainWindow::OnRestartGame() {
 }
 
 void GMainWindow::OnPauseGame() {
+#ifdef __EMSCRIPTEN__
+    Web::Qt::SetAudioRunning(false);
+#endif
     system.frame_limiter.SetFrameAdvancing(true);
     qt_cameras->PauseCameras();
 

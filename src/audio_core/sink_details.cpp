@@ -14,6 +14,9 @@
 #ifdef HAVE_LIBRETRO
 #include "audio_core/libretro_sink.h"
 #endif
+#ifdef HAVE_WEB_AUDIO
+#include "web/qt/audio-sink.h"
+#endif
 #ifdef HAVE_CUBEB
 #include "audio_core/cubeb_sink.h"
 #endif
@@ -26,6 +29,13 @@ namespace AudioCore {
 namespace {
 // sink_details is ordered in terms of desirability, with the best choice at the top.
 constexpr std::array sink_details = {
+#ifdef HAVE_WEB_AUDIO
+    SinkDetails{SinkType::WebAudio, "Web Audio",
+                [](std::string_view) -> std::unique_ptr<Sink> {
+                    return std::make_unique<WebAudioSink>();
+                },
+                [] { return std::vector<std::string>{auto_device_name}; }},
+#endif
 #ifdef HAVE_LIBRETRO
     SinkDetails{SinkType::LibRetro, "libretro",
                 [](std::string_view device_id) -> std::unique_ptr<Sink> {

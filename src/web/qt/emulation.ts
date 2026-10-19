@@ -3,11 +3,17 @@
 import { ArmJitHost } from "../arm/jit-host";
 import { PicaJitHost } from "../pica/jit-host";
 import { GraphicsClient } from "../gpu/client";
+import { QtAudioProducer } from "./audio";
+import type { AudioTransport } from "../runtime/audio-ring";
 
 interface QtModule {
   azaharJitHost?: ArmJitHost;
   azaharPicaJitHost?: PicaJitHost;
   azaharGraphicsHost?: GraphicsClient;
+  azaharQtAudioProducer?: QtAudioProducer;
+  azaharQtAudioTransport?: AudioTransport;
+  azaharQtAudioConnection?: number;
+  azaharQtAudioResume?: number;
 }
 
 interface Emulation {
@@ -39,10 +45,28 @@ export async function initializeEmulation(module: QtModule, canvas: OffscreenCan
     module.azaharPicaJitHost = new PicaJitHost();
     module.azaharGraphicsHost = graphics;
     emulation = state = { module, graphics };
+    connectAudio(module);
   } catch (error) {
     await graphics.close().catch(() => undefined);
     throw error;
   }
+  return undefined;
+}
+
+export function connectAudio(module: QtModule): undefined {
+  if (emulation?.module !== module || !module.azaharQtAudioTransport) return undefined;
+  module.azaharQtAudioProducer = new QtAudioProducer(module.azaharQtAudioTransport);
+  module.azaharQtAudioProducer.clear();
+  if (module.azaharQtAudioResume) resumeAudio(module);
+  return undefined;
+}
+
+export function resumeAudio(module: QtModule): undefined {
+  if (emulation?.module !== module || !module.azaharQtAudioProducer ||
+    module.azaharQtAudioResume !== module.azaharQtAudioConnection) return undefined;
+  module.azaharQtAudioProducer.resume();
+  delete module.azaharQtAudioResume;
+  worker.postMessage({ azaharQtAudioReady: module.azaharQtAudioConnection });
   return undefined;
 }
 
@@ -59,6 +83,11 @@ export async function shutdownEmulation(): Promise<undefined> {
   const { module, graphics } = emulation;
   try { await graphics.close(); }
   finally {
+    module.azaharQtAudioProducer?.clear();
+    delete module.azaharQtAudioProducer;
+    delete module.azaharQtAudioTransport;
+    delete module.azaharQtAudioConnection;
+    delete module.azaharQtAudioResume;
     delete module.azaharJitHost;
     delete module.azaharPicaJitHost;
     delete module.azaharGraphicsHost;

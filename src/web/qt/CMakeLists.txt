@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 azahar_enable_dsp_runtime(citra_meta)
+target_sources(audio_core PRIVATE audio-sink.cpp audio-sink.h)
+target_compile_definitions(audio_core PRIVATE HAVE_WEB_AUDIO)
 target_sources(citra_meta PRIVATE runtime.cpp runtime.h ../runtime/file-system.cpp)
 target_link_libraries(citra_meta PRIVATE emscripten_opfs cryptopp)
 target_include_directories(citra_meta PRIVATE
@@ -34,7 +36,7 @@ set(QT_EMULATION_RUNTIME "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-qt-emulation.
 add_custom_command(OUTPUT "${QT_RUNTIME}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/runtime.ts"
         --target browser --outfile "${QT_RUNTIME}"
-    DEPENDS runtime.ts ../runtime/storage-lock.ts
+    DEPENDS runtime.ts ../runtime/storage-lock.ts ../runtime/audio-output.ts ../runtime/audio-ring.ts
     VERBATIM)
 file(GLOB QT_EMULATION_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/../arm/*.ts"
@@ -44,10 +46,16 @@ file(GLOB QT_EMULATION_SOURCES CONFIGURE_DEPENDS
 add_custom_command(OUTPUT "${QT_EMULATION_RUNTIME}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/emulation.ts"
         --target browser --outfile "${QT_EMULATION_RUNTIME}"
-    DEPENDS emulation.ts ${QT_EMULATION_SOURCES}
+    DEPENDS emulation.ts audio.ts ../runtime/audio-ring.ts ${QT_EMULATION_SOURCES}
+    VERBATIM)
+set(QT_AUDIO_WORKLET "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-audio-worklet.js")
+add_custom_command(OUTPUT "${QT_AUDIO_WORKLET}"
+    COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/audio-worklet.ts"
+        --target browser --outfile "${QT_AUDIO_WORKLET}"
+    DEPENDS ../runtime/audio-worklet.ts ../runtime/audio-ring.ts
     VERBATIM)
 add_custom_target(azahar_qt_runtime DEPENDS citra_meta azahar_graphics_runtime
-    "${QT_RUNTIME}" "${QT_EMULATION_RUNTIME}")
+    "${QT_RUNTIME}" "${QT_EMULATION_RUNTIME}" "${QT_AUDIO_WORKLET}")
 
 if (ENABLE_TESTS)
     add_subdirectory(tests)
