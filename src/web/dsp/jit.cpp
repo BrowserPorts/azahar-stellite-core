@@ -251,15 +251,13 @@ public:
                 }
             }
 
-            // Only this execution thread consumes pending interrupts. Poll before
-            // clearing so inactive lines avoid an atomic RMW on every DSP cycle.
             for (std::size_t i = 0; i < 3; ++i) {
-                if (interrupt_pending[i].load() && interrupt_pending[i].exchange(false)) {
+                if (interrupt_pending[i].exchange(false)) {
                     regs.ip[i] = 1;
                 }
             }
 
-            if (vinterrupt_pending.load() && vinterrupt_pending.exchange(false)) {
+            if (vinterrupt_pending.exchange(false)) {
                 regs.ipv = 1;
             }
 
