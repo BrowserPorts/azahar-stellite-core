@@ -22,6 +22,16 @@ if(EMSCRIPTEN)
     add_link_options(-fwasm-exceptions -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=4194304
         -sENVIRONMENT=node -sEXIT_RUNTIME=1 -sDYNAMIC_EXECUTION=0)
     find_program(NODE_EXECUTABLE NAMES node REQUIRED)
+    if(AZAHAR_TEAKRA_JIT)
+        execute_process(COMMAND "${NODE_EXECUTABLE}" -e
+            "process.exit(typeof WebAssembly.Suspending === 'function' && typeof WebAssembly.promising === 'function' ? 0 : 1)"
+            RESULT_VARIABLE NODE_JSPI_RESULT)
+        if(NOT NODE_JSPI_RESULT EQUAL 0)
+            message(FATAL_ERROR
+                "The Teakra Wasm JIT fixtures require Node with WebAssembly JSPI. "
+                "Set NODE_EXECUTABLE to a compatible Node executable.")
+        endif()
+    endif()
     if(AZAHAR_TEAKRA_JIT OR AZAHAR_ARM_JIT_THREADS)
         add_compile_options(-pthread)
         add_link_options(-pthread)
