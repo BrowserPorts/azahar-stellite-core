@@ -54,7 +54,7 @@ set(DSP_OPTIMIZER_COMPILER "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-dsp-optimiz
 add_custom_command(OUTPUT "${DSP_OPTIMIZER_WORKER}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/optimizer-worker.ts"
         --target browser --outfile "${DSP_OPTIMIZER_WORKER}"
-    DEPENDS optimizer-worker.ts optimizer-mailbox.ts ../package.json ../bun.lock
+    DEPENDS optimizer-worker.ts optimizer-mailbox.ts optimizer-cache.ts ../package.json ../bun.lock
     VERBATIM)
 add_custom_command(OUTPUT "${DSP_OPTIMIZER_COMPILER}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/optimizer.ts"

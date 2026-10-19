@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { OptimizerMailbox, type OptimizerBuffers } from "./optimizer-mailbox";
+import { DspOptimizerCache } from "./optimizer-cache";
 import type { optimizeDsp } from "./optimizer";
 
 export type OptimizerRequest = {
@@ -12,25 +13,50 @@ export type OptimizerRequest = {
 let mailbox: OptimizerMailbox | undefined;
 let memory: Uint8Array<SharedArrayBuffer> | undefined;
 let optimize: typeof optimizeDsp | undefined;
+let compilerUrl: string | undefined;
+let cache: DspOptimizerCache | undefined;
 let initialized: () => unknown;
 let failed: (error: string) => unknown;
 let work = Promise.resolve();
 
+async function compiler(): Promise<typeof optimizeDsp> {
+  if (!optimize) {
+    if (!compilerUrl) throw new Error("DSP optimizer is not initialized");
+    optimize = (await import(compilerUrl)).optimizeDsp;
+    if (typeof optimize !== "function") throw new Error("DSP optimizer entry is unavailable");
+  }
+  return optimize;
+}
+
 function receive(request: OptimizerRequest): undefined {
+  const lookupCache = cache;
+  const lookupMemory = memory;
+  const pendingLookup = request.kind === "compile" && lookupCache && lookupMemory &&
+    !mailbox?.closed && !mailbox?.failed ?
+    lookupCache.lookup(request.bytes, lookupMemory, request.ranges) : undefined;
   work = work.then(async () => {
     if (request.kind === "initialize") {
       mailbox = new OptimizerMailbox(request.buffers);
       memory = new Uint8Array(request.memory);
-      optimize = (await import(request.compilerUrl)).optimizeDsp;
-      if (typeof optimize !== "function") throw new Error("DSP optimizer entry is unavailable");
+      compilerUrl = request.compilerUrl;
+      cache = await DspOptimizerCache.open(compilerUrl);
+      if (!cache) await compiler();
       initialized();
       return;
     }
     if (mailbox?.closed || mailbox?.failed) return;
-    if (!mailbox || !memory || !optimize) throw new Error("DSP optimizer is not initialized");
+    if (!mailbox || !memory || !compilerUrl) throw new Error("DSP optimizer is not initialized");
+    const lookup = pendingLookup && lookupCache === cache && lookupMemory === memory ?
+      await pendingLookup : await cache?.lookup(request.bytes, memory, request.ranges);
     const started = performance.now();
-    const result = optimize(request.bytes, memory, request.ranges);
-    mailbox.write({ key: request.key, ...result, elapsedMs: performance.now() - started, error: false });
+    const key = lookup?.key;
+    let result = lookup?.entry;
+    if (!result) {
+      result = (await compiler())(request.bytes, memory, request.ranges);
+      if (key) cache!.store(key, result);
+    }
+    mailbox.write({ key: request.key, ...result,
+      elapsedMs: (lookup?.elapsedMs ?? 0) + performance.now() - started, error: false });
   }).catch(error => {
     if (mailbox?.closed || mailbox?.failed) return;
     failed(String(error));
