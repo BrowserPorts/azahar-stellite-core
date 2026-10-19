@@ -338,7 +338,7 @@ if (ENABLE_DISCORD_RPC)
 endif()
 
 # LibRetro
-if (ENABLE_LIBRETRO)
+if (ENABLE_LIBRETRO OR (EMSCRIPTEN AND ENABLE_QT))
   add_library(libretro INTERFACE)
   target_include_directories(libretro INTERFACE ./libretro-common/libretro-common/include)
   if (ANDROID)

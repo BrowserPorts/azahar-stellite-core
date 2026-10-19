@@ -187,6 +187,11 @@ if(ENABLE_BUILTIN_KEYBLOB)
     add_compile_definitions(ENABLE_BUILTIN_KEYBLOB)
 endif()
 
+if(EMSCRIPTEN AND (ENABLE_QT OR ENABLE_LIBRETRO))
+    add_library(azahar_browser_microphone STATIC web/runtime/microphone.cpp)
+    target_link_libraries(azahar_browser_microphone PRIVATE libretro)
+endif()
+
 add_subdirectory(common)
 add_subdirectory(core)
 add_subdirectory(video_core)

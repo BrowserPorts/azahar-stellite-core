@@ -28,8 +28,7 @@
 #include "core/hle/service/fs/archive.h"
 #include "core/loader/loader.h"
 #include "libretro.h"
-
-struct retro_microphone { bool active = false; };
+#include "web/runtime/microphone.h"
 
 extern "C" bool azahar_flush_user_storage();
 
@@ -58,41 +57,6 @@ EM_JS(void, DisplayMessage, (const char* text), {
 EM_JS(void, InstallProgress, (u64 written, u64 total), {
     Module["azaharInstallProgress"]?.(Number(written), Number(total));
 });
-
-EM_JS(int, ReadMicrophoneSamples, (int16_t* samples, size_t count), {
-    return Module["azaharMicrophoneRead"]?.(samples, count) ?? 0;
-});
-EM_JS(void, MicrophoneActive, (bool active), {
-    Module["azaharMicrophoneActive"]?.(!!active);
-});
-
-retro_microphone_t* OpenMicrophone(const retro_microphone_params_t* params) {
-    if (params && params->rate != 48000) return nullptr;
-    return new retro_microphone;
-}
-void CloseMicrophone(retro_microphone_t* microphone) {
-    if (!microphone) return;
-    MicrophoneActive(false);
-    delete microphone;
-}
-bool GetMicrophoneParams(const retro_microphone_t* microphone, retro_microphone_params_t* params) {
-    if (!microphone || !params) return false;
-    params->rate = 48000;
-    return true;
-}
-bool SetMicrophoneState(retro_microphone_t* microphone, bool active) {
-    if (!microphone) return false;
-    microphone->active = active;
-    MicrophoneActive(active);
-    return true;
-}
-bool GetMicrophoneState(const retro_microphone_t* microphone) {
-    return microphone && microphone->active;
-}
-int ReadMicrophone(retro_microphone_t* microphone, int16_t* samples, size_t count) {
-    if (!GetMicrophoneState(microphone) || !samples || count > 4096) return -1;
-    return ReadMicrophoneSamples(samples, count);
-}
 
 void Log(retro_log_level level, const char* format, ...) {
     std::array<char, 4096> message{};
@@ -159,8 +123,7 @@ bool Environment(unsigned command, void* data) {
     case RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE: {
         auto* interface = static_cast<retro_microphone_interface*>(data);
         if (!interface || interface->interface_version != RETRO_MICROPHONE_INTERFACE_VERSION) return false;
-        *interface = {RETRO_MICROPHONE_INTERFACE_VERSION, OpenMicrophone, CloseMicrophone,
-                      GetMicrophoneParams, SetMicrophoneState, GetMicrophoneState, ReadMicrophone};
+        *interface = Web::GetMicrophoneInterface();
         return true;
     }
     case RETRO_ENVIRONMENT_GET_SENSOR_INTERFACE:
