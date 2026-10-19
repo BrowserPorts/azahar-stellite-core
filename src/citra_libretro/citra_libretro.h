@@ -12,4 +12,6 @@ namespace LibRetro {
 bool RunFrame();
 /// Reloads the current game, optionally applying pending frontend options before loading.
 bool ResetGame(bool update_settings = false);
+/// Finish pending host I/O before a save or storage flush.
+bool DrainAsyncOperations(Core::System& system);
 } // namespace LibRetro

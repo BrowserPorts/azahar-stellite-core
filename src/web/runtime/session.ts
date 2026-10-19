@@ -116,7 +116,7 @@ export class BrowserSession {
         azaharAudio: (pointer, frames, sampleRate) => output.audio(core.HEAP16.subarray(pointer >>> 1,
           (pointer >>> 1) + frames * 2), sampleRate),
       });
-      if (core._azahar_web_abi() !== 21) throw new Error("Unsupported Azahar browser ABI");
+      if (core._azahar_web_abi() !== 22) throw new Error("Unsupported Azahar browser ABI");
       if (!core._azahar_mount_storage()) throw new Error("Azahar could not mount OPFS user storage");
       if (!await core._azahar_initialize()) throw new Error("Azahar initialization failed");
       return new BrowserSession(core, storage, armJit, graphics, microphone);
@@ -338,6 +338,12 @@ export class BrowserSession {
     this.checkLoaded();
     if (!this.#states) throw new Error("Save-state storage is unavailable");
     return this.#states.save(slot, this.core);
+  }
+
+  async flushSaves(): Promise<undefined> {
+    this.checkOpen();
+    if (!await this.core._azahar_flush_saves()) throw new Error("Azahar could not flush user storage");
+    return undefined;
   }
 
   async reset(): Promise<undefined> {

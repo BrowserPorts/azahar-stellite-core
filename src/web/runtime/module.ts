@@ -42,6 +42,7 @@ export interface AzaharModule {
   _azahar_program_id(): number;
   _azahar_run_frame(): Promise<number>;
   _azahar_reset_game(): Promise<number>;
+  _azahar_flush_saves(): Promise<number>;
   _azahar_performance_stats(): number;
   _azahar_set_input(mask: number, lx: number, ly: number, rx: number, ry: number,
     x: number, y: number, touch: number): unknown;

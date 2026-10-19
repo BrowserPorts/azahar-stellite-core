@@ -312,6 +312,12 @@ export class AzaharClient {
     return result;
   }
 
+  /** Drain native I/O and flush open OPFS user files without stopping emulation. */
+  async flushSaves(): Promise<undefined> {
+    await this.request({ type: "flush-saves" });
+    return undefined;
+  }
+
   close(): Promise<undefined> {
     if (this.#closing) return this.#closing;
     this.#motionController?.abort();

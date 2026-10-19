@@ -156,6 +156,7 @@ worker.onmessage = (event: MessageEvent<SessionRequest | SessionInitialize>): un
         }
         case "start": await start(); break;
         case "pause": pause(); break;
+        case "flush-saves": await session.flushSaves(); break;
         case "reset": {
           const resume = running;
           pause();

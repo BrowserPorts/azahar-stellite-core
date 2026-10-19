@@ -25,6 +25,8 @@ extern "C" ssize_t azahar_read_import_file(std::uint8_t* bytes, size_t length, o
 
 namespace {
 
+backend_t storage_backend = nullptr;
+
 class BrowserFile final : public wasmfs::DataFile {
 public:
     BrowserFile(mode_t mode, wasmfs::backend_t backend, off_t size_)
@@ -95,7 +97,15 @@ extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_mount_storage() {
         symlink("/opfs/azahar/user", "/user") != 0 || !MakeDirectory("/rom")) {
         return false;
     }
+    storage_backend = backend;
     return true;
+}
+
+extern "C" bool azahar_flush_user_storage() {
+    if (!storage_backend) return false;
+    const bool streams_flushed = std::fflush(nullptr) == 0;
+    const int flushed = wasmfs_sync_backend(storage_backend);
+    return streams_flushed && flushed == 0;
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_mount_game_file(const char* path, std::uint64_t size) {

@@ -31,6 +31,8 @@
 
 struct retro_microphone { bool active = false; };
 
+extern "C" bool azahar_flush_user_storage();
+
 namespace {
 std::map<std::string, std::string> options;
 std::map<std::string, const retro_core_option_v2_definition*> option_definitions;
@@ -199,7 +201,12 @@ int16_t ReadInput(unsigned port, unsigned device, unsigned index, unsigned id) {
 } // namespace
 
 extern "C" EMSCRIPTEN_KEEPALIVE std::uint32_t azahar_web_abi() {
-    return 21;
+    return 22;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE bool azahar_flush_saves() {
+    if (!initialized || !LibRetro::DrainAsyncOperations(Core::System::GetInstance())) return false;
+    return azahar_flush_user_storage();
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE const char* azahar_core_options() {

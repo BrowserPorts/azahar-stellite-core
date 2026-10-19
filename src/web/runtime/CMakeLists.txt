@@ -16,7 +16,7 @@ target_link_options(azahar_browser PRIVATE
     -sINITIAL_MEMORY=536870912 -sMAXIMUM_MEMORY=2147483648 -sALLOW_MEMORY_GROWTH=1
     # Native startup needs resident WasmFS, logging, async-job and DSP workers.
     -sSTACK_SIZE=4194304 -sPTHREAD_POOL_SIZE=8 -sPTHREAD_POOL_SIZE_STRICT=2 -sEXIT_RUNTIME=0
-    "-sJSPI_EXPORTS=['azahar_initialize','azahar_load_game','azahar_install_cia','azahar_run_frame','azahar_reset_game','azahar_shutdown','retro_serialize_size','retro_serialize','retro_unserialize']"
+    "-sJSPI_EXPORTS=['azahar_initialize','azahar_load_game','azahar_install_cia','azahar_run_frame','azahar_reset_game','azahar_flush_saves','azahar_shutdown','retro_serialize_size','retro_serialize','retro_unserialize']"
     "-sEXPORTED_RUNTIME_METHODS=['HEAPU8','HEAPU32','HEAP16','UTF8ToString','stringToNewUTF8','addFunction','removeFunction']"
     "-sEXPORTED_FUNCTIONS=['_malloc','_free','_retro_init','_retro_deinit','_retro_api_version','_retro_get_system_info','_retro_get_system_av_info','_retro_set_environment','_retro_set_video_refresh','_retro_set_audio_sample','_retro_set_audio_sample_batch','_retro_set_input_poll','_retro_set_input_state','_retro_set_controller_port_device','_retro_reset','_retro_run','_retro_load_game','_retro_unload_game','_retro_serialize_size','_retro_serialize','_retro_unserialize','_retro_get_memory_data','_retro_get_memory_size','_retro_get_region']")
 

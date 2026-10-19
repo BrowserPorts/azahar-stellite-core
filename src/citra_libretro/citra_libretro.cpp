@@ -694,7 +694,7 @@ bool retro_load_game_special(unsigned game_type, const struct retro_game_info* i
 /// so the pending count may not decrease monotonically. In practice games reach quiescent
 /// points between frames; the 5-second timeout (matching RunLoop's existing handler)
 /// covers the pathological case.
-static bool DrainAsyncOperations(Core::System& system) {
+bool LibRetro::DrainAsyncOperations(Core::System& system) {
     if (!system.KernelRunning() || !system.Kernel().AreAsyncOperationsPending()) {
         return true;
     }
@@ -733,7 +733,7 @@ size_t retro_serialize_size() {
     if (!system.IsPoweredOn())
         return 0;
 
-    if (!DrainAsyncOperations(system)) {
+    if (!LibRetro::DrainAsyncOperations(system)) {
         savestate.reset();
         return 0;
     }
@@ -763,7 +763,7 @@ bool retro_unserialize(const void* data, size_t size) {
     if (!system.IsPoweredOn())
         return false;
 
-    if (!DrainAsyncOperations(system)) {
+    if (!LibRetro::DrainAsyncOperations(system)) {
         return false;
     }
 
