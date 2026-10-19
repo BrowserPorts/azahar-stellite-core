@@ -1474,6 +1474,49 @@ function lowerArmBody(block: ArmBlock, options: BlockOptions, region?: LowerRegi
         });
         break;
       case "A32GetFpscr": load(options.layout.fpscr); break;
+      case "FPDiv32": case "FPSqrt32": {
+        const direct = options.fpStatusHelpers?.has(node.op) &&
+          (knownFpscrMode === undefined || !(knownFpscrMode & 0xc00000));
+        if (direct) {
+          const squareRoot = node.op === "FPSqrt32";
+          body.byte(0x02).byte(0x7f).byte(0x02).byte(0x40);
+          // Initialize the cached trap guard before any branch can reach the helper.
+          if (fpTrapFlags !== undefined && !fpTrapFlagsValid) { loadFPTrapFlags(); body.byte(0x1a); }
+          if (knownFpscrMode === undefined) {
+            load(options.layout.fpscr); constant(0xc00000).byte(0x71).byte(0x0d).u32(0);
+          }
+          loadFPTrapFlags(); body.byte(0x0d).u32(0);
+          for (let operand = 0; operand < (squareRoot ? 1 : 2); operand++) {
+            arg(operand);
+            // A square root requires a positive normal input; division accepts either sign.
+            if (!squareRoot) constant(0x7fffffff).byte(0x71);
+            constant(0x800000).byte(0x6b); constant(0x7effffff).byte(0x4b).byte(0x0d).u32(0);
+          }
+          arg(0); body.byte(0xbe);
+          if (squareRoot) body.byte(0x91);
+          else { arg(1); body.byte(0xbe).byte(0x95); }
+          body.byte(0xbc); set(nodeLocals[index]!);
+          if (!squareRoot) {
+            // Boundary binades retain native before-rounding tininess and overflow handling.
+            get(nodeLocals[index]!); constant(0x7f800000).byte(0x71);
+            constant(0x1000000).byte(0x6b); constant(0x7d800000).byte(0x4b).byte(0x0d).u32(0);
+          }
+          // These normal results can only add inexact, which is sticky in FPSCR.
+          load(options.layout.fpscr); constant(0x10).byte(0x71).byte(0x45).byte(0x04).byte(0x40);
+          // A product of binary32 values is exact in binary64. Reconstruct the
+          // dividend or square the root to detect rounding without another division.
+          get(nodeLocals[index]!); body.byte(0xbe).byte(0xbb);
+          if (squareRoot) get(nodeLocals[index]!); else arg(1);
+          body.byte(0xbe).byte(0xbb).byte(0xa2);
+          arg(0); body.byte(0xbe).byte(0xbb).byte(0x62).byte(0x04).byte(0x40);
+          store(options.layout.fpscr, () => { load(options.layout.fpscr); constant(0x10).byte(0x72); });
+          body.byte(0x0b).byte(0x0b);
+          get(nodeLocals[index]!); body.byte(0x0c).u32(1).byte(0x0b);
+        }
+        helper(node.op, node.args.map(argType), ["i32"], () => node.args.forEach(argument));
+        if (direct) body.byte(0x0b);
+        break;
+      }
       case "FPAdd32": case "FPSub32": case "FPMul32": {
         const direct = options.fpStatusHelpers?.has(node.op);
         if (direct) {
