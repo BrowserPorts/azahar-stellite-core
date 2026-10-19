@@ -12,7 +12,9 @@ const recordings = new URL(location.href).searchParams.has("recordings");
 const core = new URL(location.href).searchParams.has("core");
 const dispatch = new URL(location.href).searchParams.has("pica-dispatch");
 const fuzz = new URL(location.href).searchParams.has("fuzz");
-const dsp = new URL(location.href).searchParams.has("dsp");
+const dspRecordings = new URL(location.href).searchParams.has("dsp-recordings");
+const dsp = new URL(location.href).searchParams.has("dsp") || dspRecordings;
+const restoreState = new URL(location.href).searchParams.has("restore-state");
 const lazyDsp = new URL(location.href).searchParams.has("lazy-dsp");
 const regionTier = new URL(location.href).searchParams.has("region-tier");
 const filter = new URL(location.href).searchParams.get("filter");
@@ -30,13 +32,14 @@ const firmware = firmwareDirectory ? await Promise.all(["dspfirm.cdc", "dspaudio
 if (storage !== null && !["setup", "resume", "errors", "unlink"].includes(storage)) {
   throw new Error("Invalid OPFS fixture mode");
 }
-const fixtureUrl = new URL(pthreadDlopen ? "./wasm_pthread_dlopen.mjs" : dsp && !core ? "./teakra_reference_fixtures.mjs" : storage ? `./wasmfs_opfs_${storage}.mjs` : core ? "./tests.mjs" : fuzz ? "./dynarmic_arm_fuzz_fixtures.mjs" : recordings ? "./dynarmic_vfp_recordings.mjs" :
+const dspFixture = dspRecordings ? "teakra_hardware_fixtures" : "teakra_reference_fixtures";
+const fixtureUrl = new URL(pthreadDlopen ? "./wasm_pthread_dlopen.mjs" : dsp && !core ? `./${dspFixture}.mjs` : storage ? `./wasmfs_opfs_${storage}.mjs` : core ? "./tests.mjs" : fuzz ? "./dynarmic_arm_fuzz_fixtures.mjs" : recordings ? "./dynarmic_vfp_recordings.mjs" :
   "./dynarmic_arm_jit_fixtures.mjs", import.meta.url);
 const assets: Record<string, string> = {};
 if (blobAssets) {
   if (!pthreadDlopen && !(dsp && !core)) throw new Error("Blob assets require the pthread dlopen or Teakra fixture");
   const names = pthreadDlopen ? ["wasm_pthread_dlopen.mjs", "wasm_pthread_dlopen.wasm", "libside.so"] :
-    ["teakra_reference_fixtures.mjs", "teakra_reference_fixtures.wasm", "azahar-dsp-jit.js",
+    [`${dspFixture}.mjs`, `${dspFixture}.wasm`, ...(dspRecordings ? [`${dspFixture}.data`] : []), "azahar-dsp-jit.js",
       "azahar-dsp-templates.wasm", "azahar-dsp-families.bin", "azahar-dsp-optimizer-worker.mjs",
       "azahar-dsp-optimizer.mjs"];
   for (const name of names) {
@@ -44,7 +47,7 @@ if (blobAssets) {
     if (!response.ok) throw new Error(`Could not load original pthread fixture asset ${name}`);
     assets[name] = URL.createObjectURL(new Blob([await response.arrayBuffer()], {
       type: name.endsWith(".wasm") || name.endsWith(".so") ? "application/wasm" :
-        name.endsWith(".bin") ? "application/octet-stream" : "text/javascript",
+        name.endsWith(".bin") || name.endsWith(".data") ? "application/octet-stream" : "text/javascript",
     }));
   }
 }
@@ -72,6 +75,7 @@ worker.onerror = (event: ErrorEvent): undefined => {
 };
 worker.postMessage({ url: assets[fixtureUrl.pathname.split("/").pop()!] ?? fixtureUrl.href,
   ...(blobAssets ? { assets } : {}),
-  args: recordings || storage || pthreadDlopen ? [] : ["--reporter", "compact", ...(filter ? [filter] : []),
+  args: dspRecordings ? ["/teaklite2_tests_result.bin", ...(restoreState ? ["--restore-state"] : [])] :
+    recordings || storage || pthreadDlopen ? [] : ["--reporter", "compact", ...(filter ? [filter] : []),
     ...(seed ? ["--rng-seed", seed] : []), ...sections.flatMap(section => ["--section", section])],
   dispatch, dsp, lazyDsp, regionTier, firmware } satisfies FixtureRequest);

@@ -158,6 +158,24 @@ if(AZAHAR_TEAKRA_JIT)
     link_dsp_jit(test_verifier)
     link_dsp_jit(teakra_reference_fixtures)
     target_link_options(teakra_reference_fixtures PRIVATE -sENVIRONMENT=web,worker,node)
+    add_executable(teakra_hardware_fixtures
+        "${AZAHAR_ROOT}/externals/teakra/src/test_verifier/main.cpp")
+    target_include_directories(teakra_hardware_fixtures PRIVATE
+        "${AZAHAR_ROOT}/externals/teakra/include/teakra/impl")
+    target_link_libraries(teakra_hardware_fixtures PRIVATE teakra)
+    link_dsp_jit(teakra_hardware_fixtures)
+    target_link_options(teakra_hardware_fixtures PRIVATE -sENVIRONMENT=web,worker,node
+        "SHELL:--preload-file \"${TEAKRA_TEST_ASSETS_DIR}/teaklite2_tests_result.bin@/teaklite2_tests_result.bin\"")
+    set_property(TARGET teakra_hardware_fixtures APPEND PROPERTY LINK_DEPENDS
+        "${TEAKRA_TEST_ASSETS_DIR}/teaklite2_tests_result.bin")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${TEAKRA_TEST_ASSETS_DIR}/teaklite2_tests_result.bin")
+    add_custom_command(TARGET teakra_hardware_fixtures POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E compare_files
+            "${TEAKRA_TEST_ASSETS_DIR}/teaklite2_tests_result.bin"
+            "$<TARGET_FILE_DIR:teakra_hardware_fixtures>/teakra_hardware_fixtures.data"
+        BYPRODUCTS "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/teakra_hardware_fixtures.data"
+        VERBATIM)
     set(DSP_WEB_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
     file(GENERATE OUTPUT "${DSP_WEB_DIRECTORY}/browser-jit.html" INPUT
         "${CMAKE_CURRENT_SOURCE_DIR}/browser-jit.html")
@@ -170,7 +188,8 @@ if(AZAHAR_TEAKRA_JIT)
             "${AZAHAR_ROOT}/src/web/pica/control-flow.ts" "${AZAHAR_ROOT}/src/web/pica/instruction.ts"
             "${AZAHAR_ROOT}/src/web/wasm/binary.ts" "${AZAHAR_ROOT}/src/web/protocol.ts"
         VERBATIM)
-    add_custom_target(browser_dsp_fixtures DEPENDS teakra_reference_fixtures azahar_dsp_jit_host
+    add_custom_target(browser_dsp_fixtures DEPENDS teakra_reference_fixtures teakra_hardware_fixtures
+        azahar_dsp_jit_host
         "${DSP_WEB_DIRECTORY}/browser-jit.js" "${DSP_WEB_DIRECTORY}/browser-worker.js")
     add_test(NAME teakra_reference_fixtures COMMAND "${NODE_EXECUTABLE}"
         "${DSP_JIT_RUNNER}" "$<TARGET_FILE:teakra_reference_fixtures>")

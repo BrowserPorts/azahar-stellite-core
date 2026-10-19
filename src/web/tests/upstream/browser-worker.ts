@@ -62,6 +62,7 @@ worker.onmessage = async (event: MessageEvent<FixtureRequest>): Promise<undefine
     await createModule({
       ...(event.data.assets ? {
         locateFileMap: event.data.assets,
+        locateFile: (name: string, prefix: string) => event.data.assets?.[name] ?? prefix + name,
         mainScriptUrlOrBlob: event.data.url,
       } : {}),
       ...(dspHost ? { azaharDspJitHost: dspHost } : {}),
