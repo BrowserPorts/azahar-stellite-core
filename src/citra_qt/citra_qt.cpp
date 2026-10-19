@@ -119,6 +119,7 @@
 #include "video_core/gpu.h"
 #include "video_core/renderer_base.h"
 #ifdef __EMSCRIPTEN__
+#include "web/qt/file-dialog.h"
 #include "web/qt/runtime.h"
 #endif
 
@@ -2333,6 +2334,15 @@ void GMainWindow::OnGameListOpenPerGameProperties(const QString& file) {
 }
 
 void GMainWindow::OnMenuLoadFile() {
+#ifdef __EMSCRIPTEN__
+    ui->action_Load_File->setEnabled(false);
+    Web::Qt::OpenGameFile(this, GameList::supported_file_extensions, [this](const QString& filename) {
+        ui->action_Load_File->setEnabled(true);
+        if (filename.isEmpty()) return;
+        UISettings::values.roms_path = QFileInfo(filename).path();
+        BootGame(filename);
+    });
+#else
     const QString extensions = QStringLiteral("*.").append(
         GameList::supported_file_extensions.join(QStringLiteral(" *.")));
     const QString file_filter = tr("3DS Executable") + QStringLiteral(" (%1)").arg(extensions) +
@@ -2346,6 +2356,7 @@ void GMainWindow::OnMenuLoadFile() {
 
     UISettings::values.roms_path = QFileInfo(filename).path();
     BootGame(filename);
+#endif
 }
 
 void GMainWindow::OnMenuSetUpSystemFiles() {

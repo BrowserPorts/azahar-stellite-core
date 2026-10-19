@@ -2,6 +2,9 @@
 
 import { UserStorageLock } from "../runtime/storage-lock";
 import { BrowserAudioOutput } from "../runtime/audio-output";
+import { GameImporter } from "./game-import";
+
+const gameImporter = new GameImporter();
 
 let storage: UserStorageLock | undefined;
 let audio: BrowserAudioOutput | undefined;
@@ -92,7 +95,13 @@ export function disconnectAudio(worker: Worker): undefined {
   return undefined;
 }
 
+export const beginGameImport = (accept: string): boolean => gameImporter.begin(accept);
+export const gameImportStatus = (): ReturnType<GameImporter["status"]> => gameImporter.status();
+export const cancelGameImport = (): undefined => gameImporter.cancel();
+export const finishGameImport = (): undefined => gameImporter.finish();
+
 export function shutdownFrontend(): undefined {
+  gameImporter.cancel();
   document.removeEventListener("pointerdown", prepareAudio, { capture: true });
   document.removeEventListener("keydown", prepareAudio, { capture: true });
   if (audioWorker) disconnectAudio(audioWorker);

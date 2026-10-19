@@ -3,6 +3,7 @@
 azahar_enable_dsp_runtime(citra_meta)
 target_sources(audio_core PRIVATE audio-sink.cpp audio-sink.h)
 target_compile_definitions(audio_core PRIVATE HAVE_WEB_AUDIO)
+target_sources(citra_qt PRIVATE file-dialog.cpp file-dialog.h)
 target_sources(citra_meta PRIVATE runtime.cpp runtime.h ../runtime/file-system.cpp)
 target_link_libraries(citra_meta PRIVATE emscripten_opfs cryptopp)
 target_include_directories(citra_meta PRIVATE
@@ -36,7 +37,8 @@ set(QT_EMULATION_RUNTIME "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-qt-emulation.
 add_custom_command(OUTPUT "${QT_RUNTIME}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/runtime.ts"
         --target browser --outfile "${QT_RUNTIME}"
-    DEPENDS runtime.ts ../runtime/storage-lock.ts ../runtime/audio-output.ts ../runtime/audio-ring.ts
+    DEPENDS runtime.ts game-import.ts ../runtime/storage-lock.ts
+        ../runtime/audio-output.ts ../runtime/audio-ring.ts
     VERBATIM)
 file(GLOB QT_EMULATION_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/../arm/*.ts"
