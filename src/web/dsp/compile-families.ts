@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import binaryen from "binaryen";
-import { compileFamily } from "./compiler";
+import { compileFamily, prepareFamily } from "./compiler";
 import { packFamilies, type FamilyMetadata } from "./family-archive";
 
 const [input, output] = process.argv.slice(2);
@@ -39,10 +39,10 @@ try {
       metadata.families.push(null);
       continue;
     }
-    const family = compileFamily(templates, target);
-    metadata.families.push([offset, family.byteLength]);
-    families.push(family);
-    offset += family.byteLength;
+    const family = prepareFamily(compileFamily(templates, target));
+    metadata.families.push([offset, family.bytes.byteLength, family.relocations]);
+    families.push(family.bytes);
+    offset += family.bytes.byteLength;
   }
   const archive = packFamilies(metadata, families);
   await writeFile(output, archive);

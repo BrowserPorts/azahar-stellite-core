@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import binaryen from "binaryen";
-import { configureOptimizer, features, relocateFamily } from "./compiler";
+import { configureOptimizer, features } from "./compiler";
 import { FamilyArchive } from "./family-archive";
 import { foldReadOnlyLoads } from "./fold-readonly-loads.js";
 
@@ -101,42 +101,45 @@ export class DspJitHost {
     const key = (opcode * 65536 + (pattern[3] ? expansion : 0)) >>> 0;
     const cached = this.#entries.get(key);
     if (cached && (!optimized || cached.optimized)) return cached.slot;
-    const module = binaryen.readBinary(this.archive.family(pattern[4] - this.#tableBase));
+    let bytes = this.archive.specialize(pattern[4] - this.#tableBase,
+      [this.#memoryBase, this.#tableBase, opcode, expansion]);
+    if (optimized) bytes = this.optimize(bytes, pattern[6]);
+    const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes), this.#imports);
+    const run = instance.exports.run;
+    if (typeof run !== "function") throw new Error("DSP block is missing its Wasm entry");
+    // Promotion replaces the existing slot so native cached function pointers stay valid.
+    const slot = cached?.slot ?? this.#table.grow(1);
+    this.#table.set(slot, run);
+    this.#entries.set(key, { slot, optimized });
+    this.emittedBytes += bytes.byteLength;
+    if (optimized) {
+      ++this.optimizations;
+      this.optimizedBytes += bytes.byteLength;
+    } else this.coldBytes += bytes.byteLength;
+    if (!cached) {
+      ++this.compilations;
+      this.onCompile?.(this.compilations);
+    }
+    return slot;
+  }
+
+  private optimize(bytes: Uint8Array<ArrayBuffer>, ranges: Pattern[6]): Uint8Array<ArrayBuffer> {
+    const module = binaryen.readBinary(bytes);
     try {
       module.setFeatures(features);
-      relocateFamily(module, this.#memoryBase, this.#tableBase, opcode, expansion);
       module.runPasses(["simplify-globals", "precompute-propagate", "dce", "vacuum",
         "remove-unused-module-elements"]);
-      if (optimized && pattern[6].length) {
+      if (ranges.length) {
         let folded;
         do {
-          folded = foldReadOnlyLoads(module, new Uint8Array(this.#memory.buffer), pattern[6]);
+          folded = foldReadOnlyLoads(module, new Uint8Array(this.#memory!.buffer), ranges);
           this.foldedLoads += folded;
           if (folded) module.runPasses(["precompute-propagate", "dce", "vacuum"]);
         } while (folded);
       }
-      if (optimized) {
-        module.runPasses(["simplify-locals-nostructure", "precompute-propagate", "merge-blocks",
-          "remove-unused-brs", "vacuum", "coalesce-locals", "remove-unused-module-elements"]);
-      }
-      const bytes = module.emitBinary() as Uint8Array<ArrayBuffer>;
-      const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes), this.#imports);
-      const run = instance.exports.run;
-      if (typeof run !== "function") throw new Error("DSP block is missing its Wasm entry");
-      // Promotion replaces the existing slot so native cached function pointers stay valid.
-      const slot = cached?.slot ?? this.#table.grow(1);
-      this.#table.set(slot, run);
-      this.#entries.set(key, { slot, optimized });
-      this.emittedBytes += bytes.byteLength;
-      if (optimized) {
-        ++this.optimizations;
-        this.optimizedBytes += bytes.byteLength;
-      } else this.coldBytes += bytes.byteLength;
-      if (!cached) {
-        ++this.compilations;
-        this.onCompile?.(this.compilations);
-      }
-      return slot;
+      module.runPasses(["simplify-locals-nostructure", "precompute-propagate", "merge-blocks",
+        "remove-unused-brs", "vacuum", "coalesce-locals", "remove-unused-module-elements"]);
+      return module.emitBinary() as Uint8Array<ArrayBuffer>;
     } finally { module.dispose(); }
   }
 }

@@ -101,6 +101,7 @@ if(AZAHAR_TEAKRA_JIT)
         DEPENDS run-dsp-jit.ts "${AZAHAR_ROOT}/src/web/dsp/jit-host.ts"
             "${AZAHAR_ROOT}/src/web/dsp/compiler.ts"
             "${AZAHAR_ROOT}/src/web/dsp/family-archive.ts"
+            "${AZAHAR_ROOT}/src/web/dsp/relocations.ts"
             "${AZAHAR_ROOT}/src/web/dsp/fold-readonly-loads.js"
             "${AZAHAR_ROOT}/src/web/dsp/fold-readonly-loads.d.ts"
             "${AZAHAR_ROOT}/src/web/package.json" "${AZAHAR_ROOT}/src/web/bun.lock"

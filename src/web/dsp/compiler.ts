@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import binaryen from "binaryen";
+import { findRelocations, relocationConstants, type Relocation } from "./relocations";
 
 export const features = binaryen.Features.MutableGlobals | binaryen.Features.SignExt |
   binaryen.Features.BulkMemory | binaryen.Features.BulkMemoryOpt | binaryen.Features.ExceptionHandling |
@@ -27,6 +28,27 @@ export function relocateFamily(module: binaryen.Module, memoryBase: number, tabl
     module.addGlobal(global.name, binaryen.i32, false, module.i32.const(base));
   }
   return undefined;
+}
+
+/** Prepare literal operand slots once, retaining the original native opcode body. */
+export function prepareFamily(bytes: Uint8Array<ArrayBuffer>): {
+  bytes: Uint8Array<ArrayBuffer>; relocations: Relocation[];
+} {
+  const module = binaryen.readBinary(bytes);
+  try {
+    module.setFeatures(features);
+    for (let index = 0; index < module.getNumGlobals(); ++index) {
+      const global = binaryen.getGlobalInfo(module.getGlobalByIndex(index));
+      const initializer = global.init ? binaryen.getExpressionInfo(global.init) : undefined;
+      if (initializer?.id === binaryen.ConstId && initializer.type === binaryen.i32 &&
+          relocationConstants.includes((initializer as binaryen.ConstInfo).value as number)) {
+        throw new Error("DSP relocation constant conflicts with an existing global");
+      }
+    }
+    relocateFamily(module, ...relocationConstants);
+    const prepared = module.emitBinary() as Uint8Array<ArrayBuffer>;
+    return { bytes: prepared, relocations: findRelocations(prepared) };
+  } finally { module.dispose(); }
 }
 
 /** Compile a generic native opcode body for subsequent guest-opcode specialization. */

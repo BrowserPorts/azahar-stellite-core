@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-const magic = new TextEncoder().encode("AZDSPPK2");
+import { specializeFamily, type Relocation, type RelocationValues } from "./relocations";
+
+const magic = new TextEncoder().encode("AZDSPPK3");
 
 export interface FamilyMetadata {
   sourceSha256: string;
   anchorOffset: number;
   tableAnchorOffset: number;
   shared: boolean;
-  families: ([number, number] | null)[];
+  families: ([offset: number, size: number, relocations: Relocation[]] | null)[];
 }
 
 export function packFamilies(metadata: FamilyMetadata, families: Uint8Array<ArrayBuffer>[]): Uint8Array<ArrayBuffer> {
@@ -48,17 +50,22 @@ export class FamilyArchive {
     this.#payload = bytes.subarray(payloadOffset);
     for (const range of metadata.families) {
       if (range === null) continue;
-      if (!Array.isArray(range) || range.length !== 2 ||
+      if (!Array.isArray(range) || range.length !== 3 ||
           !Number.isSafeInteger(range[0]) || !Number.isSafeInteger(range[1]) ||
-          range[0] < 0 || range[1] <= 0 || range[0] + range[1] > this.#payload.byteLength) {
+          range[0] < 0 || range[1] <= 0 || range[0] + range[1] > this.#payload.byteLength ||
+          !Array.isArray(range[2]) || range[2].some(relocation =>
+            !Array.isArray(relocation) || relocation.length !== 2 ||
+            !Number.isSafeInteger(relocation[0]) || relocation[0] < 0 ||
+            relocation[0] + 5 > range[1] || !Number.isInteger(relocation[1]) ||
+            relocation[1] < 0 || relocation[1] > 3)) {
         throw new Error("Invalid DSP family range");
       }
     }
   }
 
-  family(index: number): Uint8Array<ArrayBuffer> {
+  specialize(index: number, values: RelocationValues): Uint8Array<ArrayBuffer> {
     const range = this.metadata.families[index];
     if (!range) throw new Error("DSP opcode family is unavailable");
-    return this.#payload.subarray(range[0], range[0] + range[1]);
+    return specializeFamily(this.#payload.subarray(range[0], range[0] + range[1]), range[2], values);
   }
 }

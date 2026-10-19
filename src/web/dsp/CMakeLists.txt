@@ -39,14 +39,14 @@ set(DSP_FAMILY_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-dsp-families.bin
 add_custom_command(OUTPUT "${DSP_FAMILY_OUTPUT}"
     COMMAND "${BUN_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/compile-families.ts"
         "$<TARGET_FILE:azahar_dsp_templates>" "${DSP_FAMILY_OUTPUT}"
-    DEPENDS azahar_dsp_templates compile-families.ts compiler.ts family-archive.ts ../package.json ../bun.lock
+    DEPENDS azahar_dsp_templates compile-families.ts compiler.ts family-archive.ts relocations.ts ../package.json ../bun.lock
     VERBATIM)
 add_custom_target(azahar_dsp_families DEPENDS "${DSP_FAMILY_OUTPUT}")
 set(DSP_HOST_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-dsp-jit.js")
 add_custom_command(OUTPUT "${DSP_HOST_OUTPUT}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/jit-host.ts"
         --target browser --outfile "${DSP_HOST_OUTPUT}"
-    DEPENDS jit-host.ts compiler.ts family-archive.ts fold-readonly-loads.js fold-readonly-loads.d.ts
+    DEPENDS jit-host.ts compiler.ts family-archive.ts relocations.ts fold-readonly-loads.js fold-readonly-loads.d.ts
         ../package.json ../bun.lock
     VERBATIM)
 add_custom_target(azahar_dsp_jit_host DEPENDS "${DSP_HOST_OUTPUT}")
