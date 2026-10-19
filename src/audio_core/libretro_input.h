@@ -7,11 +7,14 @@
 #include <memory>
 #include "audio_core/input.h"
 
+struct retro_microphone_interface;
+
 namespace AudioCore {
 
 class LibRetroInput final : public Input {
 public:
     LibRetroInput();
+    explicit LibRetroInput(const retro_microphone_interface& interface);
     ~LibRetroInput() override;
 
     void StartSampling(const InputParameters& params) override;

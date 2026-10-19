@@ -11,7 +11,9 @@
 #include <vector>
 #include <speex/speex_resampler.h>
 #include "audio_core/libretro_input.h"
+#ifdef HAVE_LIBRETRO
 #include "citra_libretro/environment.h"
+#endif
 #include "common/logging/log.h"
 #include "common/ring_buffer.h"
 #include "libretro.h"
@@ -21,6 +23,17 @@ namespace AudioCore {
 namespace {
 // Global instance pointer for access from retro_run
 LibRetroInput* g_libretro_input = nullptr;
+
+std::optional<retro_microphone_interface> GetFrontendMicrophoneInterface() {
+#ifdef HAVE_LIBRETRO
+    retro_microphone_interface interface{};
+    interface.interface_version = RETRO_MICROPHONE_INTERFACE_VERSION;
+    if (LibRetro::GetMicrophoneInterface(&interface)) {
+        return interface;
+    }
+#endif
+    return std::nullopt;
+}
 } // namespace
 
 struct LibRetroInput::Impl {
@@ -46,20 +59,16 @@ struct LibRetroInput::Impl {
     // Temporary buffer for reading from frontend
     std::vector<s16> read_buffer;
 
-    Impl() {
-        // Try to get the microphone interface from the frontend
-        retro_microphone_interface interface{};
-        interface.interface_version = RETRO_MICROPHONE_INTERFACE_VERSION;
-
-        if (LibRetro::GetMicrophoneInterface(&interface)) {
-            if (interface.interface_version == RETRO_MICROPHONE_INTERFACE_VERSION) {
-                mic_interface = interface;
+    explicit Impl(std::optional<retro_microphone_interface> interface) {
+        if (interface) {
+            if (interface->interface_version == RETRO_MICROPHONE_INTERFACE_VERSION) {
+                mic_interface = *interface;
                 LOG_INFO(Audio, "LibRetro microphone interface available (version {})",
-                         interface.interface_version);
+                         interface->interface_version);
             } else {
                 LOG_WARNING(Audio,
                             "LibRetro microphone interface version mismatch: expected {}, got {}",
-                            RETRO_MICROPHONE_INTERFACE_VERSION, interface.interface_version);
+                            RETRO_MICROPHONE_INTERFACE_VERSION, interface->interface_version);
             }
         } else {
             LOG_WARNING(Audio, "LibRetro microphone interface not available");
@@ -145,7 +154,12 @@ struct LibRetroInput::Impl {
     }
 };
 
-LibRetroInput::LibRetroInput() : impl(std::make_unique<Impl>()) {
+LibRetroInput::LibRetroInput() : impl(std::make_unique<Impl>(GetFrontendMicrophoneInterface())) {
+    g_libretro_input = this;
+}
+
+LibRetroInput::LibRetroInput(const retro_microphone_interface& interface)
+    : impl(std::make_unique<Impl>(interface)) {
     g_libretro_input = this;
 }
 
