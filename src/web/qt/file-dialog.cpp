@@ -11,8 +11,8 @@
 
 namespace {
 
-EM_JS(bool, BeginGameImport, (const char* accept), {
-    return Module["azaharQtRuntime"].beginGameImport(UTF8ToString(accept));
+EM_JS(bool, BeginGameImport, (const char* accept, bool multiple), {
+    return Module["azaharQtRuntime"].beginGameImport(UTF8ToString(accept), !!multiple);
 });
 
 EM_JS(emscripten::EM_VAL, GameImportStatus, (), {
@@ -31,19 +31,21 @@ EM_JS(void, FinishGameImport, (), {
 
 namespace Web::Qt {
 
-void OpenGameFile(QWidget* parent, const QStringList& extensions,
-                  std::function<void(const QString&)> completed) {
+void OpenFiles(QWidget* parent, const QStringList& extensions, bool multiple,
+               std::function<void(const QStringList&)> completed) {
     QStringList accept;
     for (const auto& extension : extensions) {
         accept.append(QStringLiteral(".") + extension);
     }
-    if (!BeginGameImport(accept.join(QStringLiteral(",")).toUtf8().constData())) {
+    if (!BeginGameImport(accept.join(QStringLiteral(",")).toUtf8().constData(), multiple)) {
         completed({});
         return;
     }
     auto* progress = new QProgressDialog(
-        QObject::tr("Importing game…"), QObject::tr("Cancel"), 0, 1000, parent);
-    progress->setWindowTitle(QObject::tr("Load File"));
+        multiple ? QObject::tr("Importing files…") : QObject::tr("Importing game…"),
+        QObject::tr("Cancel"), 0, 1000, parent);
+    const auto title = multiple ? QObject::tr("Load Files") : QObject::tr("Load File");
+    progress->setWindowTitle(title);
     progress->setWindowModality(::Qt::WindowModal);
     progress->setMinimumDuration(250);
     progress->setAutoClose(false);
@@ -66,17 +68,23 @@ void OpenGameFile(QWidget* parent, const QStringList& extensions,
             return;
         }
         timer->stop();
-        const auto path = QString::fromStdString(status["path"].as<std::string>());
+        const auto paths = status["paths"];
+        QStringList filepaths;
+        const auto count = paths["length"].as<unsigned>();
+        for (unsigned i = 0; i < count; ++i) {
+            filepaths.append(QString::fromStdString(paths[i].as<std::string>()));
+        }
         const auto error = QString::fromStdString(status["error"].as<std::string>());
+        const bool canceled = progress->wasCanceled();
         FinishGameImport();
         QObject::disconnect(destroyed);
         progress->deleteLater();
         if (!owner) return;
         QTimer::singleShot(0, owner, [=] {
             if (!error.isEmpty()) {
-                QMessageBox::critical(owner, QObject::tr("Load File"), error.toHtmlEscaped());
+                QMessageBox::critical(owner, title, error.toHtmlEscaped());
             }
-            completed(path);
+            completed(canceled ? QStringList{} : filepaths);
         });
     });
     timer->start(50);

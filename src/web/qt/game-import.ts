@@ -3,24 +3,24 @@
 interface ImportStatus {
   progress: number;
   done: boolean;
-  path: string;
+  paths: string[];
   error: string;
 }
 
-/** Import a selected local game without copying its contents into the Wasm heap. */
+/** Import selected local files without copying their contents into the Wasm heap. */
 export class GameImporter {
   #operation: { controller: AbortController; status: ImportStatus } | undefined;
 
-  begin(accept: string): boolean {
+  begin(accept: string, multiple: boolean): boolean {
     if (this.#operation) return false;
     const controller = new AbortController();
-    const status: ImportStatus = { progress: -1, done: false, path: "", error: "" };
+    const status: ImportStatus = { progress: -1, done: false, paths: [], error: "" };
     this.#operation = { controller, status };
     let name = "";
-    this.#select(accept, controller.signal).then(async file => {
-      if (file) {
-        name = file.name;
-        status.path = await this.#copy(file, controller.signal, status);
+    this.#select(accept, multiple, controller.signal).then(async files => {
+      if (files.length) {
+        name = files.length === 1 ? files[0]!.name : `${files.length} files`;
+        status.paths = await this.#copy(files, controller.signal, status);
       }
     }).catch(error => {
       if (!controller.signal.aborted) {
@@ -43,20 +43,21 @@ export class GameImporter {
     return undefined;
   }
 
-  #select(accept: string, signal: AbortSignal): Promise<File | undefined> {
+  #select(accept: string, multiple: boolean, signal: AbortSignal): Promise<File[]> {
     return new Promise((resolve, reject) => {
       const input = document.createElement("input");
       input.type = "file";
       input.accept = accept;
+      input.multiple = multiple;
       input.hidden = true;
-      const complete = (file?: File): undefined => {
+      const complete = (files: File[] = []): undefined => {
         input.remove();
         signal.removeEventListener("abort", cancelled);
-        resolve(file);
+        resolve(files);
         return undefined;
       };
       const cancelled = (): undefined => complete();
-      input.addEventListener("change", () => complete(input.files?.[0]), { once: true });
+      input.addEventListener("change", () => complete(Array.from(input.files ?? [])), { once: true });
       input.addEventListener("cancel", cancelled, { once: true });
       signal.addEventListener("abort", cancelled, { once: true });
       document.body.append(input);
@@ -69,33 +70,48 @@ export class GameImporter {
     });
   }
 
-  async #copy(file: File, signal: AbortSignal, status: ImportStatus): Promise<string> {
-    if (!Number.isSafeInteger(file.size) || !file.size || /[/\\\0]/.test(file.name) ||
-      file.name === "." || file.name === "..") throw new Error("Invalid game file name or size");
+  async #copy(files: readonly File[], signal: AbortSignal, status: ImportStatus): Promise<string[]> {
+    let total = 0;
+    for (const file of files) {
+      if (!Number.isSafeInteger(file.size) || !file.size || /[/\\\0]/.test(file.name) ||
+        file.name === "." || file.name === "..") throw new Error("Invalid file name or size");
+      total += file.size;
+    }
+    if (!Number.isSafeInteger(total)) throw new Error("Selected files are too large");
     signal.throwIfAborted();
     let directory = await navigator.storage.getDirectory();
     for (const part of ["azahar", "user", "roms"]) {
       directory = await directory.getDirectoryHandle(part, { create: true });
     }
-    // A separate directory preserves an existing game with the same filename.
+    // A separate directory preserves existing files and permits rollback of the whole import.
     const id = crypto.randomUUID();
     const destination = await directory.getDirectoryHandle(id, { create: true });
     try {
-      const handle = await destination.getFileHandle(file.name, { create: true });
-      const writable = await handle.createWritable();
       let copied = 0;
+      const paths: string[] = [];
       status.progress = 0;
-      const progress = new TransformStream<Uint8Array, Uint8Array>({
-        transform(chunk, stream) {
-          copied += chunk.byteLength;
-          status.progress = copied / file.size;
-          stream.enqueue(chunk);
-        },
-      });
-      await file.stream().pipeThrough(progress).pipeTo(writable, { signal });
-      signal.throwIfAborted();
-      if ((await handle.getFile()).size !== file.size) throw new Error("Game import was incomplete");
-      return `/user/roms/${id}/${file.name}`;
+      for (const file of files) {
+        signal.throwIfAborted();
+        // Each selected file has its own location even when two basenames match.
+        const prefix = files.length > 1 ? `${paths.length}/` : "";
+        const folder = prefix ?
+          await destination.getDirectoryHandle(String(paths.length), { create: true }) : destination;
+        const handle = await folder.getFileHandle(file.name, { create: true });
+        const writable = await handle.createWritable();
+        const progress = new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, stream) {
+            copied += chunk.byteLength;
+            status.progress = copied / total;
+            stream.enqueue(chunk);
+          },
+        });
+        await file.stream().pipeThrough(progress).pipeTo(writable, { signal });
+        signal.throwIfAborted();
+        if ((await handle.getFile()).size !== file.size) throw new Error("File import was incomplete");
+        signal.throwIfAborted();
+        paths.push(`/user/roms/${id}/${prefix}${file.name}`);
+      }
+      return paths;
     } catch (error) {
       await directory.removeEntry(id, { recursive: true });
       throw error;

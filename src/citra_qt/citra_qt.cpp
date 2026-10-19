@@ -2342,12 +2342,14 @@ void GMainWindow::OnGameListOpenPerGameProperties(const QString& file) {
 void GMainWindow::OnMenuLoadFile() {
 #ifdef __EMSCRIPTEN__
     ui->action_Load_File->setEnabled(false);
-    Web::Qt::OpenGameFile(this, GameList::supported_file_extensions, [this](const QString& filename) {
-        ui->action_Load_File->setEnabled(true);
-        if (filename.isEmpty()) return;
-        UISettings::values.roms_path = QFileInfo(filename).path();
-        BootGame(filename);
-    });
+    Web::Qt::OpenFiles(this, GameList::supported_file_extensions, false,
+                      [this](const QStringList& files) {
+                          ui->action_Load_File->setEnabled(true);
+                          if (files.isEmpty()) return;
+                          const auto& filename = files.front();
+                          UISettings::values.roms_path = QFileInfo(filename).path();
+                          BootGame(filename);
+                      });
 #else
     const QString extensions = QStringLiteral("*.").append(
         GameList::supported_file_extensions.join(QStringLiteral(" *.")));
@@ -2465,6 +2467,16 @@ void GMainWindow::OnMenuSetUpSystemFiles() {
 }
 
 void GMainWindow::OnMenuInstallCIA() {
+#ifdef __EMSCRIPTEN__
+    ui->action_Install_CIA->setEnabled(false);
+    Web::Qt::OpenFiles(this, {QStringLiteral("cia"), QStringLiteral("zcia")}, true,
+                      [this](const QStringList& filepaths) {
+                          ui->action_Install_CIA->setEnabled(true);
+                          if (filepaths.isEmpty()) return;
+                          UISettings::values.roms_path = QFileInfo(filepaths.front()).path();
+                          InstallCIA(filepaths);
+                      });
+#else
     QStringList filepaths = QFileDialog::getOpenFileNames(
         this, tr("Load Files"), UISettings::values.roms_path,
         tr("3DS Installation File") + QStringLiteral(" (*.cia *.zcia);;") + tr("All Files") +
@@ -2476,6 +2488,7 @@ void GMainWindow::OnMenuInstallCIA() {
 
     UISettings::values.roms_path = QFileInfo(filepaths[0]).path();
     InstallCIA(filepaths);
+#endif
 }
 
 void GMainWindow::OnMenuConnectArticBase() {

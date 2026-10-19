@@ -95,7 +95,7 @@ export function disconnectAudio(worker: Worker): undefined {
   return undefined;
 }
 
-export const beginGameImport = (accept: string): boolean => gameImporter.begin(accept);
+export const beginGameImport = (accept: string, multiple: boolean): boolean => gameImporter.begin(accept, multiple);
 export const gameImportStatus = (): ReturnType<GameImporter["status"]> => gameImporter.status();
 export const cancelGameImport = (): undefined => gameImporter.cancel();
 export const finishGameImport = (): undefined => gameImporter.finish();

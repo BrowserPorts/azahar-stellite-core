@@ -9,7 +9,7 @@ class QWidget;
 
 namespace Web::Qt {
 
-void OpenGameFile(QWidget* parent, const QStringList& extensions,
-                  std::function<void(const QString&)> completed);
+void OpenFiles(QWidget* parent, const QStringList& extensions, bool multiple,
+               std::function<void(const QStringList&)> completed);
 
 } // namespace Web::Qt
