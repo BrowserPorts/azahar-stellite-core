@@ -5,12 +5,17 @@
     {
       "name": "web-release",
       "displayName": "Azahar Web release",
-      "description": "Configure with cmake --preset web-release after activating Emscripten 5.0.7",
+      "description": "Use the pinned Emscripten fork with LLVM and Binaryen from the Emscripten 5.0.7 SDK",
       "generator": "Ninja",
-      "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+      "toolchainFile": "${sourceDir}/externals/emscripten/cmake/Modules/Platform/Emscripten.cmake",
       "binaryDir": "${sourceDir}/build/web-core",
+      "environment": {
+        "EM_CONFIG": "$env{EMSDK}/.emscripten",
+        "EM_CACHE": "${sourceDir}/build/emscripten-cache"
+      },
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
+        "EMSCRIPTEN_ROOT_PATH": "${sourceDir}/externals/emscripten",
         "ENABLE_LIBRETRO": true,
         "ENABLE_LTO": true,
         "AZAHAR_ARM_JIT_STATISTICS": false,
@@ -35,6 +40,7 @@
       "cacheVariables": {
         "ENABLE_LIBRETRO": false,
         "ENABLE_QT": true,
+        "QT_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/externals/emscripten/cmake/Modules/Platform/Emscripten.cmake",
         "USE_SYSTEM_QT": true,
         "ENABLE_QT_TRANSLATION": false,
         "ENABLE_SDL2": false,
