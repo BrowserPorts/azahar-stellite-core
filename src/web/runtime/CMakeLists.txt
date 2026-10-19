@@ -68,6 +68,8 @@ set(WEB_RUNTIME_FILES
     azahar-dsp-templates.wasm
     azahar-dsp-families.bin
     azahar-dsp-jit.js
+    azahar-dsp-optimizer-worker.mjs
+    azahar-dsp-optimizer.mjs
     azahar-audio-worklet.js
     azahar-microphone-worklet.js)
 list(TRANSFORM WEB_RUNTIME_FILES PREPEND "${WEB_RUNTIME_DIRECTORY}/")

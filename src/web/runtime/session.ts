@@ -384,6 +384,7 @@ export class BrowserSession {
       await this.core._azahar_shutdown();
       if (this.#gamePath) this.core._azahar_unmount_game_file(this.#gamePath);
     } finally {
+      this.core.azaharDspJitHost?.stopOptimization();
       if (this.#gamePath) this.core._free(this.#gamePath);
       this.#gamePath = 0;
       this.core.azaharGameFile = undefined;

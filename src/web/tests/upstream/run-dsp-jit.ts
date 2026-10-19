@@ -11,12 +11,16 @@ const [templates, families] = await Promise.all([
   readFile(join(dirname(modulePath), "azahar-dsp-templates.wasm")),
   readFile(join(dirname(modulePath), "azahar-dsp-families.bin")),
 ]);
-const host = await DspJitHost.create(Uint8Array.from(templates), Uint8Array.from(families), (count) => {
+const host = await DspJitHost.create(Uint8Array.from(templates), Uint8Array.from(families), {
+  workerUrl: pathToFileURL(join(dirname(modulePath), "azahar-dsp-optimizer-worker.mjs")).href,
+  compilerUrl: pathToFileURL(join(dirname(modulePath), "azahar-dsp-optimizer.mjs")).href,
+}, (count) => {
   if (count % 1000 === 0) console.log(`DSP JIT: ${count} specializations compiled`);
 });
 const { default: createModule } = await import(pathToFileURL(modulePath).href);
 const module = await createModule({ noInitialRun: true, azaharDspJitHost: host });
 process.on("exit", () => {
+  host.stopOptimization();
   console.log(`DSP JIT: ${module._azahar_dsp_jit_entries()} entries installed across Wasm threads`);
   console.log(`DSP JIT: ${module._azahar_dsp_jit_optimized_entries()} entries optimized across Wasm threads`);
   if (host.compilations) {
@@ -24,8 +28,9 @@ process.on("exit", () => {
     console.log(`DSP JIT: ${host.coldBytes} cold bytes, ${host.optimizedBytes} optimized bytes`);
   }
 });
-try { module.callMain(process.argv.slice(3)); }
+try { await module.callMain(process.argv.slice(3)); }
 catch (error) {
+  host.stopOptimization();
   if (error !== null && typeof error === "object" && "getArg" in error) {
     console.error(module.getExceptionMessage(error));
   }

@@ -24,6 +24,8 @@ std::atomic<uint64_t> initialization_us{0};
 std::atomic<uint64_t> cold_compile_us{0};
 std::atomic<uint64_t> optimized_compile_us{0};
 constexpr uint32_t optimize_after = AZAHAR_DSP_JIT_OPTIMIZE_AFTER;
+thread_local uint32_t* optimization_ready = nullptr;
+[[noreturn]] void ThrowCompileError();
 }
 
 EM_JS_DEPS(dsp_jit, "$GOT,$stringToNewUTF8,$initializeDspRuntime");
@@ -42,28 +44,64 @@ EM_ASYNC_JS(bool, PrepareDspJit, (), {
     }
 });
 
-EM_JS(void, InitializeDspJit,
+EM_ASYNC_JS(u32, InitializeDspJit,
       (const char* json, u8* flags, u32 register_size, u32 semantics_size, u32 memory_size), {
-    const imports = {
-        env: Object.assign({}, wasmImports, wasmExports, {
-            memory: wasmMemory, __indirect_function_table: wasmExports["__indirect_function_table"]
-        }),
-        "GOT.mem": GOT, "GOT.func": GOT
-    };
-    const result = Module["azaharDspJitHost"].bind(
-        UTF8ToString(json),
-        [register_size, semantics_size, memory_size], wasmMemory,
-        wasmExports["__indirect_function_table"], imports);
-    HEAPU8.set(result, flags);
+    try {
+        const imports = {
+            env: Object.assign({}, wasmImports, wasmExports, {
+                memory: wasmMemory, __indirect_function_table: wasmExports["__indirect_function_table"]
+            }),
+            "GOT.mem": GOT, "GOT.func": GOT
+        };
+        const result = await Module["azaharDspJitHost"].bind(
+            UTF8ToString(json),
+            [register_size, semantics_size, memory_size], wasmMemory,
+            wasmExports["__indirect_function_table"], imports);
+        HEAPU8.set(result, flags);
+        return Module["azaharDspJitHost"].readyPointer;
+    } catch (error) {
+        Module["azaharDspCompileError"] = "DSP compiler binding failed: " + String(error);
+        return 0;
+    }
 });
 
-EM_JS(u32, CompileDspInstruction, (u32 opcode, u32 expansion, bool optimized), {
-    try { return Module["azaharDspJitHost"].compile(opcode, expansion, Boolean(optimized)); }
+EM_JS(u32, CompileDspInstruction, (u32 opcode, u32 expansion), {
+    try { return Module["azaharDspJitHost"].compile(opcode, expansion); }
     catch (error) {
         Module["azaharDspCompileError"] = "DSP opcode " + opcode.toString(16) + ": " + String(error);
         err(Module["azaharDspCompileError"]);
         return 0;
     }
+});
+EM_JS(bool, RequestDspOptimization, (u32 opcode, u32 expansion), {
+    try {
+        Module["azaharDspJitHost"].requestOptimization(opcode, expansion);
+        return true;
+    } catch (error) {
+        Module["azaharDspCompileError"] = "DSP optimization: " + String(error);
+        return false;
+    }
+});
+EM_ASYNC_JS(u32, OptimizeDspInstruction, (u32 opcode, u32 expansion), {
+    try { return await Module["azaharDspJitHost"].optimize(opcode, expansion); }
+    catch (error) {
+        Module["azaharDspCompileError"] = "DSP optimization: " + String(error);
+        return 0;
+    }
+});
+EM_JS(int, PollDspOptimizations, (double* elapsed_ms), {
+    try {
+        const result = Module["azaharDspJitHost"].takeOptimizations();
+        if (!result) return 0;
+        HEAPF64[elapsed_ms >>> 3] = result.elapsedMs;
+        return result.count;
+    } catch (error) {
+        Module["azaharDspCompileError"] = "DSP optimization: " + String(error);
+        return -1;
+    }
+});
+EM_JS(void, StopDspOptimization, (), {
+    Module["azaharDspJitHost"]?.stopOptimization();
 });
 EM_JS(char*, DspCompileError, (), {
     return stringToNewUTF8(Module["azaharDspCompileError"] || "DSP compilation failed");
@@ -113,9 +151,14 @@ const std::array<u8, 65536>& OpcodeFlags() {
             throw std::runtime_error(message);
         }
         std::array<u8, 65536> result{};
-        InitializeDspJit(azahar_dsp_template_metadata(), result.data(),
-                         sizeof(Teakra::RegisterState), sizeof(Web::Dsp::Semantics),
-                         sizeof(Web::Dsp::MemoryAccess));
+        const u32 signal = InitializeDspJit(azahar_dsp_template_metadata(), result.data(),
+                                           sizeof(Teakra::RegisterState),
+                                           sizeof(Web::Dsp::Semantics),
+                                           sizeof(Web::Dsp::MemoryAccess));
+        if (!signal) {
+            ThrowCompileError();
+        }
+        optimization_ready = reinterpret_cast<uint32_t*>(signal);
         initialization_us.fetch_add(
             static_cast<uint64_t>((emscripten_get_now() - started) * 1000),
             std::memory_order_relaxed);
@@ -129,7 +172,7 @@ using Entry = void (*)(Web::Dsp::Semantics*);
 struct CompiledEntry {
     Entry function;
     u32 executions = 0;
-    bool optimized = false;
+    bool promotion_requested = false;
 };
 
 struct CachedEntry {
@@ -141,6 +184,11 @@ struct EntryCache {
     std::array<CachedEntry, 65536> recent{};
     // References to map entries remain valid when the map rehashes.
     std::unordered_map<u32, CompiledEntry> specializations;
+
+    ~EntryCache() {
+        // Native pool workers keep their JS realm after a pthread exits.
+        StopDspOptimization();
+    }
 };
 
 EntryCache& ThreadEntries() {
@@ -149,17 +197,33 @@ EntryCache& ThreadEntries() {
     return entries;
 }
 
-Entry Compile(u16 opcode, u16 expansion, bool optimized) {
-    const double started = emscripten_get_now();
-    const u32 slot = CompileDspInstruction(opcode, expansion, optimized);
-    auto& elapsed = optimized ? optimized_compile_us : cold_compile_us;
-    elapsed.fetch_add(static_cast<uint64_t>((emscripten_get_now() - started) * 1000),
-                      std::memory_order_relaxed);
-    if (slot) return reinterpret_cast<Entry>(slot);
+[[noreturn]] void ThrowCompileError() {
     char* error = DspCompileError();
     const std::string message(error ? error : "DSP compilation failed");
     std::free(error);
     throw std::runtime_error(message);
+}
+
+void PollOptimizations() {
+    // Avoid a Wasm-to-JavaScript transition on DSP slices with no completed work.
+    if (!optimization_ready || !__atomic_load_n(optimization_ready, __ATOMIC_RELAXED)) return;
+    double elapsed_ms = 0;
+    const int count = PollDspOptimizations(&elapsed_ms);
+    if (count < 0) ThrowCompileError();
+    if (count) {
+        optimized_entries.fetch_add(count, std::memory_order_relaxed);
+        optimized_compile_us.fetch_add(static_cast<uint64_t>(elapsed_ms * 1000),
+                                       std::memory_order_relaxed);
+    }
+}
+
+Entry Compile(u16 opcode, u16 expansion) {
+    const double started = emscripten_get_now();
+    const u32 slot = CompileDspInstruction(opcode, expansion);
+    cold_compile_us.fetch_add(static_cast<uint64_t>((emscripten_get_now() - started) * 1000),
+                             std::memory_order_relaxed);
+    if (slot) return reinterpret_cast<Entry>(slot);
+    ThrowCompileError();
 }
 
 // The original timing, repeat and interrupt scheduler drives generated Wasm entries.
@@ -168,13 +232,12 @@ public:
     WasmExecution(Teakra::CoreTiming& timing, Teakra::RegisterState& registers,
                   Teakra::MemoryInterface& memory)
         : Web::Dsp::Semantics(registers, access), core_timing(timing), memory(memory),
-          access{reinterpret_cast<uint32_t>(&memory)} {
-        OpcodeFlags();
-    }
+          access{reinterpret_cast<uint32_t>(&memory)} {}
 
     void Run(u64 cycles) override {
         const auto& opcode_flags = OpcodeFlags();
         auto& entries = ThreadEntries();
+        PollOptimizations();
         idle = false;
         for (u64 i = 0; i < cycles; ++i) {
             if (idle) {
@@ -231,21 +294,25 @@ public:
                 const u32 key = (static_cast<u32>(opcode) << 16) | expand_value;
                 auto found = entries.specializations.find(key);
                 if (found == entries.specializations.end()) {
-                    constexpr bool optimized = optimize_after == 0;
-                    const auto function = Compile(opcode, expand_value, optimized);
+                    const auto function = Compile(opcode, expand_value);
                     found = entries.specializations
-                                .emplace(key, CompiledEntry{function, 0, optimized})
+                                .emplace(key, CompiledEntry{function})
                                 .first;
                     installed_entries.fetch_add(1, std::memory_order_relaxed);
-                    if (optimized) optimized_entries.fetch_add(1, std::memory_order_relaxed);
                 }
                 entry = &found->second;
                 recent = {entry, expand_value};
             }
-            if (!entry->optimized && ++entry->executions >= optimize_after) {
-                entry->function = Compile(opcode, expand_value, true);
-                entry->optimized = true;
-                optimized_entries.fetch_add(1, std::memory_order_relaxed);
+            if (!entry->promotion_requested && ++entry->executions >= optimize_after) {
+                if constexpr (optimize_after <= 1) {
+                    const u32 slot = OptimizeDspInstruction(opcode, expand_value);
+                    if (!slot) ThrowCompileError();
+                    entry->function = reinterpret_cast<Entry>(slot);
+                    PollOptimizations();
+                } else {
+                    if (!RequestDspOptimization(opcode, expand_value)) ThrowCompileError();
+                }
+                entry->promotion_requested = true;
             }
             entry->function(static_cast<Web::Dsp::Semantics*>(this));
 

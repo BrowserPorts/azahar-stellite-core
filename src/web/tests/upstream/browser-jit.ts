@@ -34,12 +34,17 @@ const fixtureUrl = new URL(pthreadDlopen ? "./wasm_pthread_dlopen.mjs" : dsp && 
   "./dynarmic_arm_jit_fixtures.mjs", import.meta.url);
 const assets: Record<string, string> = {};
 if (blobAssets) {
-  if (!pthreadDlopen) throw new Error("Blob fixture assets require the pthread dlopen fixture");
-  for (const name of ["wasm_pthread_dlopen.mjs", "wasm_pthread_dlopen.wasm", "libside.so"]) {
+  if (!pthreadDlopen && !(dsp && !core)) throw new Error("Blob assets require the pthread dlopen or Teakra fixture");
+  const names = pthreadDlopen ? ["wasm_pthread_dlopen.mjs", "wasm_pthread_dlopen.wasm", "libside.so"] :
+    ["teakra_reference_fixtures.mjs", "teakra_reference_fixtures.wasm", "azahar-dsp-jit.js",
+      "azahar-dsp-templates.wasm", "azahar-dsp-families.bin", "azahar-dsp-optimizer-worker.mjs",
+      "azahar-dsp-optimizer.mjs"];
+  for (const name of names) {
     const response = await fetch(new URL(name, fixtureUrl));
     if (!response.ok) throw new Error(`Could not load original pthread fixture asset ${name}`);
     assets[name] = URL.createObjectURL(new Blob([await response.arrayBuffer()], {
-      type: name.endsWith(".mjs") ? "text/javascript" : "application/wasm",
+      type: name.endsWith(".wasm") || name.endsWith(".so") ? "application/wasm" :
+        name.endsWith(".bin") ? "application/octet-stream" : "text/javascript",
     }));
   }
 }
@@ -65,7 +70,7 @@ worker.onerror = (event: ErrorEvent): undefined => {
   releaseAssets();
   return undefined;
 };
-worker.postMessage({ url: assets["wasm_pthread_dlopen.mjs"] ?? fixtureUrl.href,
+worker.postMessage({ url: assets[fixtureUrl.pathname.split("/").pop()!] ?? fixtureUrl.href,
   ...(blobAssets ? { assets } : {}),
   args: recordings || storage || pthreadDlopen ? [] : ["--reporter", "compact", ...(filter ? [filter] : []),
     ...(seed ? ["--rng-seed", seed] : []), ...sections.flatMap(section => ["--section", section])],

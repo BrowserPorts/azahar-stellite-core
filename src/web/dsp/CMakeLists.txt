@@ -46,10 +46,24 @@ set(DSP_HOST_OUTPUT "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-dsp-jit.js")
 add_custom_command(OUTPUT "${DSP_HOST_OUTPUT}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/jit-host.ts"
         --target browser --outfile "${DSP_HOST_OUTPUT}"
-    DEPENDS jit-host.ts optimizer.ts compiler.ts family-archive.ts relocations.ts fold-readonly-loads.js fold-readonly-loads.d.ts
+    DEPENDS jit-host.ts optimizer-client.ts optimizer-mailbox.ts family-archive.ts relocations.ts
         ../package.json ../bun.lock
     VERBATIM)
-add_custom_target(azahar_dsp_jit_host DEPENDS "${DSP_HOST_OUTPUT}")
+set(DSP_OPTIMIZER_WORKER "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-dsp-optimizer-worker.mjs")
+set(DSP_OPTIMIZER_COMPILER "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-dsp-optimizer.mjs")
+add_custom_command(OUTPUT "${DSP_OPTIMIZER_WORKER}"
+    COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/optimizer-worker.ts"
+        --target browser --outfile "${DSP_OPTIMIZER_WORKER}"
+    DEPENDS optimizer-worker.ts optimizer-mailbox.ts ../package.json ../bun.lock
+    VERBATIM)
+add_custom_command(OUTPUT "${DSP_OPTIMIZER_COMPILER}"
+    COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/optimizer.ts"
+        --target browser --outfile "${DSP_OPTIMIZER_COMPILER}"
+    DEPENDS optimizer.ts compiler.ts relocations.ts fold-readonly-loads.js fold-readonly-loads.d.ts
+        ../package.json ../bun.lock
+    VERBATIM)
+add_custom_target(azahar_dsp_jit_host DEPENDS "${DSP_HOST_OUTPUT}"
+    "${DSP_OPTIMIZER_WORKER}" "${DSP_OPTIMIZER_COMPILER}")
 
 function(azahar_add_dsp_execution target)
     get_filename_component(dsp_root "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../.." ABSOLUTE)

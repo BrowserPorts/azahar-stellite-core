@@ -21,6 +21,14 @@ addToLibrary({
             if (!response.ok) throw new Error("Could not load DSP compiler input " + name);
             return new Uint8Array(await response.arrayBuffer());
         }));
-        Module["azaharDspJitHost"] = await DspJitHost.create(assets[0], assets[1]);
+        const optimizerAssets = {};
+        for (const [key, name] of [["workerUrl", "azahar-dsp-optimizer-worker.mjs"],
+                                   ["compilerUrl", "azahar-dsp-optimizer.mjs"]]) {
+            const path = locateFile(name);
+            optimizerAssets[key] = ENVIRONMENT_IS_NODE
+                ? (path.startsWith("file:") ? path : (await import("node:url")).pathToFileURL(path).href)
+                : new URL(path, location.href).href;
+        }
+        Module["azaharDspJitHost"] = await DspJitHost.create(assets[0], assets[1], optimizerAssets);
     },
 });

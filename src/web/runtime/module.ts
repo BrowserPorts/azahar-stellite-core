@@ -13,6 +13,7 @@ export interface AzaharModule {
   HEAP16: Int16Array<SharedArrayBuffer>;
   azaharGameFile: File | undefined;
   azaharImportFile: File | undefined;
+  azaharDspJitHost?: DspJitHost;
   UTF8ToString(pointer: number): string;
   stringToNewUTF8(text: string): number;
   addFunction(callback: (...args: number[]) => unknown, signature: string): number;

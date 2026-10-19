@@ -40,15 +40,19 @@ worker.onmessage = async (event: MessageEvent<FixtureRequest>): Promise<undefine
   try {
     let dspHost;
     if (event.data.dsp) {
-      const { DspJitHost } = await import(new URL("azahar-dsp-jit.js", event.data.url).href);
+      const dspAsset = (name: string): string => event.data.assets?.[name] ?? new URL(name, event.data.url).href;
+      const { DspJitHost } = await import(dspAsset("azahar-dsp-jit.js"));
       const assets = await Promise.all(["azahar-dsp-templates.wasm", "azahar-dsp-families.bin"].map(async (name) => {
-        const response = await fetch(new URL(name, event.data.url));
+        const response = await fetch(dspAsset(name));
         if (!response.ok) throw new Error(`Could not load DSP compiler input ${name}`);
         return new Uint8Array(await response.arrayBuffer());
       }));
       const [templates, families] = assets;
       if (!templates || !families) throw new Error("DSP compiler inputs are missing");
-      dspHost = await DspJitHost.create(templates, families);
+      dspHost = await DspJitHost.create(templates, families, {
+        workerUrl: dspAsset("azahar-dsp-optimizer-worker.mjs"),
+        compilerUrl: dspAsset("azahar-dsp-optimizer.mjs"),
+      });
     }
     const { default: createModule } = await import(event.data.url);
     let linkedBlocks: (() => bigint) | undefined;

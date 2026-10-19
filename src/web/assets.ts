@@ -5,6 +5,7 @@ export const runtimeAssetNames = [
   "azahar-gpu-worker.js", "azahar-glslang.mjs", "azahar-glslang.wasm",
   "azahar-shader-compiler.wasm", "azahar-pica-shaders.mjs", "azahar-pica-shaders.wasm",
   "azahar-dsp-templates.wasm", "azahar-dsp-families.bin", "azahar-dsp-jit.js",
+  "azahar-dsp-optimizer-worker.mjs", "azahar-dsp-optimizer.mjs",
   "azahar-audio-worklet.js", "azahar-microphone-worklet.js",
 ] as const;
 
