@@ -27,6 +27,9 @@ export interface AzaharModule {
   _azahar_arm_jit_fast_dispatch_hits(): bigint;
   _azahar_dsp_jit_entries(): number;
   _azahar_dsp_jit_optimized_entries(): number;
+  _azahar_dsp_jit_initialization_ms(): number;
+  _azahar_dsp_jit_cold_compile_ms(): number;
+  _azahar_dsp_jit_optimized_compile_ms(): number;
   _azahar_mount_storage(): number;
   _azahar_mount_game_file(path: number, size: bigint): number;
   _azahar_unmount_game_file(path: number): number;

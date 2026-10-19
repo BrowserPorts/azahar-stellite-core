@@ -20,6 +20,9 @@ extern "C" const char* azahar_dsp_template_metadata();
 namespace {
 std::atomic<uint32_t> installed_entries{0};
 std::atomic<uint32_t> optimized_entries{0};
+std::atomic<uint64_t> initialization_us{0};
+std::atomic<uint64_t> cold_compile_us{0};
+std::atomic<uint64_t> optimized_compile_us{0};
 constexpr uint32_t optimize_after = AZAHAR_DSP_JIT_OPTIMIZE_AFTER;
 }
 
@@ -73,6 +76,15 @@ EMSCRIPTEN_KEEPALIVE uint32_t azahar_dsp_jit_entries() {
 EMSCRIPTEN_KEEPALIVE uint32_t azahar_dsp_jit_optimized_entries() {
     return optimized_entries.load(std::memory_order_relaxed);
 }
+EMSCRIPTEN_KEEPALIVE double azahar_dsp_jit_initialization_ms() {
+    return initialization_us.load(std::memory_order_relaxed) / 1000.0;
+}
+EMSCRIPTEN_KEEPALIVE double azahar_dsp_jit_cold_compile_ms() {
+    return cold_compile_us.load(std::memory_order_relaxed) / 1000.0;
+}
+EMSCRIPTEN_KEEPALIVE double azahar_dsp_jit_optimized_compile_ms() {
+    return optimized_compile_us.load(std::memory_order_relaxed) / 1000.0;
+}
 EMSCRIPTEN_KEEPALIVE uint16_t azahar_dsp_data_read(uint32_t context, uint16_t address) {
     return reinterpret_cast<Teakra::MemoryInterface*>(context)->DataRead(address);
 }
@@ -91,6 +103,7 @@ namespace {
 
 const std::array<u8, 65536>& OpcodeFlags() {
     static thread_local const auto flags = [] {
+        const double started = emscripten_get_now();
         // Pooled workers load the compiler only when they first execute DSP code.
         // Emscripten invokes pthread entries through a JSPI promising export.
         if (!DspJitReady() && !PrepareDspJit()) {
@@ -103,6 +116,9 @@ const std::array<u8, 65536>& OpcodeFlags() {
         InitializeDspJit(azahar_dsp_template_metadata(), result.data(),
                          sizeof(Teakra::RegisterState), sizeof(Web::Dsp::Semantics),
                          sizeof(Web::Dsp::MemoryAccess));
+        initialization_us.fetch_add(
+            static_cast<uint64_t>((emscripten_get_now() - started) * 1000),
+            std::memory_order_relaxed);
         return result;
     }();
     return flags;
@@ -134,7 +150,11 @@ EntryCache& ThreadEntries() {
 }
 
 Entry Compile(u16 opcode, u16 expansion, bool optimized) {
+    const double started = emscripten_get_now();
     const u32 slot = CompileDspInstruction(opcode, expansion, optimized);
+    auto& elapsed = optimized ? optimized_compile_us : cold_compile_us;
+    elapsed.fetch_add(static_cast<uint64_t>((emscripten_get_now() - started) * 1000),
+                      std::memory_order_relaxed);
     if (slot) return reinterpret_cast<Entry>(slot);
     char* error = DspCompileError();
     const std::string message(error ? error : "DSP compilation failed");

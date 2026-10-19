@@ -65,8 +65,14 @@ export interface PerformanceStats {
   otherMs: number;
   /** Totals since the previous snapshot; excludes native IR translation. */
   armJit: ArmJitStatistics;
-  /** Cumulative opcode specialization totals across this session's Wasm threads. */
-  dspJit: { installedEntries: number; optimizedEntries: number };
+  /** Cumulative opcode specialization counts and elapsed time across this session's Wasm threads. */
+  dspJit: {
+    installedEntries: number;
+    optimizedEntries: number;
+    initializationMs: number;
+    coldCompileMs: number;
+    optimizedCompileMs: number;
+  };
   /** Totals since the previous snapshot, rather than per-frame averages. */
   graphics: GraphicsStatistics;
 }
@@ -116,7 +122,7 @@ export class BrowserSession {
         azaharAudio: (pointer, frames, sampleRate) => output.audio(core.HEAP16.subarray(pointer >>> 1,
           (pointer >>> 1) + frames * 2), sampleRate),
       });
-      if (core._azahar_web_abi() !== 23) throw new Error("Unsupported Azahar browser ABI");
+      if (core._azahar_web_abi() !== 24) throw new Error("Unsupported Azahar browser ABI");
       if (!core._azahar_mount_storage()) throw new Error("Azahar could not mount OPFS user storage");
       if (!await core._azahar_initialize()) throw new Error("Azahar initialization failed");
       return new BrowserSession(core, storage, armJit, graphics, microphone);
@@ -250,7 +256,10 @@ export class BrowserSession {
       swapMs: values[7]! * 1000, otherMs: values[8]! * 1000,
       armJit: { ...this.armJit.takeStatistics(), ...this.executionStatistics() },
       dspJit: { installedEntries: this.core._azahar_dsp_jit_entries(),
-        optimizedEntries: this.core._azahar_dsp_jit_optimized_entries() },
+        optimizedEntries: this.core._azahar_dsp_jit_optimized_entries(),
+        initializationMs: this.core._azahar_dsp_jit_initialization_ms(),
+        coldCompileMs: this.core._azahar_dsp_jit_cold_compile_ms(),
+        optimizedCompileMs: this.core._azahar_dsp_jit_optimized_compile_ms() },
       graphics: this.graphics.takeStatistics(),
     };
   }
