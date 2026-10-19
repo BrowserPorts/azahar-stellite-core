@@ -61,6 +61,11 @@
       "targets": ["azahar_libretro"]
     },
     {
+      "name": "web-package",
+      "configurePreset": "web-release",
+      "targets": ["azahar_libretro", "azahar_browser_package"]
+    },
+    {
       "name": "web-qt",
       "configurePreset": "web-qt",
       "targets": ["azahar_qt_runtime"]

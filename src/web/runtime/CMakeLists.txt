@@ -54,3 +54,40 @@ add_custom_command(OUTPUT "${MICROPHONE_WORKLET_OUTPUT}"
     VERBATIM)
 add_custom_target(azahar_browser_runtime DEPENDS azahar_browser azahar_graphics_runtime azahar_dsp_templates
     "${WORKER_OUTPUT}" "${CLIENT_OUTPUT}" "${AUDIO_WORKLET_OUTPUT}" "${MICROPHONE_WORKLET_OUTPUT}")
+
+# Install only production runtime assets, independently of frontend and fixture output.
+set(WEB_RUNTIME_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
+set(WEB_RUNTIME_FILES
+    azahar.js
+    azahar-worker.js
+    azahar-core.mjs
+    azahar-core.wasm
+    azahar-gpu-worker.js
+    azahar-glslang.mjs
+    azahar-glslang.wasm
+    azahar-shader-compiler.wasm
+    azahar-pica-shaders.mjs
+    azahar-pica-shaders.wasm
+    azahar-dsp-templates.wasm
+    azahar-dsp-families.bin
+    azahar-dsp-jit.js
+    azahar-audio-worklet.js
+    azahar-microphone-worklet.js)
+list(TRANSFORM WEB_RUNTIME_FILES PREPEND "${WEB_RUNTIME_DIRECTORY}/")
+install(FILES ${WEB_RUNTIME_FILES} "${PROJECT_SOURCE_DIR}/license.txt"
+    DESTINATION . COMPONENT azahar_web_runtime)
+install(FILES "${WEB_RUNTIME_DIRECTORY}/libretro_emscripten.a" "${PROJECT_SOURCE_DIR}/license.txt"
+    DESTINATION . COMPONENT azahar_libretro)
+
+set(WEB_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/package/$<CONFIG>")
+set(WEB_PACKAGE_ROOT "${WEB_PACKAGE_DIRECTORY}/azahar-web-runtime")
+set(WEB_PACKAGE_ARCHIVE "${WEB_PACKAGE_DIRECTORY}/azahar-web-runtime.tar.gz")
+add_custom_target(azahar_browser_package
+    COMMAND "${CMAKE_COMMAND}" -E rm -rf "${WEB_PACKAGE_ROOT}"
+    COMMAND "${CMAKE_COMMAND}" --install "${CMAKE_BINARY_DIR}" --config "$<CONFIG>"
+        --component azahar_web_runtime --prefix "${WEB_PACKAGE_ROOT}"
+    COMMAND "${CMAKE_COMMAND}" -E chdir "${WEB_PACKAGE_DIRECTORY}"
+        "${CMAKE_COMMAND}" -E tar cfz "${WEB_PACKAGE_ARCHIVE}" --format=gnutar -- azahar-web-runtime
+    BYPRODUCTS "${WEB_PACKAGE_ARCHIVE}"
+    DEPENDS azahar_browser_runtime
+    VERBATIM)

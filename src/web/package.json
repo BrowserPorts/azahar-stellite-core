@@ -8,6 +8,7 @@
     "configure:runtime": "cmake -S ../.. --preset web-release",
     "build:core": "cmake --build ../../build/web-core --target azahar_libretro",
     "build:runtime": "cmake --build ../../build/web-core --target azahar_browser_runtime",
+    "build:package": "cmake --build ../../build/web-core --target azahar_libretro azahar_browser_package",
     "build:core-fixtures": "cmake --build ../../build/web-core --target tests browser_core_fixtures",
     "test:core-fixtures": "ctest --test-dir ../../build/web-core --output-on-failure",
     "configure:fixtures": "cmake -S tests/upstream --preset web-native-fixtures",
