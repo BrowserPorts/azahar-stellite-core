@@ -32,5 +32,10 @@ target_link_libraries(foreignwindows PRIVATE Qt6::Widgets)
 set_target_properties(foreignwindows PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 
+qt_add_executable(localfiles "${QT_NATIVE_TESTS}/localfiles/main.cpp")
+target_link_libraries(localfiles PRIVATE Qt6::Widgets)
+set_target_properties(localfiles PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
 add_custom_target(azahar_qt_native_fixtures
-    DEPENDS suspendresumecontrol_auto dialog_exec foreignwindows)
+    DEPENDS suspendresumecontrol_auto dialog_exec foreignwindows localfiles)
