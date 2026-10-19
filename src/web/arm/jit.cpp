@@ -53,6 +53,10 @@ struct LinkCell {
     uint32_t maximum_instructions = 0;
     uint32_t promotion_remaining = 0;
     const RegionKey* key = nullptr;
+#ifdef AZAHAR_ARM_JIT_BLOCK_PROFILING
+    // Emitted entries and profile snapshots access this cell on its owning Wasm thread.
+    uint64_t executions = 0;
+#endif
 };
 static_assert(offsetof(LinkCell, slot) == 0);
 static_assert(offsetof(LinkCell, minimum_budget) == 16);
@@ -1378,7 +1382,12 @@ struct Jit::Impl {
 #endif
                 offsetof(ArmState, promotion_source),
                 !step && config.HasOptimization(OptimizationFlag::BlockLinking)
-                    ? offsetof(LinkCell, promotion_remaining) : 0
+                    ? offsetof(LinkCell, promotion_remaining) : 0,
+#ifdef AZAHAR_ARM_JIT_BLOCK_PROFILING
+                offsetof(LinkCell, executions)
+#else
+                0
+#endif
             };
             const uint32_t memory_config[] = {static_cast<uint32_t>(reinterpret_cast<uintptr_t>(config.page_table)),
                 static_cast<uint32_t>(config.fastmem_pointer.value_or(0)), config.fastmem_pointer.has_value(),

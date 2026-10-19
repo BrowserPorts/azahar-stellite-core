@@ -531,10 +531,10 @@ function lowerArmBody(block: ArmBlock, options: BlockOptions, region?: LowerRegi
     } else helper("WasmCheckHalt", [], ["i32"], () => undefined);
     return undefined;
   };
-  const incrementCounter = (address: number): undefined => {
+  const incrementCounter = (address: number, shared = options.shared): undefined => {
     if (!address) return undefined;
     constant(address);
-    if (options.shared) {
+    if (shared) {
       body.byte(0x42).signed(1n, 64).byte(0xfe).u32(0x1f).u32(3).u32(0).byte(0x1a);
     } else {
       constant(address).byte(0x29).u32(3).u32(0);
@@ -901,6 +901,7 @@ function lowerArmBody(block: ArmBlock, options: BlockOptions, region?: LowerRegi
   // The failed condition returned; the executed body still starts in its entry mode.
   knownCpsrMode = entryCpsrMode;
   knownFpscrMode = entryFpscrMode;
+  incrementCounter(block.executionCounter ?? 0, false);
   block.nodes.forEach((node, index) => {
     const arg = (position: number): undefined => argument(node.args[position]!);
     let result = node.type !== "Void";

@@ -19,6 +19,7 @@
         "ENABLE_LIBRETRO": true,
         "ENABLE_LTO": true,
         "AZAHAR_ARM_JIT_STATISTICS": false,
+        "AZAHAR_ARM_JIT_BLOCK_PROFILING": false,
         "AZAHAR_ARM_JIT_REGION_AFTER": "16384",
         "ENABLE_TESTS": true,
         "ENABLE_SOFTWARE_RENDERER": true,

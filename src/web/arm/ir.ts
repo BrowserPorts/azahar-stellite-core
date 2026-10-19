@@ -17,6 +17,7 @@ export type Terminal =
 
 export interface ArmBlock {
   sourceCell?: number;
+  executionCounter?: number;
   cycles: number;
   condition: number;
   startPc?: number;

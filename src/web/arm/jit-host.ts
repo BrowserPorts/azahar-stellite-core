@@ -24,10 +24,25 @@ export interface ArmJitStatistics {
   optimizedRegions: number;
   /** Available in builds configured with AZAHAR_ARM_JIT_STATISTICS. */
   execution?: ArmExecutionStatistics;
+  /** Cached blocks ranked by guest cycles, when block profiling is enabled. */
+  hotBlocks?: ArmBlockProfile[];
+}
+
+export interface ArmBlockProfile {
+  pc: number;
+  cpsr: number;
+  fpscr: number;
+  /** Body entries since the previous snapshot or this entry's compilation. */
+  executions: number;
+  /** Static guest cycle estimate for body entries, excluding failed conditions. */
+  estimatedCycles: number;
+  /** IR operation counts for one execution of this block. */
+  operations: Record<string, number>;
 }
 
 interface InstalledBlock {
   block: ArmBlock;
+  profileBlocks?: readonly ArmBlock[];
   options: LowerOptions;
   memory: WebAssembly.Memory;
   table: WebAssembly.Table;
@@ -43,6 +58,8 @@ export class ArmJitHost {
   #generatedBytes = 0;
   #compileMs = 0;
   #optimizedRegions = 0;
+  #profiling = false;
+  #lastProfile = new Map<number, bigint>();
   readonly #lowerBlock: typeof lowerArm;
 
   constructor(lowerBlock: typeof lowerArm = lowerArm) { this.#lowerBlock = lowerBlock; }
@@ -53,17 +70,25 @@ export class ArmJitHost {
     const started = performance.now();
     const block = JSON.parse(json) as ArmBlock;
     const [registers, cpsr, extendedRegisters, fpscr, checkBit, executionAbi] = layout;
-    if ((layout.length !== 5 && layout.length !== 21) || registers === undefined || cpsr === undefined ||
+    if ((layout.length !== 5 && layout.length !== 21 && layout.length !== 22) || registers === undefined || cpsr === undefined ||
       extendedRegisters === undefined || fpscr === undefined || checkBit === undefined) {
       throw new Error("Invalid ARM JIT state layout");
     }
-    if (layout.length === 21 ? executionAbi !== 8 || !block.sourceCell : Boolean(block.sourceCell)) {
+    if (layout.length >= 21 ? executionAbi !== 8 || !block.sourceCell : Boolean(block.sourceCell)) {
       throw new Error("ARM execution ABI does not match the Wasm compiler");
+    }
+    if (layout.length === 22 && layout[21]) {
+      block.executionCounter = block.sourceCell! + layout[21];
+      this.#profiling = true;
+      // A link cell can survive eviction of its original entry. Start this
+      // compiled generation at the cell's current total, including address reuse.
+      this.#lastProfile.set(block.executionCounter,
+        new BigUint64Array(memory.buffer, block.executionCounter, 1)[0]!);
     }
     const options: LowerOptions = {
       layout: { registers, cpsr, extendedRegisters, fpscr, checkBit },
-      functionNames: layout.length === 21 && layout[11] !== 0,
-      ...(layout.length === 21 ? { execution: {
+      functionNames: layout.length >= 21 && (layout[11] !== 0 || Boolean(layout[21])),
+      ...(layout.length >= 21 ? { execution: {
         halt: layout[6]!, budget: layout[7]!, pendingTicks: layout[8]!,
         sourceUsed: layout[9]!, minimumBudget: layout[10]!, completedBlocks: layout[11]!,
         promotionSource: layout[19]!, promotionRemaining: layout[20]!,
@@ -137,6 +162,8 @@ export class ArmJitHost {
     const run = instance.exports.run;
     if (typeof run !== "function") throw new Error("ARM hot region is missing its Wasm entry");
     root.table.set(slots[0]!, run);
+    // Native region ownership retains peer link cells after their original entries retire.
+    if (this.#profiling) root.profileBlocks = blocks;
     this.#optimizedRegions++;
     this.#generatedBytes += bytes.byteLength;
     this.#compileMs += performance.now() - started;
@@ -146,12 +173,39 @@ export class ArmJitHost {
   /** Reset interval counters while retaining the current cache population. */
   takeStatistics(): ArmJitStatistics {
     const stats = { compiledBlocks: this.#compiledBlocks, generatedBytes: this.#generatedBytes,
-      compileMs: this.#compileMs, liveBlocks: this.#live.size, optimizedRegions: this.#optimizedRegions };
+      compileMs: this.#compileMs, liveBlocks: this.#live.size, optimizedRegions: this.#optimizedRegions,
+      ...(this.#profiling ? { hotBlocks: this.takeBlockProfile() } : {}) };
     this.#compiledBlocks = 0;
     this.#generatedBytes = 0;
     this.#compileMs = 0;
     this.#optimizedRegions = 0;
     return stats;
+  }
+
+  private takeBlockProfile(): ArmBlockProfile[] {
+    const blocks = new Map<number, { block: ArmBlock; memory: WebAssembly.Memory }>();
+    for (const record of this.#live.values()) for (const block of record.profileBlocks ?? [record.block]) {
+      if (block.executionCounter) blocks.set(block.executionCounter, { block, memory: record.memory });
+    }
+    const views = new Map<WebAssembly.Memory, BigUint64Array>();
+    const next = new Map<number, bigint>();
+    const counts: { block: ArmBlock; executions: number }[] = [];
+    for (const [address, { block, memory }] of blocks) {
+      let view = views.get(memory);
+      if (!view) { view = new BigUint64Array(memory.buffer); views.set(memory, view); }
+      const total = view[address >>> 3]!;
+      const executions = Number(BigInt.asUintN(64, total - (this.#lastProfile.get(address) ?? total)));
+      next.set(address, total);
+      if (executions) counts.push({ block, executions });
+    }
+    this.#lastProfile = next;
+    return counts.sort((a, b) => b.executions * b.block.cycles - a.executions * a.block.cycles)
+      .slice(0, 32).map(({ block, executions }) => {
+        const operations: Record<string, number> = {};
+        for (const node of block.nodes) operations[node.op] = (operations[node.op] ?? 0) + 1;
+        return { pc: block.startPc ?? 0, cpsr: block.startCpsr ?? 0, fpscr: block.startFpscr ?? 0,
+          executions, estimatedCycles: executions * block.cycles, operations };
+      });
   }
 
   release(slot: number, table: WebAssembly.Table): undefined {
