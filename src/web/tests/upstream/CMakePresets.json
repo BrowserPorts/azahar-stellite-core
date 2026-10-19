@@ -5,12 +5,17 @@
     {
       "name": "web-native-fixtures",
       "displayName": "Azahar native fixtures in Wasm",
-      "description": "Configure after activating Emscripten 5.0.7",
+      "description": "Use the pinned Emscripten fork with the Emscripten 5.0.7 SDK",
       "generator": "Ninja",
-      "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+      "toolchainFile": "${sourceDir}/../../../../externals/emscripten/cmake/Modules/Platform/Emscripten.cmake",
       "binaryDir": "${sourceDir}/../../../../build/web-fixtures",
+      "environment": {
+        "EM_CONFIG": "$env{EMSDK}/.emscripten",
+        "EM_CACHE": "${sourceDir}/../../../../build/emscripten-cache"
+      },
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
+        "EMSCRIPTEN_ROOT_PATH": "${sourceDir}/../../../../externals/emscripten",
         "ENABLE_LTO": true,
         "AZAHAR_BUILD_UPSTREAM_FUZZ": true,
         "AZAHAR_ARM_JIT_REGION_AFTER": "1",
