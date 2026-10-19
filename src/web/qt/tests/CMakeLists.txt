@@ -63,6 +63,10 @@ qt_add_resources(tst_qshaderbaker qshaderbaker
 set_target_properties(tst_qshaderbaker PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 
+foreach(qt_fixture IN ITEMS tst_qabstractitemmodel tst_qabstractproxymodel tst_qshaderbaker)
+    target_link_options(${qt_fixture} PRIVATE -Wl,--fatal-warnings)
+endforeach()
+
 add_custom_target(azahar_qt_model_fixtures
     DEPENDS tst_qabstractitemmodel tst_qabstractproxymodel)
 add_custom_target(azahar_qt_native_fixtures
