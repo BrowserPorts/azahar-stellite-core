@@ -33,7 +33,9 @@ ExternalProject_Add(unicorn_test_oracle
     ${UNICORN_ORACLE_DOWNLOAD}
     GIT_SUBMODULES ""
     BINARY_DIR "${UNICORN_ORACLE_BINARY}"
-    CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+    # Cached CMakeSystem.cmake retains its original toolchain include even when
+    # the parent passes a replacement. Recreate that configuration before probing.
+    CMAKE_ARGS --fresh -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
         -DUNICORN_ARCH=arm -DUNICORN_BUILD_TESTS=ON -DUNICORN_INSTALL=OFF
         -DUNICORN_LEGACY_STATIC_ARCHIVE=ON ${UNICORN_ORACLE_TOOLCHAIN}
     BUILD_COMMAND "${CMAKE_COMMAND}" --build <BINARY_DIR>
