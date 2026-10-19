@@ -37,13 +37,15 @@ EM_JS(void, SetBrowserAudioRunning, (bool running), {
     Module["azaharQtRuntime"]?.setAudioRunning(Boolean(running));
 });
 
-EM_JS(void, RegisterBrowserSurface, (EM_VAL surface), {
-    Module["azaharQtCanvas"] = Emval.toValue(surface);
+EM_JS(void, RegisterBrowserSurface, (EM_VAL surface, bool secondary), {
+    Module["azaharQtCanvases"] ??= [];
+    Module["azaharQtCanvases"][Number(secondary)] = Emval.toValue(surface);
 });
 
-EM_JS(void, UnregisterBrowserSurface, (EM_VAL surface), {
-    if (Module["azaharQtCanvas"] === Emval.toValue(surface)) {
-        delete Module["azaharQtCanvas"];
+EM_JS(void, UnregisterBrowserSurface, (EM_VAL surface, bool secondary), {
+    const canvases = Module["azaharQtCanvases"];
+    if (canvases?.[Number(secondary)] === Emval.toValue(surface)) {
+        delete canvases[Number(secondary)];
     }
 });
 
@@ -52,9 +54,12 @@ EM_ASYNC_JS(bool, InitializeBrowserEmulation, (unsigned thread), {
         Module["azaharQtEmulationError"] = "";
         const surface = new Promise((resolve, reject) => {
             const receive = (event) => {
-                if (event.data.azaharQtSurface instanceof OffscreenCanvas) {
+                if (Array.isArray(event.data.azaharQtSurfaces) &&
+                    event.data.azaharQtSurfaces.length >= 1 &&
+                    event.data.azaharQtSurfaces.length <= 2 &&
+                    event.data.azaharQtSurfaces.every(canvas => canvas instanceof OffscreenCanvas)) {
                     self.removeEventListener("message", receive);
-                    resolve(event.data.azaharQtSurface);
+                    resolve(event.data.azaharQtSurfaces);
                 } else if (typeof event.data.azaharQtSurfaceError === "string") {
                     self.removeEventListener("message", receive);
                     reject(new Error(event.data.azaharQtSurfaceError));
@@ -70,11 +75,11 @@ EM_ASYNC_JS(bool, InitializeBrowserEmulation, (unsigned thread), {
                 reject(error);
             }
         });
-        const [canvas, runtime] = await Promise.all([
+        const [canvases, runtime] = await Promise.all([
             surface,
             import(new URL(locateFile("azahar-qt-emulation.js"), location.href).href)
         ]);
-        await runtime.initializeEmulation(Module, canvas);
+        await runtime.initializeEmulation(Module, canvases);
         Module["azaharQtEmulation"] = runtime;
         return true;
     } catch (error) {
@@ -154,12 +159,12 @@ void SetAudioRunning(bool running) {
     SetBrowserAudioRunning(running);
 }
 
-void RegisterRenderSurface(const emscripten::val& canvas) {
-    RegisterBrowserSurface(canvas.as_handle());
+void RegisterRenderSurface(const emscripten::val& canvas, bool secondary) {
+    RegisterBrowserSurface(canvas.as_handle(), secondary);
 }
 
-void UnregisterRenderSurface(const emscripten::val& canvas) {
-    UnregisterBrowserSurface(canvas.as_handle());
+void UnregisterRenderSurface(const emscripten::val& canvas, bool secondary) {
+    UnregisterBrowserSurface(canvas.as_handle(), secondary);
 }
 
 bool InitializeEmulation() {

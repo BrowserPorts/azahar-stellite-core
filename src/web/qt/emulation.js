@@ -8,10 +8,10 @@ addToLibrary({
     const worker = PThread.pthreads[thread];
     if (!worker) return 0;
     try {
-      const canvas = Module["azaharQtCanvas"];
-      if (!canvas) throw new Error("Qt render surface is unavailable");
-      const surface = canvas.transferControlToOffscreen();
-      worker.postMessage({ azaharQtSurface: surface }, [surface]);
+      const canvases = Module["azaharQtCanvases"];
+      if (!canvases?.[0]) throw new Error("Qt render surface is unavailable");
+      const surfaces = canvases.map(canvas => canvas.transferControlToOffscreen());
+      worker.postMessage({ azaharQtSurfaces: surfaces }, surfaces);
       Module["azaharQtRuntime"].connectAudio(worker);
     } catch (error) {
       worker.postMessage({ azaharQtSurfaceError: String(error) });

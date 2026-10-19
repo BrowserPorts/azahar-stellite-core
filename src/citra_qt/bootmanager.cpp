@@ -158,6 +158,7 @@ void EmuThread::run() {
                 auto& renderer = system.GPU().Renderer();
                 presented_frame = renderer.GetCurrentFrame();
                 renderer.TryPresent(0, false);
+                renderer.TryPresent(0, true);
                 if (auto* sink = dynamic_cast<AudioCore::WebAudioSink*>(&system.DSP().GetSink())) {
                     sink->Flush();
                 }
@@ -344,16 +345,12 @@ public:
         auto* contents = new QHBoxLayout(this);
         contents->setContentsMargins(0, 0, 0, 0);
         contents->addWidget(container);
-        if (!secondary) {
-            Web::Qt::RegisterRenderSurface(canvas);
-        }
+        Web::Qt::RegisterRenderSurface(canvas, secondary);
     }
 
     ~WebGPURenderWidget() override {
         delete container;
-        if (!secondary) {
-            Web::Qt::UnregisterRenderSurface(canvas);
-        }
+        Web::Qt::UnregisterRenderSurface(canvas, secondary);
     }
 
 private:
@@ -601,7 +598,7 @@ void GRenderWindow::restoreGeometry(const QByteArray& geometry) {
 QByteArray GRenderWindow::saveGeometry() {
     // If we are a top-level widget, store the current geometry
     // otherwise, store the last backup
-    if (parent() == nullptr) {
+    if (isWindow()) {
         return QWidget::saveGeometry();
     }
 

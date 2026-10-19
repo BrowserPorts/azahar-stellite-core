@@ -566,7 +566,11 @@ void GMainWindow::InitializeWidgets() {
     secondary_window = new GRenderWindow(this, emu_thread.get(), system, true);
     render_window->hide();
     secondary_window->hide();
+#ifdef __EMSCRIPTEN__
+    secondary_window->setParent(this, Qt::Tool);
+#else
     secondary_window->setParent(nullptr);
+#endif
 
     game_list = new GameList(*play_time_manager, this);
     ui->horizontalLayout->addWidget(game_list);
@@ -581,7 +585,11 @@ void GMainWindow::InitializeWidgets() {
     connect(loading_screen, &LoadingScreen::Hidden, this, [&] {
         loading_screen->Clear();
         if (emulation_running) {
+#ifdef __EMSCRIPTEN__
+            render_window->setVisible(true);
+#else
             render_window->show();
+#endif
             render_window->setFocus();
             render_window->activateWindow();
         }
@@ -2825,7 +2833,11 @@ void GMainWindow::ToggleWindowMode() {
     } else {
         // Render in a separate window...
         ui->horizontalLayout->removeWidget(render_window);
+#ifdef __EMSCRIPTEN__
+        render_window->setParent(this, Qt::Tool);
+#else
         render_window->setParent(nullptr);
+#endif
         if (emulation_running) {
             render_window->setVisible(true);
             render_window->restoreGeometry(UISettings::values.renderwindow_geometry);
@@ -2840,7 +2852,11 @@ void GMainWindow::UpdateSecondaryWindowVisibility() {
     }
     if (Settings::values.layout_option.GetValue() == Settings::LayoutOption::SeparateWindows) {
         secondary_window->restoreGeometry(UISettings::values.secondarywindow_geometry);
+#ifdef __EMSCRIPTEN__
+        secondary_window->setVisible(true);
+#else
         secondary_window->show();
+#endif
     } else {
         UISettings::values.secondarywindow_geometry = secondary_window->saveGeometry();
         secondary_window->hide();

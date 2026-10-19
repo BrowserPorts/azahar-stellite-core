@@ -27,8 +27,9 @@ const worker = self as unknown as DedicatedWorkerGlobalScope & {
 };
 let emulation: Emulation | undefined;
 
-export async function initializeEmulation(module: QtModule, canvas: OffscreenCanvas): Promise<undefined> {
+export async function initializeEmulation(module: QtModule, canvases: readonly OffscreenCanvas[]): Promise<undefined> {
   if (emulation) throw new Error("Qt emulation is already initialized");
+  if (!canvases[0] || canvases.length > 2) throw new Error("Invalid Qt render surfaces");
   if (typeof worker.scheduler?.postTask !== "function") {
     throw new Error("Azahar requires browser task scheduling");
   }
@@ -39,7 +40,8 @@ export async function initializeEmulation(module: QtModule, canvas: OffscreenCan
     if (state) state.failure = error;
   });
   try {
-    await graphics.surface(canvas);
+    await graphics.surface(canvases[0]);
+    if (canvases[1]) await graphics.surface(canvases[1], 1);
     if (failure) throw failure;
     module.azaharJitHost = new ArmJitHost();
     module.azaharPicaJitHost = new PicaJitHost();
