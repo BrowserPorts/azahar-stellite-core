@@ -30,6 +30,7 @@
 
 #ifdef __EMSCRIPTEN__
 #include "audio_core/dsp_interface.h"
+#include "audio_core/libretro_input.h"
 #include "web/qt/audio-sink.h"
 #include "web/qt/runtime.h"
 #endif
@@ -151,6 +152,11 @@ void EmuThread::run() {
             if (!was_active)
                 emit DebugModeLeft();
 
+#ifdef __EMSCRIPTEN__
+            if (auto* microphone = AudioCore::GetLibRetroInput()) {
+                microphone->PollMicrophone();
+            }
+#endif
             Core::System::ResultStatus result = system.RunLoop();
 #ifdef __EMSCRIPTEN__
             if (result == Core::System::ResultStatus::Success &&

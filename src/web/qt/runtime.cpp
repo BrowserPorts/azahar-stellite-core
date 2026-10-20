@@ -11,7 +11,7 @@
 
 extern "C" bool azahar_mount_storage();
 
-EM_JS_DEPS(qt_emulation, "azahar_qt_request_surface,azahar_qt_release_audio,$stringToNewUTF8");
+EM_JS_DEPS(qt_emulation, "azahar_qt_request_surface,azahar_qt_release_media,$stringToNewUTF8");
 
 namespace {
 
@@ -107,7 +107,7 @@ EM_ASYNC_JS(void, ShutdownBrowserEmulation, (unsigned thread), {
         err(String(error));
     } finally {
         delete Module["azaharQtEmulation"];
-        _azahar_qt_release_audio(thread);
+        _azahar_qt_release_media(thread);
     }
 });
 

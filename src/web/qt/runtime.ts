@@ -2,6 +2,7 @@
 
 import { UserStorageLock } from "../runtime/storage-lock";
 import { BrowserAudioOutput } from "../runtime/audio-output";
+import { BrowserMicrophoneInput } from "../runtime/microphone-input";
 import { GameImporter } from "./game-import";
 
 const gameImporter = new GameImporter();
@@ -15,11 +16,57 @@ let audioRunning = false;
 let audioWorker: Worker | undefined;
 let audioReceiver: ((event: MessageEvent) => undefined) | undefined;
 let audioConnection = 0;
+let microphone: BrowserMicrophoneInput | undefined;
+let microphonePending: Promise<BrowserMicrophoneInput> | undefined;
+let microphoneAbort: AbortController | undefined;
+let microphoneRequested = false;
 
 const reportAudioError = (error: unknown): undefined => {
   console.error("Azahar audio:", error);
   return undefined;
 };
+
+const reportMicrophoneError = (error: unknown): undefined => {
+  console.error("Azahar microphone:", error);
+  return undefined;
+};
+
+function stopMicrophone(): undefined {
+  microphoneAbort?.abort();
+  microphoneAbort = undefined;
+  microphone?.close().catch(reportMicrophoneError);
+  microphone = undefined;
+  microphonePending = undefined;
+  return undefined;
+}
+
+function prepareMicrophone(): undefined {
+  if (!microphoneRequested || !audioRunning || !audioWorker || microphonePending ||
+    microphone && !microphone.closed) return undefined;
+  const worker = audioWorker;
+  const connection = audioConnection;
+  const signal = (microphoneAbort = new AbortController()).signal;
+  const pending = BrowserMicrophoneInput.create(reportMicrophoneError, signal);
+  microphonePending = pending;
+  pending.then(output => {
+    if (signal.aborted || audioWorker !== worker || audioConnection !== connection ||
+      !audioRunning || !microphoneRequested) return output.close();
+    microphone = output;
+    worker.postMessage({ azaharQtMicrophoneTransport: output.transport,
+      azaharQtMicrophoneConnection: connection });
+    return undefined;
+  }).catch(error => {
+    if (!signal.aborted) {
+      stopMicrophone();
+      reportMicrophoneError(error);
+    }
+    return undefined;
+  }).finally(() => {
+    if (microphonePending === pending) microphonePending = undefined;
+    return undefined;
+  });
+  return undefined;
+}
 
 function sendAudioTransport(output: BrowserAudioOutput, worker: Worker, connection: number): undefined {
   if (audioWorker !== worker || audioConnection !== connection) return undefined;
@@ -60,17 +107,27 @@ export async function initializeFrontend(sampleRate: number): Promise<undefined>
   return undefined;
 }
 
-export function connectAudio(worker: Worker): undefined {
+export function connectMedia(worker: Worker): undefined {
   if (audioWorker && audioReceiver) audioWorker.removeEventListener("message", audioReceiver);
+  stopMicrophone();
+  microphoneRequested = false;
   audioWorker = worker;
   const connection = ++audioConnection;
   audioReceiver = event => {
     if (event.data?.azaharQtAudioReady === connection && audioRunning && audioWorker === worker) {
       audio?.resume().catch(reportAudioError);
     }
+    if (typeof event.data?.azaharQtMicrophoneActive === "boolean" &&
+      event.data.azaharQtMicrophoneConnection === connection && audioWorker === worker) {
+      microphoneRequested = event.data.azaharQtMicrophoneActive;
+      if (microphoneRequested) prepareMicrophone();
+      // Keep an opened device idle between recordings; the consumer gates PCM.
+      else if (event.data.azaharQtMicrophoneClosed || microphonePending) stopMicrophone();
+    }
     return undefined;
   };
   worker.addEventListener("message", audioReceiver);
+  worker.postMessage({ azaharQtMicrophoneConnection: connection });
   if (audio) {
     const output = audio;
     output.suspend().then(() => sendAudioTransport(output, worker, connection)).catch(reportAudioError);
@@ -82,15 +139,18 @@ export function setAudioRunning(running: boolean): undefined {
   audioRunning = running;
   if (running) audioWorker?.postMessage({ azaharQtAudioResume: audioConnection });
   else audio?.suspend().catch(reportAudioError);
+  if (running) prepareMicrophone();
+  else stopMicrophone();
   return undefined;
 }
 
-export function disconnectAudio(worker: Worker): undefined {
+export function disconnectMedia(worker: Worker): undefined {
   if (audioWorker !== worker) return undefined;
   setAudioRunning(false);
   if (audioReceiver) worker.removeEventListener("message", audioReceiver);
   audioWorker = undefined;
   audioReceiver = undefined;
+  microphoneRequested = false;
   ++audioConnection;
   return undefined;
 }
@@ -104,7 +164,8 @@ export function shutdownFrontend(): undefined {
   gameImporter.cancel();
   document.removeEventListener("pointerdown", prepareAudio, { capture: true });
   document.removeEventListener("keydown", prepareAudio, { capture: true });
-  if (audioWorker) disconnectAudio(audioWorker);
+  if (audioWorker) disconnectMedia(audioWorker);
+  stopMicrophone();
   audioAbort?.abort();
   audioAbort = undefined;
   audio?.close().catch(reportAudioError);

@@ -315,7 +315,7 @@ if (ENABLE_CUBEB)
     endif()
 endif()
 
-if(ENABLE_LIBRETRO)
+if(ENABLE_LIBRETRO OR (EMSCRIPTEN AND ENABLE_QT))
     add_subdirectory(speex-resampler EXCLUDE_FROM_ALL)
 endif()
 

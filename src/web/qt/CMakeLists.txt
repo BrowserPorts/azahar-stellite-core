@@ -2,6 +2,11 @@
 
 azahar_enable_dsp_runtime(citra_meta)
 target_sources(audio_core PRIVATE audio-sink.cpp audio-sink.h)
+if(NOT ENABLE_LIBRETRO)
+    target_sources(audio_core PRIVATE
+        "${PROJECT_SOURCE_DIR}/src/audio_core/libretro_input.cpp")
+endif()
+target_link_libraries(audio_core PRIVATE libretro azahar_speex_resampler azahar_browser_microphone)
 target_compile_definitions(audio_core PRIVATE HAVE_WEB_AUDIO)
 target_sources(citra_qt PRIVATE file-dialog.cpp file-dialog.h)
 target_sources(citra_meta PRIVATE runtime.cpp runtime.h ../runtime/file-system.cpp)
@@ -39,6 +44,7 @@ add_custom_command(OUTPUT "${QT_RUNTIME}"
         --target browser --outfile "${QT_RUNTIME}"
     DEPENDS runtime.ts game-import.ts ../runtime/storage-lock.ts
         ../runtime/audio-output.ts ../runtime/audio-ring.ts
+        ../runtime/microphone-input.ts ../runtime/microphone-ring.ts
     VERBATIM)
 file(GLOB QT_EMULATION_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/../arm/*.ts"
@@ -48,7 +54,8 @@ file(GLOB QT_EMULATION_SOURCES CONFIGURE_DEPENDS
 add_custom_command(OUTPUT "${QT_EMULATION_RUNTIME}"
     COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/emulation.ts"
         --target browser --outfile "${QT_EMULATION_RUNTIME}"
-    DEPENDS emulation.ts audio.ts ../runtime/audio-ring.ts ../assets.ts ${QT_EMULATION_SOURCES}
+    DEPENDS emulation.ts audio.ts ../runtime/audio-ring.ts ../runtime/microphone-ring.ts
+        ../assets.ts ${QT_EMULATION_SOURCES}
     VERBATIM)
 set(QT_AUDIO_WORKLET "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-audio-worklet.js")
 add_custom_command(OUTPUT "${QT_AUDIO_WORKLET}"
@@ -56,8 +63,14 @@ add_custom_command(OUTPUT "${QT_AUDIO_WORKLET}"
         --target browser --outfile "${QT_AUDIO_WORKLET}"
     DEPENDS ../runtime/audio-worklet.ts ../runtime/audio-ring.ts
     VERBATIM)
+set(QT_MICROPHONE_WORKLET "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/azahar-microphone-worklet.js")
+add_custom_command(OUTPUT "${QT_MICROPHONE_WORKLET}"
+    COMMAND "${BUN_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/microphone-worklet.ts"
+        --target browser --outfile "${QT_MICROPHONE_WORKLET}"
+    DEPENDS ../runtime/microphone-worklet.ts ../runtime/microphone-ring.ts
+    VERBATIM)
 add_custom_target(azahar_qt_runtime DEPENDS citra_meta azahar_graphics_runtime
-    "${QT_RUNTIME}" "${QT_EMULATION_RUNTIME}" "${QT_AUDIO_WORKLET}")
+    "${QT_RUNTIME}" "${QT_EMULATION_RUNTIME}" "${QT_AUDIO_WORKLET}" "${QT_MICROPHONE_WORKLET}")
 
 if (ENABLE_TESTS)
     add_subdirectory(tests)

@@ -15,8 +15,11 @@
 #ifdef HAVE_OPENAL
 #include "audio_core/openal_input.h"
 #endif
-#ifdef HAVE_LIBRETRO
+#if defined(HAVE_LIBRETRO) || defined(HAVE_WEB_AUDIO)
 #include "audio_core/libretro_input.h"
+#endif
+#ifdef HAVE_WEB_AUDIO
+#include "web/runtime/microphone.h"
 #endif
 #include "common/logging/log.h"
 #include "core/core.h"
@@ -25,6 +28,13 @@ namespace AudioCore {
 namespace {
 // input_details is ordered in terms of desirability, with the best choice at the top.
 constexpr std::array input_details = {
+#ifdef HAVE_WEB_AUDIO
+    InputDetails{InputType::Browser, "Real Device (Browser)", true,
+                 [](Core::System& system, std::string_view device_id) -> std::unique_ptr<Input> {
+                     return std::make_unique<LibRetroInput>(Web::GetMicrophoneInterface());
+                 },
+                 [] { return std::vector<std::string>{"Browser Microphone"}; }},
+#endif
 #ifdef HAVE_LIBRETRO
     InputDetails{InputType::LibRetro, "Real Device (LibRetro)", true,
                  [](Core::System& system, std::string_view device_id) -> std::unique_ptr<Input> {
