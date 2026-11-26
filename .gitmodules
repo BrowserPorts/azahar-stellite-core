@@ -12,7 +12,7 @@
 	url = https://github.com/catchorg/Catch2
 [submodule "dynarmic"]
 	path = externals/dynarmic
-    url = https://origin.cursor.com/mov/dynarmic-stellite-wasm.git
+	url = https://browserports.dev/BrowserPorts/dynarmic-stellite-wasm.git
 [submodule "xbyak"]
 	path = externals/xbyak
 	url = https://github.com/herumi/xbyak.git
@@ -27,7 +27,7 @@
 	url = https://github.com/benhoyt/inih.git
 [submodule "libressl"]
 	path = externals/libressl
-    url = https://origin.cursor.com/mov/libressl-stellite-wasm.git
+	url = https://browserports.dev/BrowserPorts/libressl-stellite-wasm.git
 [submodule "libusb"]
 	path = externals/libusb/libusb
 	url = https://github.com/libusb/libusb.git
@@ -42,7 +42,7 @@
 	url = https://github.com/arun11299/cpp-jwt.git
 [submodule "teakra"]
     path = externals/teakra
-    url = https://origin.cursor.com/mov/teakra-stellite-wasm.git
+	url = https://browserports.dev/BrowserPorts/teakra-stellite-wasm.git
     branch = main
 [submodule "lodepng"]
 	path = externals/lodepng/lodepng
@@ -58,7 +58,7 @@
 	url = https://github.com/libsdl-org/SDL
 [submodule "dds-ktx"]
 	path = externals/dds-ktx
-    url = https://origin.cursor.com/mov/dds-ktx-stellite.git
+	url = https://browserports.dev/BrowserPorts/dds-ktx-stellite.git
 [submodule "openal-soft"]
 	path = externals/openal-soft
 	url = https://github.com/azahar-emu/openal-soft
@@ -109,19 +109,19 @@
 	url = https://github.com/cryptopp-modern/cryptopp-modern.git
 [submodule "naga"]
     path = externals/wgpu
-    url = https://origin.cursor.com/mov/wgpu-stellite-web.git
+	url = https://browserports.dev/BrowserPorts/wgpu-stellite-web.git
     branch = main
 [submodule "externals/emscripten"]
     path = externals/emscripten
-    url = https://origin.cursor.com/mov/emscripten-stellite-wasm.git
+	url = https://browserports.dev/BrowserPorts/emscripten-stellite-wasm.git
     branch = main
 [submodule "qtmultimedia"]
     path = externals/qtmultimedia
-    url = https://origin.cursor.com/mov/qtmultimedia-stellite-wasm.git
+	url = https://browserports.dev/BrowserPorts/qtmultimedia-stellite-wasm.git
     branch = main
 [submodule "qtbase"]
     path = externals/qtbase
-    url = https://origin.cursor.com/mov/qtbase-stellite-wasm.git
+	url = https://browserports.dev/BrowserPorts/qtbase-stellite-wasm.git
     branch = main
 [submodule "externals/qtshadertools"]
     path = externals/qtshadertools
