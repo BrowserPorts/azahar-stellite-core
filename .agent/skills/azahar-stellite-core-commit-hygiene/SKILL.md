@@ -47,12 +47,24 @@ Commit only your own changes. Authorization to commit never authorizes pushing, 
 
 ## Submodules
 
-`.gitmodules` still names Cursor's origin for the fork submodules (`externals/dynarmic`, `externals/libressl`, `externals/teakra`, dds-ktx, wgpu, Emscripten, qtbase, qtmultimedia), and their checkouts carry it as `origin`.
+Every fork submodule lives on Forgejo under `BrowserPorts`, and `.gitmodules` fetches each from there:
 
-- Never commit or push from inside an `externals/` checkout.
-- dynarmic and libressl are changed in `../dynarmic-stellite-wasm` and `../libressl-stellite-wasm`, pushed to Forgejo there, and only then recorded here as a new gitlink.
-- The other fork submodules have no Forgejo home yet. A gitlink change that needs a new commit in one of them waits for the owner.
-- Never record a dirty submodule or a commit its Forgejo remote does not have. Third-party pins change only on purpose.
+| Path | Forgejo repository | Where it is changed |
+| --- | --- | --- |
+| `externals/dynarmic` | `dynarmic-stellite-wasm` | `../dynarmic-stellite-wasm` |
+| `externals/libressl` | `libressl-stellite-wasm` | `../libressl-stellite-wasm` |
+| `externals/teakra` | `teakra-stellite-wasm` | its `externals/` checkout |
+| `externals/dds-ktx` | `dds-ktx-stellite` | its `externals/` checkout |
+| `externals/wgpu` (named `naga`) | `wgpu-stellite-web` | its `externals/` checkout |
+| `externals/emscripten` | `emscripten-stellite-wasm` | its `externals/` checkout |
+| `externals/qtbase` | `qtbase-stellite-wasm` | its `externals/` checkout |
+| `externals/qtmultimedia` | `qtmultimedia-stellite-wasm` | its `externals/` checkout |
+
+- Never commit or push from `externals/dynarmic` or `externals/libressl`; their standalone checkouts are the Git roots for that work.
+- The other six are worked on in place. Each carries its own `<name>-commit-hygiene` skill under `.agent/skills/`; load it before any Git mutation there.
+- A change reaches azahar in two steps: commit and push it to Forgejo `origin` in the fork first, then commit the new gitlink here on its own, with nothing else in the commit.
+- Never record a dirty submodule or a commit its Forgejo remote does not have. Fetch in the submodule and confirm `git branch -r --contains HEAD` lists `origin/main` first.
+- Third-party pins change only on purpose.
 
 ## Staging
 
